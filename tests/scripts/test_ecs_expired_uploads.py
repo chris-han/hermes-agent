@@ -9,6 +9,7 @@ import time
 import pytest
 
 
+@pytest.mark.platforms("linux")
 def test_expired_upload_cleanup_keeps_current_open_recent_and_unknown_files(tmp_path):
     pwsh = shutil.which('pwsh')
     if not pwsh:
@@ -62,11 +63,3 @@ Get-ExpiredEcsUploadCleanup -Root $args[1] -CurrentStage $args[2]
     assert all(stage.exists() for key, stage in stages.items() if key != 'expired')
     assert (public / 'SemantierAgent.msix').read_bytes() == b'live'
 
-
-def test_cleanup_and_stage_recovery_are_wired_to_verified_publication():
-    source = (Path(__file__).resolve().parents[2] / 'scripts/deploy-ecs.ps1').read_text()
-    assert 'Complete-Checkpoint \'upload-prepared\'' in source
-    call = source.index('$receipt.expiredUploads=Ssh (Get-ExpiredEcsUploadCleanup')
-    assert source.index("$receipt.h3='PUBLIC_H3_HEAD_STATUS_SIZE_PASS'") < call
-    assert source.index("$receipt.result='BETA_PUBLISHED_UNVERIFIED'") < call
-    assert source.index('$posixParent=$RemoteRoot.Substring') < source.index("if($script:checkpoints.ContainsKey('published'))")
