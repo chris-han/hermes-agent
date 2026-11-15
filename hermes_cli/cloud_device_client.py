@@ -233,7 +233,13 @@ def _config_hash():
     path = get_hermes_home()/'config.yaml'
     if path.is_symlink() or getattr(path,'is_junction',lambda:False)():
         raise CloudConnectionError('cloud_profile_mismatch', 'Original profile configuration must not be linked.', 409, recovery='original_profile')
-    return _digest(path.read_bytes())
+    try:
+        contents = path.read_bytes()
+    except FileNotFoundError:
+        # Fresh profiles may connect before preferences are saved. Keep absence
+        # distinct from an empty file so later creation invalidates the intent.
+        return _digest(b'config.yaml:absent')
+    return _digest(contents)
 
 
 def _cloud_http(origin):

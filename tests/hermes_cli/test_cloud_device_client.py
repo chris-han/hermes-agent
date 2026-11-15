@@ -36,6 +36,43 @@ def test_start_recovers_private_intent_without_renderer_secrets(native, monkeypa
     assert calls[0][1]['possession_challenge'] == device._digest(private['proof'].encode())
 
 
+def test_first_connect_without_config_preserves_absence_and_reuses_intent(native, monkeypatch):
+    device, home = native
+    config = home/'config.yaml'
+    config.unlink()
+    calls = install_wire(device, monkeypatch)
+    first = device.start()
+    assert device.start() == first
+    assert calls == ['start']
+    assert not config.exists()
+    assert 'proof' not in json.dumps(first)
+
+
+def test_creating_config_after_first_connect_invalidates_only_that_intent(native, monkeypatch):
+    device, home = native
+    config = home/'config.yaml'
+    config.unlink()
+    calls = install_wire(device, monkeypatch)
+    started = device.start()
+    config.write_bytes(b'')
+    assert device.poll(started['session_id'])['status'] == 'cancelled'
+    assert config.read_bytes() == b''
+    assert not any(call.endswith('/claim') for call in calls)
+
+
+def test_first_connect_can_claim_and_ack_before_any_preferences_exist(native, monkeypatch):
+    device, home = native
+    config = home/'config.yaml'
+    config.unlink()
+    calls = install_wire(device, monkeypatch)
+    started = device.start()
+    assert not config.exists()
+    assert device.poll(started['session_id'])['status'] == 'approved'
+    assert calls.count('intent-test/claim') == 1
+    assert calls.count('intent-test/ack') == 1
+    assert 'private-account-token' not in config.read_text()
+
+
 def test_cancel_persists_terminal_before_lost_remote_reply(native, monkeypatch):
     device, _ = native
     monkeypatch.setattr(device, '_wire', lambda origin, operation, body=None, bearer=None: {
