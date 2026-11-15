@@ -14,7 +14,8 @@
       "INTENT_UNAVAILABLE":"I could not resolve this request's browser target. Please retry or specify whether to use the page beside this conversation or browse independently.",
       "CLOUD_TOP_UP_REQUIRED":"Your Semantier Cloud balance is too low for this request. Open Billing and top up your balance, then retry. Your model selection and connection are preserved.",
       "CLOUD_BUDGET_REQUIRED":"This request exceeds your Semantier Cloud spending budget. Open Billing to review the budget and reserved usage, or reduce the request.",
-      "CLOUD_BILLING_REVIEW_REQUIRED":"Your Semantier Cloud account needs a Billing review after a usage or reservation discrepancy. Open Billing and contact the operator to resolve it. Your connection is preserved."
+      "CLOUD_BILLING_REVIEW_REQUIRED":"Your Semantier Cloud account needs a Billing review after a usage or reservation discrepancy. Open Billing and contact the operator to resolve it. Your connection is preserved.",
+      "CLOUD_SUPPLIER_UNAVAILABLE":"The selected Cloud model could not complete the request through its provider. This is a provider execution failure. Contact the administrator to check the provider response; any unresolved charge remains under Billing review."
     },
     "zh": {
       "PANE_UNAVAILABLE":"我目前无法实时访问此会话中的该页面。请在这里重新连接或重新打开浏览器面板后重试。我没有切换浏览器，也没有将以前的页面内容当作当前证据。",
@@ -26,7 +27,8 @@
       "INTENT_UNAVAILABLE":"我未能确定本次请求的浏览器目标。请重试，或说明是操作会话旁的页面还是在后台独立浏览。",
       "CLOUD_TOP_UP_REQUIRED":"Semantier Cloud 余额不足，无法执行本次请求。请打开 Billing（账单）充值后重试。模型选择和连接均已保留。",
       "CLOUD_BUDGET_REQUIRED":"本次请求超出 Semantier Cloud 支出预算。请打开 Billing（账单）检查预算及已预留用量，或缩小请求。",
-      "CLOUD_BILLING_REVIEW_REQUIRED":"Semantier Cloud 账户因用量或预留金额差异需要账单核查。请打开 Billing（账单）并联系运营人员处理。连接已保留。"
+      "CLOUD_BILLING_REVIEW_REQUIRED":"Semantier Cloud 账户因用量或预留金额差异需要账单核查。请打开 Billing（账单）并联系运营人员处理。连接已保留。",
+      "CLOUD_SUPPLIER_UNAVAILABLE":"所选云端模型的供应商未能完成本次请求。请联系管理员检查供应商响应；尚未确定的费用仍由账务核对处理。"
     }
   }
 }

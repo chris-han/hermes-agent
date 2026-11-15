@@ -30,3 +30,17 @@ def test_credit_error_explicitly_tells_customer_to_top_up():
 def test_reconciliation_does_not_claim_top_up_will_fix_it():
     text=ApiErrorSummaryMixin._summarize_api_error(denied('cloud_billing_reconciliation_required',403))
     assert 'review' in text.lower() and 'top up' not in text.lower()
+
+
+def test_supplier_failure_is_not_browser_target_or_credit_failure(monkeypatch):
+    error=denied('cloud_supplier_execution_unavailable',502)
+    def reject(*args): raise error
+    monkeypatch.setattr('agent.desktop_browser_target.propose_intent',reject)
+    s=BrowserTurnState(session_id='s',generation=1,turn_id='t',target_kind='UNRESOLVED')
+    assert list(prelude(s,SimpleNamespace(),'What is your model?',[]))==[]
+    assert s.native_failure['code']=='CLOUD_SUPPLIER_UNAVAILABLE'
+    for lang in ('en','zh'):
+        text=recovery_text(s,lang)
+        assert 'browser target' not in text and '浏览器' not in text and 'top up' not in text
+    text=ApiErrorSummaryMixin._summarize_api_error(error)
+    assert 'provider' in text.lower() and 'top up' not in text.lower()

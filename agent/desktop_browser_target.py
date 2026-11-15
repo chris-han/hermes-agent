@@ -211,8 +211,8 @@ def assets():
     return json.loads((Path(__file__).resolve().parents[1]/'semantier-runtime/src/prompts/agents/DESKTOP_BROWSER_TARGET_INTENT.json').read_text(encoding='utf-8'))
 
 
-def cloud_billing_failure_code(error):
-    """Only recognized Cloud machine codes become actionable Billing guidance."""
+def cloud_failure_code(error):
+    """Only recognized Cloud machine codes become actionable recovery guidance."""
     body = getattr(error, 'body', None)
     if not isinstance(body, dict):
         return None
@@ -220,11 +220,12 @@ def cloud_billing_failure_code(error):
     code = detail.get('code') if isinstance(detail, dict) else detail
     return {'cloud_credit_insufficient':'CLOUD_TOP_UP_REQUIRED',
             'cloud_budget_exceeded':'CLOUD_BUDGET_REQUIRED',
-            'cloud_billing_reconciliation_required':'CLOUD_BILLING_REVIEW_REQUIRED'}.get(code) if isinstance(code, str) else None
+            'cloud_billing_reconciliation_required':'CLOUD_BILLING_REVIEW_REQUIRED',
+            'cloud_supplier_execution_unavailable':'CLOUD_SUPPLIER_UNAVAILABLE'}.get(code) if isinstance(code, str) else None
 
 
-def cloud_billing_recovery_text(error, language='en'):
-    code = cloud_billing_failure_code(error)
+def cloud_recovery_text(error, language='en'):
+    code = cloud_failure_code(error)
     return assets()['recovery']['zh' if str(language).startswith('zh') else 'en'][code] if code else None
 
 
@@ -325,7 +326,7 @@ def prelude(state: BrowserTurnState,agent,message,history):
     except Exception as error:
         logger.exception('Desktop intent proposal failed: %s', type(error).__name__,
                          exc_info=(RuntimeError, RuntimeError(type(error).__name__), None))
-        state.native_failure=failure(cloud_billing_failure_code(error) or 'INTENT_UNAVAILABLE')
+        state.native_failure=failure(cloud_failure_code(error) or 'INTENT_UNAVAILABLE')
         return
     state.binding=replace(state.binding,turn_id=str(getattr(agent,'_current_turn_id',None) or state.binding.turn_id))
     selection_error = state.select(proposal['target_kind'])
