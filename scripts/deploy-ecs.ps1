@@ -575,6 +575,63 @@ function Read-RunCheckpoint([string]$Path) {
   }
   return $last
 }
+function Get-ExpiredEcsUploadCleanup([string]$Root, [string]$CurrentStage) {
+  if($Root -cnotmatch '^/[A-Za-z0-9_./-]+$' -or $Root.Contains('/../') -or
+     $CurrentStage -cnotmatch ('^'+[Regex]::Escape($Root)+'/\.semantier-stage-[a-f0-9]{32}$')) {
+    throw 'Invalid ECS upload cleanup scope.'
+  }
+  # Only unpublished, inactive uploads older than 24h. Live MSIX/Setup/catalog
+  # retirement remains under the existing verified-Landing cleanup below.
+  $command=@'
+python3 - '__ROOT__' '__CURRENT__' <<'PY'
+import json,os,re,stat,sys,time
+from pathlib import Path
+root,current=map(Path,sys.argv[1:])
+if root.is_symlink() or root.resolve()!=root:
+    raise RuntimeError('Upload root must be a real canonical directory')
+cutoff=time.time()-86400
+removed=[]
+reclaimed=0
+for stage in sorted(root.iterdir()):
+    if stage==current or not re.fullmatch(r'\.semantier-stage-[a-f0-9]{32}',stage.name):
+        continue
+    meta=stage.lstat()
+    if not stat.S_ISDIR(meta.st_mode) or stat.S_IMODE(meta.st_mode)&0o077:
+        continue
+    entries=list(stage.iterdir())
+    if not entries or any(p.name not in {'SemantierAgent.msix','SemantierAgent.msix.sha256'} for p in entries):
+        continue
+    snapshots={p:p.lstat() for p in entries}
+    if any(not stat.S_ISREG(s.st_mode) or s.st_uid!=meta.st_uid or s.st_mtime>=cutoff for s in snapshots.values()):
+        continue
+    active=False
+    for proc in Path('/proc').glob('[0-9]*'):
+        try:
+            if proc.stat().st_uid!=meta.st_uid:
+                continue
+            for fd in (proc/'fd').iterdir():
+                try:
+                    if Path(os.readlink(fd)) in snapshots:
+                        active=True
+                except FileNotFoundError:
+                    pass
+        except (FileNotFoundError,ProcessLookupError):
+            pass
+    def unchanged(a,b):
+        fields=('st_ino','st_dev','st_mode','st_uid','st_size','st_mtime_ns','st_ctime_ns')
+        return all(getattr(a,k)==getattr(b,k) for k in fields)
+    if active or not unchanged(stage.lstat(),meta) or any(not unchanged(p.lstat(),s) for p,s in snapshots.items()):
+        continue
+    for p,s in snapshots.items():
+        p.unlink()
+        reclaimed+=s.st_size
+    stage.rmdir()
+    removed.append(str(stage))
+print(json.dumps({'result':'EXPIRED_UPLOAD_CLEANUP_PASS','removed':removed,'bytes':reclaimed}))
+PY
+'@
+  return $command.Replace('__ROOT__',$Root).Replace('__CURRENT__',$CurrentStage)
+}
 function Save-Json($Value, [string]$Path) {
   $temporary=$Path+'.tmp'
   [IO.File]::WriteAllText($temporary, (ConvertTo-Json -InputObject $Value -Depth 32), $utf8)
@@ -1813,6 +1870,10 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output);let app;const err
   # Upload outside Caddy's document root; mv on the SAME filesystem is atomic.
   $remoteMsix="$RemoteRoot/releases/SemantierAgent.msix"
   $remoteProof="set -eu; test `$(sha256sum '$remoteMsix' | cut -d' ' -f1) = '$hash'; test -s '$RemoteRoot/releases/installers/semantier-setup-ch1.exe'"
+  $posixParent=$RemoteRoot.Substring(0,$RemoteRoot.LastIndexOf('/'))
+  $stage="$posixParent/.semantier-stage-$([Guid]::NewGuid().ToString('N'))"
+  if($receipt.Contains('remoteStage')) {$stage=[string]$receipt.remoteStage}
+  if($stage -cnotmatch ('^'+[Regex]::Escape($posixParent)+'/\.semantier-stage-[a-f0-9]{32}$')) {throw 'Invalid saved staging path.'}
   if($script:checkpoints.ContainsKey('published')) {
     if($BuildMode -eq 'Prod'){$null=Ssh $remoteProof}
     Report-Status 'Remote published hashes still match; skipping upload and activation.'
@@ -1821,10 +1882,6 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output);let app;const err
   $remoteSetup="$RemoteRoot/releases/installers/semantier-setup-ch1.exe"
   $msixSize=(Get-Item -LiteralPath $signed).Length
   # Compute the POSIX parent in PowerShell without Windows Split-Path (which uses backslashes).
-  $posixParent=$RemoteRoot.Substring(0,$RemoteRoot.LastIndexOf('/'))
-  $stage="$posixParent/.semantier-stage-$([Guid]::NewGuid().ToString('N'))"
-  if($receipt.Contains('remoteStage')) {$stage=[string]$receipt.remoteStage}
-  if($stage -cnotmatch ('^'+[Regex]::Escape($posixParent)+'/\.semantier-stage-[a-f0-9]{32}$')) {throw 'Invalid saved staging path.'}
   $minimumFree=$msixSize+67108864
   $prepare=@'
 set -eu
@@ -1842,7 +1899,7 @@ mkdir -m 700 "$stage"
   Report-Status 'Checking ECS staging capacity and preparing the upload directory.'
   $null=Ssh $prepare
   $receipt.remoteStage=$stage
-  Save-Json $receipt (Join-Path $Output 'result.json')
+  Complete-Checkpoint 'upload-prepared'
   Upload $signed "$stage/SemantierAgent.msix"
   Upload $sidecar "$stage/SemantierAgent.msix.sha256"
   $publish=@'
@@ -1889,6 +1946,12 @@ printf 'SINGLE_MSIX_ATOMIC_REPLACE_PASS\n'
     $receipt.publicReadback='FULL_MSIX_H3_DOWNLOAD_MATCHES_LOCAL_SIGNED_SHA256'
   }
   Save-Json $receipt (Join-Path $Output 'result.json')
+
+  if (!$SkipOldCleanup) {
+    Report-Status 'Retiring expired inactive ECS upload stages after verified publication.'
+    $receipt.expiredUploads=Ssh (Get-ExpiredEcsUploadCleanup -Root $posixParent -CurrentStage $stage)
+    Complete-Checkpoint 'expired-uploads'
+  }
 
   # Cleanup is permitted only after the deployed CN Landing stops depending on
   # legacy catalog.json. Check the ACTUAL production page with a browser.
