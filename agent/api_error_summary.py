@@ -158,6 +158,11 @@ class ApiErrorSummaryMixin:
         Cloudflare HTML pages → ``<title>``; network/DNS failures (even SDK-wrapped) → offline hint; else
         truncated str(error).
         """
+        from agent.desktop_browser_target import cloud_billing_recovery_text
+        cloud_recovery = cloud_billing_recovery_text(error)
+        if cloud_recovery:
+            return cloud_recovery
+
         raw = str(error)
 
         current: Optional[BaseException] = error
