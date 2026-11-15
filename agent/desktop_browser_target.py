@@ -388,6 +388,10 @@ def prelude(state: BrowserTurnState,agent,message,history):
 def finish_failed_browser_prelude(agent, loop_state, action):
     state = state_for_agent(agent)
     if state is not None and state.native_failure is not None:
+        # An unavailable target proposal cannot authorize browser tools, but
+        # must not prevent the main model from answering an unrelated question.
+        if state.kind == 'UNRESOLVED' and state.native_failure.get('code') in ('INTENT_UNAVAILABLE', 'TARGET_UNRESOLVED'):
+            return action
         loop_state.final_response = recovery_text(state, getattr(state, 'language', 'en'))
         loop_state._turn_exit_reason = 'browser_target_unavailable'
         return 'break'

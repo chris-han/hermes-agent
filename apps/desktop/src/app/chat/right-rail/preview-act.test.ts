@@ -9,6 +9,7 @@ import { closeRightRail, openPreview, type PreviewTarget } from '@/store/preview
 import { actOnActivePreview } from './preview-act'
 import { registerPreviewInput } from './preview-input'
 import { registerPreviewNav } from './preview-nav'
+import { activePreviewBinding, registerPreviewPageReader } from './preview-reader'
 import { registerPreviewFrameRunner, registerPreviewScriptRunner } from './preview-script-runner'
 
 function urlTarget(url: string): PreviewTarget {
@@ -218,6 +219,28 @@ describe('actOnActivePreview (drive_preview tool)', () => {
   }
 
   const sentTypes = (send: ReturnType<typeof vi.fn>) => send.mock.calls.map(([event]) => event.type)
+
+  it.each(['navigation', 'replacement', 'cancellation'])('keeps completed input separate from %s during readback', async change => {
+    withDrivenPane()
+    const tabId = $rightRailActiveTabId.get()!
+    let epoch = 1
+    let guest = 17
+    const controller = new AbortController()
+    cleanups.push(registerPreviewPageReader(tabId, async () => ({ text: '', title: '', url: 'https://example.com' }),
+      () => ({ guest_id: guest, page_epoch: epoch, loading: false })))
+    cleanups.push(registerPreviewInput(tabId, { focus: () => {}, send: event => {
+      if (event.type !== 'mouseUp') {return}
+      if (change === 'navigation') {epoch++}
+      if (change === 'replacement') {guest++}
+      if (change === 'cancellation') {controller.abort('interrupted')}
+    } }))
+    const result = actOnActivePreview({ kind: 'click', ref: '@e1', expectedBinding: activePreviewBinding()! }, controller.signal)
+    if (change === 'navigation') {
+      await expect(result).resolves.toMatchObject({ success: true, acted: expect.stringContaining('clicked'), note: expect.stringContaining('navigating') })
+    } else {
+      await expect(result).rejects.toThrow('STALE_TARGET')
+    }
+  })
 
   it('clicks with real input, walking the pointer to where the page said', async () => {
     const send = withDrivenPane()

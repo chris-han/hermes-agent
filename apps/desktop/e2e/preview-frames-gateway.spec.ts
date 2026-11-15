@@ -38,11 +38,12 @@ test('desktop tools read and drive an authenticated cross-origin frame', async (
         return res.end('Sign in required')
       }
       return res.end(
-        `<h1>Authenticated outer</h1><iframe src="http://localhost:${(site.address() as any).port}/child" style="width:600px;height:300px"></iframe>`
+        `<h1>Authenticated outer</h1><button onclick="document.querySelector('#root-hit').textContent='Root click trusted: '+event.isTrusted">Root action</button><p id="root-hit"></p><iframe src="http://localhost:${(site.address() as any).port}/child" style="width:600px;height:300px"></iframe>`
       )
     }
+    if (req.url === '/child-next') {return res.end('<p>Frame navigation completed</p>')}
     return res.end(
-      `<p>Frame account details</p><button onclick="document.querySelector('#hit').textContent='Click trusted: '+event.isTrusted">Frame action</button><label>Frame field<input oninput="document.querySelector('#typed').textContent='Type trusted: '+event.isTrusted+' '+this.value"></label><p id="hit"></p><p id="typed"></p>`
+      `<button onclick="location.href='/child-next'">Next frame page</button><p>Frame account details</p><button onclick="document.querySelector('#hit').textContent='Click trusted: '+event.isTrusted">Frame action</button><label>Frame field<input oninput="document.querySelector('#typed').textContent='Type trusted: '+event.isTrusted+' '+this.value"></label><p id="hit"></p><p id="typed"></p>`
     )
   })
   await listen(site, '::')
@@ -77,10 +78,11 @@ test('desktop tools read and drive an authenticated cross-origin frame', async (
                     type: 'function',
                     function: {
                       name: 'browser_target_intent',
-                      arguments: JSON.stringify({
-                        target_kind: visible ? 'VISIBLE_PANE' : 'NONE',
-                        operation: visible ? 'existing' : 'none'
-                      })
+                      // A malformed auxiliary proposal must not block the initial ordinary chat.
+                      arguments: visible ? JSON.stringify({
+                        target_kind: 'VISIBLE_PANE',
+                        operation: 'existing'
+                      }) : 'not-json'
                     }
                   }
                 ]
@@ -112,17 +114,19 @@ test('desktop tools read and drive an authenticated cross-origin frame', async (
       .find((entry: any) => Array.isArray(entry?.elements))
     const count = toolResults.filter((entry: any) => !String(entry.content).includes('"tools":')).length
     const button = inventory?.elements?.find((element: any) => element.label === 'Frame action')?.ref
+    const rootButton = inventory?.elements?.find((element: any) => element.label === 'Root action')?.ref
+    const next = inventory?.elements?.find((element: any) => element.label === 'Next frame page')?.ref
     const field = inventory?.elements?.find((element: any) => element.label === 'Frame field')?.ref
-    let call: any
-    if (prompt.includes('Inspect the frame fixture') && count === 2 && button) {
-      call = { name: 'drive_preview', arguments: { action: 'click', ref: button } }
-    }
-    if (prompt.includes('Inspect the frame fixture') && count === 3 && field) {
-      call = { name: 'drive_preview', arguments: { action: 'type', ref: field, text: 'synthetic' } }
-    }
-    if (prompt.includes('Inspect the frame fixture') && count === 4) {
-      call = { name: 'desktop_preview', arguments: { action: 'read' } }
-    }
+    const steps = [undefined, undefined,
+      ['drive_preview', { action: 'click', ref: rootButton }],
+      ['drive_preview', { action: 'click', ref: button }],
+      ['drive_preview', { action: 'type', ref: field, text: 'synthetic' }],
+      ['desktop_preview', { action: 'read' }],
+      ['drive_preview', { action: 'click', ref: next }],
+      ['desktop_preview', { action: 'read' }]
+    ] as const
+    const step = prompt.includes('Inspect the frame fixture') ? steps[count] : undefined
+    const call = step ? { name: step[0], arguments: step[1] } : undefined
     const message = call
       ? {
           role: 'assistant',
@@ -191,6 +195,9 @@ test('desktop tools read and drive an authenticated cross-origin frame', async (
     await composer.press('Enter')
     await expect(page.getByText('FRAME_DONE', { exact: true })).toBeVisible({ timeout: 90_000 })
     const combined = results.map(result => result.content).join('\n')
+    expect(combined).toContain('Root click trusted: true')
+    expect(combined).toContain('Frame navigation completed')
+    expect(results.map(result => JSON.parse(result.content)).filter(result => result.success === false)).toEqual([])
     expect(combined).toContain('Frame account details')
     expect(combined).toContain('frame:')
     expect(combined).toContain('Click trusted: true')

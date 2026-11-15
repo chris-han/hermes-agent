@@ -113,6 +113,23 @@ describe('preview frame debugger', () => {
     frames.dispose()
   })
 
+  it('reports a delivered mouse release even when its click navigates the frame', async () => {
+    const dbg = new Debugger()
+    const original = dbg.sendCommand.getMockImplementation()!
+    const frames = new PreviewFrames(dbg as never)
+    const child = (await frames.snapshot())[1]
+    dbg.sendCommand.mockImplementation(async (method, params, session) => {
+      if (method === 'Input.dispatchMouseEvent' && (params as any).type === 'mouseReleased') {
+        dbg.emit('message', {}, 'Runtime.executionContextDestroyed', { executionContextId: 1 }, 'child-session')
+      }
+      return original(method, params, session)
+    })
+    await expect(frames.input(child, { type: 'mouseUp', x: 23, y: 42, button: 'left', clickCount: 1 })).resolves.toBeUndefined()
+    // A subsequent action still cannot target the retired document.
+    await expect(frames.input(child, { type: 'mouseDown', x: 23, y: 42, button: 'left', clickCount: 1 })).rejects.toThrow('STALE_FRAME')
+    frames.dispose()
+  })
+
   it('reports child-session initialization failures instead of returning a partial tree', async () => {
     const dbg = new Debugger()
     const original = dbg.sendCommand.getMockImplementation()!

@@ -180,8 +180,8 @@ export class PreviewFrames {
    * compositor and still produces trusted events in the focused document. */
   async input(frame: PreviewFrame, event: any): Promise<void> {
     await this.start()
-    const verify = () => {
-      if (this.contexts.get(this.key(frame.sessionId, frame.id)) !== frame.contextId) {
+    const verify = (deliveredRelease = false) => {
+      if (!deliveredRelease && this.contexts.get(this.key(frame.sessionId, frame.id)) !== frame.contextId) {
         throw new Error('STALE_FRAME')
       }
     }
@@ -251,7 +251,9 @@ export class PreviewFrames {
     } else {
       throw new Error('INVALID_INPUT')
     }
-    verify()
+    // A completed mouse release can synchronously navigate the document.
+    // Delivery succeeded; the next input still verifies its original context.
+    verify(event.type === 'mouseUp')
   }
 
   /** Map child-frame viewport coordinates into the guest viewport. A null

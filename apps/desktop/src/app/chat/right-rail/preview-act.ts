@@ -495,7 +495,7 @@ async function runJson(run: PreviewScriptRunner, code: string): Promise<Trip> {
   // awaits native promises only, otherwise IPC clones the thenable's state.
   // An async function adopts it into a native promise without changing the page.
   const raw = await Promise.race([
-    run(`(async () => (${code}))()`).catch((error: unknown) => new Error(String(error))),
+    Promise.resolve().then(() => run(`(async () => (${code}))()`)).catch((error: unknown) => new Error(String(error))),
     new Promise<undefined>(resolve => setTimeout(resolve, ACT_TIMEOUT_MS))
   ])
 
@@ -561,7 +561,8 @@ async function driveAction(
   input: PreviewInputHandle,
   action: PreviewActAction,
   signal?: AbortSignal,
-  mapFramePoint?: (point: { x: number; y: number }) => Promise<{ visible: boolean; x: number; y: number }>
+  mapFramePoint?: (point: { x: number; y: number }) => Promise<{ visible: boolean; x: number; y: number }>,
+  verifyDelivery?: () => void
 ): Promise<PreviewActResult> {
   // A key press must not be preceded by a click — that would activate the
   // control rather than type into it — so the page hands it focus instead.
@@ -683,6 +684,7 @@ async function driveAction(
 
   const target = String(found.acted || '').replace(/^looking at /, '')
   const after = await runJson(run, buildFinishScript(SETTLE_MS))
+  verifyDelivery?.()
   const acted = describeDone(action, target)
 
   // The action itself already happened as real input, so a page that will not
@@ -847,9 +849,11 @@ export async function actOnActivePreview(
 ): Promise<PreviewActResult> {
   const expectedBinding = action.expectedBinding ?? activePreviewBinding(owner) ?? undefined
   let frameGuard = false
-  const assertBoundPage = () => {
+  const assertBoundPage = (afterInput = false) => {
     if ((expectedBinding || frameGuard) && signal?.aborted) { throw new Error('STALE_TARGET') }
-    const code = expectedBinding ? bindingStatus(expectedBinding,false,owner) : null
+    // Only a delivery receipt may tolerate navigation. Input and DOM reads
+    // still require the original epoch, owner and guest.
+    const code = expectedBinding ? bindingStatus(expectedBinding,afterInput,owner,afterInput) : null
 
     if (code) { throw new Error(code) }
   }
@@ -900,7 +904,7 @@ export async function actOnActivePreview(
       assertBoundPage()
       targetPoint = point
       return frameRunner.mapPoint(token, point)
-    })
+    }, () => assertBoundPage(true))
     return prefixFrameResult(result, token)
   }
 
@@ -932,7 +936,7 @@ export async function actOnActivePreview(
   }
 
   if (input && DRIVEN.indexOf(typed.kind) !== -1) {
-    return driveAction(run, input, typed, signal)
+    return driveAction(run, input, typed, signal, undefined, () => assertBoundPage(true))
   }
 
   // A plain page scroll is a wheel gesture. Jumping to an end is not — no hand

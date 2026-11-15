@@ -173,3 +173,27 @@ def test_text_only_cloud_intent_uses_validated_json_without_enabling_tools(tmp_p
     assert len(seen)==1 and not seen[0].get('tools') and 'tool_choice' not in seen[0]
     assert seen[0]['max_tokens']==512
     assert 'JSON' in seen[0]['messages'][0]['content']
+
+
+@pytest.mark.parametrize('code', ['INTENT_UNAVAILABLE', 'TARGET_UNRESOLVED'])
+def test_unresolved_browser_intent_does_not_block_non_browser_answer(code):
+    from agent.desktop_browser_target import finish_failed_browser_prelude
+    s = state()
+    s.native_failure = failure(code)
+    agent = SimpleNamespace(_desktop_browser_turn=s)
+    loop = SimpleNamespace(final_response='', _turn_exit_reason=None)
+    assert finish_failed_browser_prelude(agent, loop, 'continue') == 'continue'
+    assert loop.final_response == ''
+    assert s.guard('terminal', {'command': 'echo ok'}) is None
+    for tool in ('desktop_preview', 'drive_preview', 'browser_exec'):
+        assert s.guard(tool, {})['code'] == code
+
+
+@pytest.mark.parametrize('code', ['WRONG_OWNER', 'PANE_UNAVAILABLE', 'CLOUD_SUPPLIER_UNAVAILABLE', 'CLOUD_TOP_UP_REQUIRED'])
+def test_owner_and_cloud_failures_still_stop_the_prelude(code):
+    from agent.desktop_browser_target import finish_failed_browser_prelude
+    s = state()
+    s.native_failure = failure(code)
+    loop = SimpleNamespace(final_response='', _turn_exit_reason=None)
+    assert finish_failed_browser_prelude(SimpleNamespace(_desktop_browser_turn=s), loop, 'continue') == 'break'
+    assert loop.final_response
