@@ -162,7 +162,7 @@ export const createBillingApi = (requestGateway: BillingRequestGateway): Billing
     callBilling<BillingChargeStatusResponse>(requestGateway, 'billing.charge_status', { charge_id: chargeId }),
   fetchBillingState: async signal => {
     const result = await callBilling<BillingBackendState>(requestGateway, 'billing.state',
-      { schema_version: 'semantier.billing.v2' }, signal, 1200)
+      { schema_version: 'semantier.billing.v2' }, signal, 30_000)
 
     // Only an identified older Semantier runtime negotiates down; never route to Nous.
     return !result.ok && result.refusal.backend === 'semantier' && result.refusal.kind === 'unsupported_version'

@@ -44,7 +44,7 @@ describe('createBillingApi', () => {
     const response = await result.current.fetchBillingState()
 
     expect(response).toEqual({ data: state, ok: true })
-    expect(requestGatewayMock).toHaveBeenCalledWith('billing.state', { schema_version: 'semantier.billing.v2' }, 1200, undefined)
+    expect(requestGatewayMock).toHaveBeenCalledWith('billing.state', { schema_version: 'semantier.billing.v2' }, 30_000, undefined)
   })
 
   it('normalizes object-shaped refusal envelopes', async () => {
@@ -220,7 +220,7 @@ it('negotiates Semantier v1 and retains currency-safe state without Nous coercio
   requestGatewayMock.mockResolvedValueOnce(state)
   const result = await createBillingApi(requestGatewayMock).fetchBillingState()
   expect(result).toEqual({ ok: true, data: state })
-  expect(requestGatewayMock).toHaveBeenLastCalledWith('billing.state', { schema_version: 'semantier.billing.v2' }, 1200, undefined)
+  expect(requestGatewayMock).toHaveBeenLastCalledWith('billing.state', { schema_version: 'semantier.billing.v2' }, 30_000, undefined)
 })
 
 it('negotiates down only for an explicitly unsupported Semantier v2 runtime', async () => {
@@ -233,4 +233,22 @@ it('negotiates down only for an explicitly unsupported Semantier v2 runtime', as
   request.mockReset().mockResolvedValue({ ok: false, backend: 'semantier', error: 'billing_unavailable' })
   await api.fetchBillingState()
   expect(request).toHaveBeenCalledTimes(1)
+})
+
+it('waits for a slow genuine Billing read instead of inventing an unavailable state', async () => {
+  vi.useFakeTimers()
+
+  try {
+    const request = vi.fn((_method, _params, timeoutMs) => new Promise((resolve, reject) => {
+      const deadline = setTimeout(() => reject(new Error('RPC timeout')), timeoutMs)
+      setTimeout(() => { clearTimeout(deadline); resolve({ ok: true, data: { schema_version: 'semantier.billing.v2' } }) }, 1500)
+    }))
+
+    const result = createBillingApi(request).fetchBillingState()
+    await vi.advanceTimersByTimeAsync(1501)
+    expect((await result).ok).toBe(true)
+    expect(request).toHaveBeenCalledTimes(1)
+  } finally {
+    vi.useRealTimers()
+  }
 })
