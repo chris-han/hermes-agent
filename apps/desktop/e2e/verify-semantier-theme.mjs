@@ -61,12 +61,36 @@ try {
     )
   assert.equal(await page.locator('html').getAttribute('data-hermes-theme'), 'semantier')
   await page.evaluate(async () => {
-    await document.fonts.load('400 14px "Manrope"', 'Workspace')
-    await document.fonts.load('500 14px "Manrope"', 'Continue')
-    await document.fonts.load('600 24px "Manrope"', 'Semantier')
+    await document.fonts.load('400 14px "Source Sans 3"', 'Workspace')
+    await document.fonts.load('500 14px "Source Sans 3"', 'Continue')
+    await document.fonts.load('700 24px "Manrope"', 'semantier')
     await document.fonts.load('400 14px "Noto Sans SC"', '司序科技')
     await document.fonts.ready
   })
+  // CDP reports the actual glyph-producing faces, not only the computed stack.
+  const fontSession = await context.newCDPSession(page)
+  let renderedFonts
+  try {
+    await fontSession.send('DOM.enable')
+    await fontSession.send('CSS.enable')
+    const { root } = await fontSession.send('DOM.getDocument')
+    renderedFonts = {}
+    for (const [name, selector] of [
+      ['mixed', '[data-testid="mixed-script"]'],
+      ['identity', '.wordmark'],
+      ['code', '[data-testid="mixed-script"] code']
+    ]) {
+      const { nodeId } = await fontSession.send('DOM.querySelector', { nodeId: root.nodeId, selector })
+      assert(nodeId, 'Missing typography specimen: ' + selector)
+      const { fonts } = await fontSession.send('CSS.getPlatformFontsForNode', { nodeId })
+      renderedFonts[name] = fonts.map(({ familyName, isCustomFont, glyphCount }) => ({ familyName, isCustomFont, glyphCount }))
+    }
+    assert(renderedFonts.mixed.some(font => font.familyName.includes('Source Sans 3') && font.isCustomFont))
+    assert(renderedFonts.mixed.some(font => font.familyName.includes('Noto Sans SC') && font.isCustomFont))
+    assert(renderedFonts.identity.some(font => font.familyName.includes('Manrope') && font.isCustomFont))
+  } finally {
+    await fontSession.detach()
+  }
   for (const width of [1440, 760]) {
     await page.setViewportSize({ width, height: 1000 })
     for (const mode of ['light', 'dark']) {
@@ -115,11 +139,17 @@ try {
           radius: primary.borderRadius,
           overflow: document.documentElement.scrollWidth > innerWidth,
           font: panel.fontFamily,
+          faceCounts: Object.fromEntries(['Source Sans 3', 'Manrope', 'Noto Sans SC'].map(family => [family, {
+            loaded: [...document.fonts].filter(face => face.family === family && face.status === 'loaded').length,
+            pending: [...document.fonts].filter(face => face.family === family && face.status !== 'loaded').length
+          }])),
           stage: style('section').backgroundColor,
           icon: document.querySelector('[data-testid="primary"] svg').getAttribute('viewBox'),
-          fontsLoaded:
-            document.fonts.check('400 14px "Manrope"', 'Workspace') &&
-            document.fonts.check('400 14px "Noto Sans SC"', '司序科技')
+          fontsLoaded: {
+            functional: document.fonts.check('400 14px "Source Sans 3"', 'Workspace'),
+            identity: document.fonts.check('700 24px "Manrope"', 'semantier'),
+            chinese: document.fonts.check('400 14px "Noto Sans SC"', '司序科技')
+          }
         }
       })
       for (const key of ['quiet', 'primary', 'danger']) assert(values[key] >= 4.5, key + ' contrast: ' + values[key])
@@ -127,7 +157,7 @@ try {
       assert.equal(values.outline, '2px')
       assert.equal(values.radius, '3px')
       assert.equal(values.icon, '0 0 256 256')
-      assert(values.fontsLoaded)
+      assert(Object.values(values.fontsLoaded).every(Boolean), 'Required bundled font missing: ' + JSON.stringify({ checks: values.fontsLoaded, faces: values.faceCounts }))
       assert(!values.overflow)
       if (mode === 'dark') assert.equal(values.stage, 'rgb(0, 0, 0)')
       await page.screenshot({ path: path.join(output, 'chat-' + mode + '-' + width + '.png') })
@@ -183,6 +213,7 @@ try {
     browser: await browser.version(),
     platform: localRenderer ? 'Linux isolated Chromium; Windows qualification NOT_RUN' : 'Windows Chrome CDP',
     results,
+    renderedFonts,
     settings: 'PASS',
     keyboard: 'PASS',
     reload: 'PASS',

@@ -94,6 +94,7 @@
     "@dnd-kit/utilities": "3.2.2",
     "@fontsource/manrope": "5.2.8",
     "@fontsource/noto-sans-sc": "5.2.9",
+    "@fontsource/source-sans-3": "5.3.1",
     "@hermes/shared": "file:../shared",
     "@icons-pack/react-simple-icons": "13.11.1",
     "@lezer/highlight": "1.2.3",

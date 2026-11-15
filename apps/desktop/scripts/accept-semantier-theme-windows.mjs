@@ -365,7 +365,7 @@ async function selectProfile(page,name) {
 
 async function fontsAndRoles(page) {
   const evidence=await page.evaluate(async()=>{
-    const samples=[['Manrope','Semantier'],['Noto Sans SC','中文默认语言'],['JetBrains Mono','0O1Il']]
+    const samples=[['Source Sans 3','Workspace'],['Manrope','Semantier'],['Noto Sans SC','中文默认语言'],['JetBrains Mono','0O1Il']]
     const fonts=[]
     for(const [family,sample] of samples) for(const weight of [400,500,600,700]) {
       const loaded=await document.fonts.load(weight+' 16px "'+family+'"',sample)

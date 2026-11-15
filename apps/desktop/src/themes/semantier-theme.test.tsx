@@ -79,7 +79,7 @@ describe('Semantier desktop appearance', () => {
       expect(root.dataset.hermesDesign).toBe('asimov')
       expect(root.style.getPropertyValue('--dt-primary-solid')).toBe('#e8c92d')
       expect(root.style.getPropertyValue('--dt-primary-solid-foreground')).toBe('#1a2028')
-      expect(root.style.getPropertyValue('--dt-font-sans')).toMatch(/^"Manrope", "Noto Sans SC"/)
+      expect(root.style.getPropertyValue('--dt-font-sans')).toMatch(/^"Source Sans 3", "Noto Sans SC"/)
     }
 
     act(() => theme.setTheme('mono'))

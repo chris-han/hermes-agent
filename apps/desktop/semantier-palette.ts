@@ -22,7 +22,7 @@ export const SYSTEM_MONO =
 export const ACTION_YELLOW = '#e8c92d'
 export const ACTION_INK = '#1a2028'
 
-export const SEMANTIER_FONT_SANS = '"Manrope", "Noto Sans SC", "Microsoft YaHei", "PingFang SC", ' + SYSTEM_SANS
+export const SEMANTIER_FONT_SANS = '"Source Sans 3", "Noto Sans SC", "Microsoft YaHei", "PingFang SC", ' + SYSTEM_SANS
 
 export const SEMANTIER_LIGHT_COLORS = {
   background: '#f3f4f5',

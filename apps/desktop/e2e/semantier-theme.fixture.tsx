@@ -20,7 +20,7 @@ function Surface() {
   return (
     <div className="grid h-dvh min-w-0 grid-rows-[48px_1fr] sm:grid-cols-[224px_minmax(0,1fr)] sm:grid-rows-[1fr]">
       <aside className="flex gap-2 border-b border-(--dt-border) bg-(--ui-bg-sidebar) p-3 sm:flex-col sm:border-r sm:border-b-0">
-        <strong className="mr-auto text-sm">semantier</strong>
+        <strong className="wordmark mr-auto text-sm">semantier</strong>
         <Button onClick={() => showSettings(false)} variant="ghost">
           Chat
         </Button>
@@ -52,6 +52,10 @@ function Surface() {
                 <p className="mb-3 text-sm">Review evidence, work with tools, and keep the conversation in view.</p>
                 <p className="text-sm" data-testid="chinese">
                   司序科技 · 让组织知识成为可持续运作的智能。
+                </p>
+                <p className="text-sm" data-testid="mixed-script" lang="zh-CN">
+                  司序科技：2026 年 Q4，发票 ¥1,234.56（含税）；“Lineage” — model gpt-6.1，状态 OK…「证据」（A/B）！{' '}
+                  <code className="font-mono">fee_2026_Q4 = 1234.56</code>
                 </p>
                 <p className="mt-4 text-xs text-(--ui-text-tertiary)" data-testid="quiet">
                   Local workspace · Ready for your next task

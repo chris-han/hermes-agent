@@ -7,6 +7,20 @@
 @import '@fontsource/manrope/500.css';
 @import '@fontsource/manrope/600.css';
 @import '@fontsource/manrope/700.css';
+@import '@fontsource/source-sans-3/latin-400.css';
+@import '@fontsource/source-sans-3/latin-ext-400.css';
+@import '@fontsource/source-sans-3/latin-500.css';
+@import '@fontsource/source-sans-3/latin-ext-500.css';
+@import '@fontsource/source-sans-3/latin-600.css';
+@import '@fontsource/source-sans-3/latin-ext-600.css';
+@import '@fontsource/source-sans-3/latin-700.css';
+@import '@fontsource/source-sans-3/latin-ext-700.css';
+@import '@fontsource/source-sans-3/latin-400-italic.css';
+@import '@fontsource/source-sans-3/latin-ext-400-italic.css';
+@import '@fontsource/source-sans-3/latin-600-italic.css';
+@import '@fontsource/source-sans-3/latin-ext-600-italic.css';
+@import '@fontsource/source-sans-3/latin-700-italic.css';
+@import '@fontsource/source-sans-3/latin-ext-700-italic.css';
 @import '@fontsource/noto-sans-sc/400.css';
 @import '@fontsource/noto-sans-sc/500.css';
 @import '@fontsource/noto-sans-sc/600.css';
@@ -117,7 +131,7 @@ body:has([data-collapsed-sessions-rail]) [data-titlebar-cluster='left'] [data-to
    (this variant) flatten everything into one shared scroll. See ChatSidebar. */
 @custom-variant compact (@media (max-height: 768px));
 
-/* Manrope/Noto Sans SC are bundled above, including every UI weight. */
+/* Source Sans 3 serves functional UI/chat; Manrope serves identity; Noto Sans SC covers Chinese. */
 
 @font-face {
   font-family: 'Collapse';
@@ -1750,6 +1764,7 @@ body.guest-pointer-lock :is(webview, iframe) {
    The editor owns its scope too, including inline edits and floating composers. */
 [data-slot='aui_thread-content'],
 [data-slot='composer-rich-input'] {
+  font-family: var(--font-chat, var(--dt-font-sans));
   --conversation-text-scale: var(--chat-text-scale, 1);
   --conversation-text-font-size: calc(var(--conversation-text-base-size) * var(--chat-text-scale, 1));
   --conversation-tool-font-size: calc(var(--conversation-tool-base-size) * var(--chat-text-scale, 1));
@@ -1839,13 +1854,8 @@ body.guest-pointer-lock :is(webview, iframe) {
   text-align: start;
 }
 
-/* Keyed on the UI language, not installed fonts: PingFang/YaHei ship on every
-   Mac/Windows box and would restyle Latin text for everyone. CJK-first is what
-   makes shared codepoints (…—“”) render full-width. */
-[data-slot='composer-rich-input']:lang(zh) {
-  font-family: 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', var(--dt-font-sans);
-}
-
+/* Simplified Chinese shares the Latin-first functional font stack. Keep
+   traditional Chinese and Japanese overrides for their distinct glyph forms. */
 [data-slot='composer-rich-input']:lang(zh-hant) {
   font-family: 'PingFang TC', 'Microsoft JhengHei', 'Noto Sans CJK TC', var(--dt-font-sans);
 }
@@ -1980,7 +1990,7 @@ body.guest-pointer-lock :is(webview, iframe) {
    something a class-merge or a missed scan can quietly drop, leaving the
    wordmark rendered in body text. */
 .wordmark {
-  font-family: 'Manrope', var(--font-sans);
+  font-family: var(--font-identity, 'Manrope', sans-serif);
   font-weight: 700;
   line-height: 1.1;
   text-transform: none;
@@ -3981,7 +3991,11 @@ html[data-hud-window] [data-slot='popover-content'] {
   --ui-blue: var(--ui-info);
   --conversation-text-base-size: 0.875rem;
   --conversation-tool-base-size: 0.75rem;
-  --conversation-base-line-height: 1.25rem;
+  --conversation-base-line-height: 1.4375rem;
+  --font-identity: 'Manrope', 'Noto Sans SC', sans-serif;
+  --font-ui: var(--dt-font-sans);
+  --font-chat: var(--font-ui);
+  --font-report-ui: var(--font-ui);
   --dt-radius-control: 3px;
   --dt-radius-content: 4px;
   --dt-radius-panel: 8px;
