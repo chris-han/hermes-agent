@@ -29,8 +29,9 @@
   Run in an interactive Windows PowerShell session as the installing user.
   Native SSH/SFTP prefer environment variable ALI_ECS_SSH_PASSWORD, then an explicit -CredentialsEnv,
   otherwise use your SSH key/agent or prompt for the ECS password. Secrets
-  are never embedded in this script. No npm/uv install, Python publisher, WSL,
-  release lock/database, split packages, bundles, ZIPs, or CH2/R2 operations.
+  are never embedded in this script. The single-MSIX operator composes a small
+  stdlib metadata transaction; no second release controller, WSL, release database,
+  split packages, bundles, ZIPs, or CH2/R2 operations.
   -BuildOnly with -Commit stops after the unsigned package build: no signing, install or publication.
   -SkipLocalInstall signs and publishes without touching the installed app/profile; local acceptance is explicitly skipped.
   -BuildSource must equal <selected Output>\source; detached worktrees share Hermes objects.
@@ -42,7 +43,8 @@
   -UpdateSetup forces a new Setup build; neither mode builds or installs MSIX.
   Routine MSIX releases require an already compatible Setup on ECS.
   A signed Setup EXE downloads a single fixed MSIX over HTTP/3, with no
-  current-release manifest or catalog. Existing Windows profile is preserved.
+  current-release manifest or catalog. Desktop checks use the canonical channel
+  record and its current immutable metadata. Existing Windows profile is preserved.
   A local result.json is evidence of this invocation, not a publication journal.
   Default reruns resume the latest matching incomplete checkpointed run. Use
   -Output to select a run explicitly, or -NewRun to start fresh. Successful
@@ -752,9 +754,9 @@ function Test-PublicMsix([switch]$FullDownload) {
   $python=$BuildPython
   $code=@'
 import hashlib,sys
-from curl_cffi import requests,CurlHttpVersion
+from curl_cffi import requests,CurlHttpVersion,CurlOpt
 url,wanted,size,mode=sys.argv[1:];size=int(size)
-with requests.Session() as client:
+with requests.Session(trust_env=False,curl_options={CurlOpt.PROXY:b'',CurlOpt.SSL_OPTIONS:1<<4}) as client:
     options=dict(http_version=CurlHttpVersion.V3ONLY,allow_redirects=False,timeout=(15,60),headers={'Cache-Control':'no-cache','Accept-Encoding':'identity'})
     if mode=='head':
         response=client.head(url,**options)
@@ -1604,7 +1606,7 @@ $plan = [ordered]@{input=$Msix;version=$Version;sourceCommit=$SourceCommit;ssh=$
   profileBackup=(Join-Path $Output 'profile-backup');output=$Output;
   mode=$BuildMode;verification=($(if($BuildMode -eq 'Beta'){'SKIPPED_BETA'}else{'REQUIRED_PROD'}));stages=@('verify existing input','sign one MSIX','check independently published Setup',
     'back up profile','install and observe Electron/real PTY','SFTP reput upload with progress to unpublished directory',
-    'verify remote hash','atomic replace one stable MSIX',
+    'verify remote hash','atomic replace stable MSIX and commit current channel metadata',
     $(if($VerifyPublicDownload){'explicit full public H3 download and hash'}else{'lightweight public H3 HEAD; no package body download'}),
     'verify live Landing before old-package cleanup')}
 if($BuildMode -eq 'Beta'){$plan.stages=@('build/reuse without release verification','sign MSIX','back up profile','install MSIX','SFTP upload','atomic ECS activation; UNVERIFIED')}
@@ -1657,7 +1659,7 @@ if (!$LocalOnly) {
 }
 $script:runBinding=([ordered]@{mode=$BuildMode;skipLocalInstall=[bool]$SkipLocalInstall;inputSha256=$ExpectedInputSha256;source=$SourceCommit;version=$Version;build=$BuildId;
   signer=$Thumbprint;target=$SshTarget;root=$RemoteRoot;origin=$PublicBase;profile=$UserProfile;
-  setupContract='verify-remote-expected-sha256-v2'} | ConvertTo-Json -Compress)
+  setupContract='verify-remote-expected-sha256-v2';channelContract='current-only-channel-metadata-v1'} | ConvertTo-Json -Compress)
 if (!$Commit -and !$NewRun -and !$PSBoundParameters.ContainsKey('Output')) {
   $candidates=Get-ChildItem -LiteralPath (Split-Path -Parent $Output) -Directory -Filter 'ecs-deploy-*' |
     Sort-Object LastWriteTime -Descending
@@ -1873,10 +1875,10 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output);let app;const err
     return
   }
 
-  # One public MSIX and one published signed Setup; neither is version-pinned.
-  # Upload outside Caddy's document root; mv on the SAME filesystem is atomic.
+  . (Join-Path $PSScriptRoot 'deploy-ecs-channel1.ps1')
+  # Stable Setup/MSIX stay compatible; the channel commits a complete immutable closure last.
   $remoteMsix="$RemoteRoot/releases/SemantierAgent.msix"
-  $remoteProof="set -eu; test `$(sha256sum '$remoteMsix' | cut -d' ' -f1) = '$hash'; test -s '$RemoteRoot/releases/installers/semantier-setup-ch1.exe'"
+  $remoteProof=Get-Channel1ProofCommand -Root $RemoteRoot -PackageSha256 $hash -Build $BuildId
   $posixParent=$RemoteRoot.Substring(0,$RemoteRoot.LastIndexOf('/'))
   $stage="$posixParent/.semantier-stage-$([Guid]::NewGuid().ToString('N'))"
   if($receipt.Contains('remoteStage')) {$stage=[string]$receipt.remoteStage}
@@ -1885,8 +1887,6 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output);let app;const err
     if($BuildMode -eq 'Prod'){$null=Ssh $remoteProof}
     Report-Status 'Remote published hashes still match; skipping upload and activation.'
   } else {
-  $remoteChecksum="$remoteMsix.sha256"
-  $remoteSetup="$RemoteRoot/releases/installers/semantier-setup-ch1.exe"
   $msixSize=(Get-Item -LiteralPath $signed).Length
   # Compute the POSIX parent in PowerShell without Windows Split-Path (which uses backslashes).
   $minimumFree=$msixSize+67108864
@@ -1907,32 +1907,8 @@ mkdir -m 700 "$stage"
   $null=Ssh $prepare
   $receipt.remoteStage=$stage
   Complete-Checkpoint 'upload-prepared'
-  Upload $signed "$stage/SemantierAgent.msix"
-  Upload $sidecar "$stage/SemantierAgent.msix.sha256"
-  $publish=@'
-set -eu
-root='__ROOT__'
-stage='__STAGE__'
-msix="$root/releases/SemantierAgent.msix"
-setup="$root/releases/installers/semantier-setup-ch1.exe"
-checksum="$root/releases/SemantierAgent.msix.sha256"
-test -d "$stage" && test ! -L "$stage"
-cd "$stage"
-sha256sum -c SemantierAgent.msix.sha256
-mkdir -p "$root/releases/installers"
-# A reader opening the stable MSIX gets either the old complete inode or the
-# new complete inode. There is NO manifest/catalog/version swap.
-mv -f SemantierAgent.msix "$msix"
-mv -f SemantierAgent.msix.sha256 "$checksum"
-chmod 644 "$msix" "$checksum"
-( cd "$root/releases" && sha256sum -c SemantierAgent.msix.sha256 )
-rmdir "$stage"
-printf 'SINGLE_MSIX_ATOMIC_REPLACE_PASS\n'
-'@
-  $publish=$publish.Replace('__ROOT__',$RemoteRoot).Replace('__STAGE__',$stage)
-  if($BuildMode -eq 'Beta'){$publish=($publish -split "`n" | Where-Object {$_ -notmatch 'sha256sum -c'}) -join "`n"}
-  Report-Status 'Verifying uploaded hashes on ECS and replacing the public files.'
-  $receipt.publication=Ssh $publish
+  Report-Status 'Publishing verified immutable bytes and committing current channel metadata atomically.'
+  $receipt.publication=Publish-Channel1Artifacts -Signed $signed -Root $RemoteRoot -Stage $stage -PackageSha256 $hash -Metadata (Join-Path $Output 'channel1-metadata.json')
   Save-Json $receipt (Join-Path $Output 'result.json')
   Complete-Checkpoint 'published'
   }
@@ -2014,23 +1990,9 @@ const fs=require('node:fs');
     # No more version-specific installer/MSIX publication. Keep ALL old Setup
     # EXEs because existing Landing copies may still link to them. Remove ONLY
     # old Semantier release-package formats, never publisher state or R2.
-    $cleanup=@'
-set -eu
-root='__ROOT__'
-( cd "$root/releases" && sha256sum -c SemantierAgent.msix.sha256 )
-old="$root/releases/channel-builds"
-if test -d "$old"; then
-  find "$old" -mindepth 2 -maxdepth 5 -type f \( -name '*.msix' -o -name '*.msixbundle' -o -name '*.zip' -o -name '*.msix.sha256' -o -name '*.msixbundle.sha256' -o -name '*.zip.sha256' \) -print -delete
-fi
-# The running Landing has been browser-verified to use the fixed Setup link.
-# Only now may these legacy discovery pointers be removed.
-rm -f "$root/releases/current-release.json" "$root/releases/build.json" \
-      "$root/releases/channels/semantier-acceptance.json" \
-      "$root/releases/manual/catalog.json"
-printf 'OLD_PACKAGE_CLEANUP_PASS\n'
-'@
+    $cleanup=Get-Channel1CleanupCommand -Root $RemoteRoot -Build $BuildId
     Report-Status 'Removing obsolete ECS packages and legacy discovery files.'
-    $receipt.cleanup=Ssh ($cleanup.Replace('__ROOT__',$RemoteRoot))
+    $receipt.cleanup=Ssh $cleanup
     Complete-Checkpoint 'cleanup'
   } elseif ($SkipOldCleanup) {
     $receipt.cleanup='SKIPPED_BY_REQUEST'
