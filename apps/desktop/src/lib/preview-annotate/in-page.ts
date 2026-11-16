@@ -444,7 +444,7 @@ export function annotateInPage(doc: Document): AnnotateInPage {
       background: heavy ? fill : 'transparent',
       border: `${stroke} solid ${blue}`,
       'border-radius': '4px',
-      'box-shadow': heavy ? `0 0 0 1px ${blue}, 0 8px 24px rgba(15, 23, 42, 0.18)` : `0 0 0 1px ${blue}`,
+      'box-shadow': 'none',
       'box-sizing': 'border-box',
       'pointer-events': 'none',
       position: 'fixed'
