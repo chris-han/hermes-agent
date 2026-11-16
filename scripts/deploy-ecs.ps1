@@ -32,6 +32,7 @@
   are never embedded in this script. No npm/uv install, Python publisher, WSL,
   release lock/database, split packages, bundles, ZIPs, or CH2/R2 operations.
   -BuildOnly with -Commit stops after the unsigned package build: no signing, install or publication.
+  -SkipLocalInstall signs and publishes without touching the installed app/profile; local acceptance is explicitly skipped.
   -BuildSource must equal <selected Output>\source; detached worktrees share Hermes objects.
   -Latest commits Runtime changes, merges/pushes GitHub main and syncs pinned Hermes before building.
   Dirty Hermes changes are committed and pushed, then require separate qualification before the gitlink advances. Git conflicts stop without discarding work.
@@ -69,6 +70,7 @@ param(
   [string]$TimestampUrl = 'http://timestamp.digicert.com',
   [Alias('PrepareOnly')][switch]$LocalOnly,
   [switch]$BuildOnly,
+  [switch]$SkipLocalInstall,
   [switch]$DesktopOnly,
   [string]$BuildSource = '',
   [switch]$SkipOldCleanup,
@@ -1535,6 +1537,7 @@ if($Latest){
   $Commit=Sync-GitHubLatestSource $runtime $PSCommandPath
 }
 if($BuildOnly -and (!$Commit -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly)){throw '-BuildOnly requires -Commit and cannot be combined with Setup or preflight modes.'}
+if($SkipLocalInstall -and ($BuildOnly -or $LocalOnly -or $DesktopOnly -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly)){throw '-SkipLocalInstall is for MSIX publication only.'}
 $script:explicitOutput=$PSBoundParameters.ContainsKey('Output')
 Initialize-ReleasePaths
 if($Commit){
@@ -1605,6 +1608,7 @@ $plan = [ordered]@{input=$Msix;version=$Version;sourceCommit=$SourceCommit;ssh=$
     $(if($VerifyPublicDownload){'explicit full public H3 download and hash'}else{'lightweight public H3 HEAD; no package body download'}),
     'verify live Landing before old-package cleanup')}
 if($BuildMode -eq 'Beta'){$plan.stages=@('build/reuse without release verification','sign MSIX','back up profile','install MSIX','SFTP upload','atomic ECS activation; UNVERIFIED')}
+if($SkipLocalInstall){$plan.stages=@($plan.stages | Where-Object {$_ -notin @('back up profile','install MSIX','install and observe Electron/real PTY')});$plan.localAcceptance='SKIPPED_USER_REQUEST_NO_LOCAL_INSTALL'}
 if ($WhatIfPreference) { $plan | ConvertTo-Json -Depth 5; return }
 Report-Status 'Validating existing MSIX hash, source, identity and node-pty inputs; no dependency rebuild.'
 Assert-MsixWithoutUvCache $Msix
@@ -1651,7 +1655,7 @@ if (!$LocalOnly) {
   Write-Host 'Checking native SSH access (enter the ECS password if prompted).'
   $null=Ssh "set -eu; test -d '$RemoteRoot/releases'; test ! -L '$RemoteRoot'; command -v sha256sum"
 }
-$script:runBinding=([ordered]@{mode=$BuildMode;inputSha256=$ExpectedInputSha256;source=$SourceCommit;version=$Version;build=$BuildId;
+$script:runBinding=([ordered]@{mode=$BuildMode;skipLocalInstall=[bool]$SkipLocalInstall;inputSha256=$ExpectedInputSha256;source=$SourceCommit;version=$Version;build=$BuildId;
   signer=$Thumbprint;target=$SshTarget;root=$RemoteRoot;origin=$PublicBase;profile=$UserProfile;
   setupContract='verify-remote-expected-sha256-v2'} | ConvertTo-Json -Compress)
 if (!$Commit -and !$NewRun -and !$PSBoundParameters.ContainsKey('Output')) {
@@ -1731,7 +1735,10 @@ try {
   $receipt.setupAction='REUSE_INDEPENDENT_ECS_SETUP'
   # Stop only executables inside this registered package before copying its
   # existing profile. The acceptance app uses isolated state and cannot alter it.
-  if(!$script:checkpoints.ContainsKey('local')) {
+  if($SkipLocalInstall) {
+    $receipt.localAcceptance='SKIPPED_USER_REQUEST_NO_LOCAL_INSTALL'
+    Report-Status 'Skipping local installation and acceptance as requested; installed application and profile remain untouched.'
+  } elseif(!$script:checkpoints.ContainsKey('local')) {
   $registered=@(Get-AppxPackage -Name $identity)
   Report-Status 'Closing the installed application and backing up the user profile.'
   foreach ($package in $registered) {
@@ -2032,6 +2039,7 @@ printf 'OLD_PACKAGE_CLEANUP_PASS\n'
     throw 'Local package changed during publication.'
   }
   $receipt.result=if ($landingReady) { 'MSIX_PUBLISHED_VERIFIED_LANDING_CUTOVER_PASS' } else { 'MSIX_PUBLISHED_VERIFIED_CLEANUP_DEFERRED' }
+  if($SkipLocalInstall){$receipt.result='MSIX_PUBLISHED_VERIFIED_NO_LOCAL_INSTALL'}
   if($landingReady -and !$SkipOldCleanup){Complete-Checkpoint 'finished'}
 } catch {
   $receipt.result='FAIL';$receipt.error=$_.Exception.Message

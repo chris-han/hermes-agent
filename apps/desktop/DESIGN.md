@@ -302,6 +302,9 @@ blurred backdrop.
 
 - **`controlVariants`** (`src/components/ui/control.ts`) is the shared shape for
   `Input` / `Textarea` / `SelectTrigger`. New text-entry controls compose it.
+  In the Semantier Asimov theme, focused controls use their existing thin border
+  as the single highlight, without an additional outline or glow. Adorned inputs
+  use their group's border; other keyboard-focusable controls retain their outline.
 - **`SearchField`** — borderless, underline-on-focus, auto-width. The only
   search input. Don't build boxed search bars; don't wrap it in a bordered tile.
   Empty lists hide their search field.
