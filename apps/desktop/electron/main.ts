@@ -641,6 +641,7 @@ import {
 import { AppInstallerStrategy } from './updater/app-installer'
 import { createChannelAppInstallerStrategy } from './updater/app-installer'
 import { ChannelResolver, type ChannelTarget } from './updater/channel'
+import { configureChannel1Quic, createDesktopUpdateFetches } from './updater/channel1-network'
 import { markChannelArtifactHandoff, retireInstalledChannelArtifacts } from './updater/channel-artifact-cache'
 import { inspectRunningChannelApp } from './updater/channel-native'
 import { ChannelStrategy } from './updater/channel-strategy'
@@ -652,7 +653,6 @@ import { assertApplicationMainFrame, broadcastDeliverySourceCheck, registerDeliv
 import { ExternalStrategy } from './updater/external'
 import { readUpdatesFeedBaseFromConfig, resolveFeedBaseUrl } from './updater/feed-config'
 import { createChannelMacStrategy, createMacStrategy } from './updater/mac-client'
-import { nativeUpdateFetch } from './updater/network'
 import { UpdateOperation } from './updater/operation'
 import {
   type ConsumedRelaunch,
@@ -1240,6 +1240,7 @@ ipcMain.handle('hermes:embed-host:origin', () => embedHostOrigin())
 // minimized, exactly as before) and return to Chromium's default throttling
 // once the work settles.
 app.commandLine.appendSwitch('disable-renderer-backgrounding')
+const channel1QuicAvailable = configureChannel1Quic(app.commandLine, process.platform)
 
 const SOURCE_REPO_ROOT = path.resolve(APP_ROOT, '../..')
 
@@ -3664,9 +3665,8 @@ async function createPackagedUpdateStrategy(): Promise<UpdaterStrategy | null> {
   return createNativePackagedStrategy(mechanism)
 }
 
-// Use the operating system's network/proxy policy without sending browser cookies.
-const fetchDesktopUpdate = nativeUpdateFetch((input, init) =>
-  electronNet.fetch(input instanceof URL ? input.href : input, init))
+const { metadata: fetchDesktopUpdate, artifact: fetchDesktopArtifact } = createDesktopUpdateFetches(
+  process.platform, (input, init) => electronNet.fetch(input instanceof URL ? input.href : input, init), session, channel1QuicAvailable)
 
 function createNativePackagedStrategy(
   mechanism: UpdaterStrategy['mechanism'],
@@ -3739,7 +3739,7 @@ function createNativePackagedStrategy(
 
     return target
       ? createChannelAppInstallerStrategy(deps, target, async (file, selected) => {
-          const verified = await verifyPreparedChannelInstaller(file, selected, undefined, fetchDesktopUpdate)
+          const verified = await verifyPreparedChannelInstaller(file, selected, undefined, fetchDesktopArtifact)
           semantierObservations.verified(selected.package.artifact.sha256)
 
           return verified

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
@@ -19,7 +19,7 @@ afterEach(async (): Promise<void> => {
   }
 })
 
-test('ordinary Windows preparation owns temporary bytes while a resumable download retains its durable file', async (): Promise<void> => {
+test('every verified Windows package survives preparation for a pinned local handoff', async (): Promise<void> => {
   const directory: string = await mkdtemp(path.join(os.tmpdir(), 'hermes-artifact-lifetime-'))
   directories.push(directory)
   const bytes: Buffer = Buffer.from('digest-bound download')
@@ -109,15 +109,32 @@ test('ordinary Windows preparation owns temporary bytes while a resumable downlo
       return { stdout: '', stderr: '' }
     }
 
-    await verifyPreparedChannelInstaller(file, target, command)
-    expect(await readdir(directory)).toEqual(['stable.appinstaller'])
+    const ordinary = await verifyPreparedChannelInstaller(file, target, command)
+    expect(typeof ordinary).toBe('string')
+    expect(await readFile(ordinary!)).toEqual(bytes)
+    let nativeCalls = 0
+    const corrupt = structuredClone(target)
+    corrupt.manifestSha256 = 'f'.repeat(64)
+    await expect(verifyPreparedChannelInstaller(file, corrupt, async () => {
+      nativeCalls++
+
+      return {stdout:'',stderr:''}
+    }, async () => new Response(new Uint8Array(bytes.length)))).rejects.toThrow('digest')
+    expect(nativeCalls).toBe(0)
+    await expect(verifyPreparedChannelInstaller(file, corrupt, async () => {
+      nativeCalls++
+
+      return {stdout:'',stderr:''}
+    }, async () => new Response(null, {status:421}))).rejects.toThrow('Pinned artifact download failed (421)')
+    expect(nativeCalls).toBe(0)
     await expect(
       verifyPreparedChannelInstaller(file, target, async (): Promise<never> => {
         throw new Error('native signature refused')
       })
     ).rejects.toThrow('signature refused')
-    expect(await readdir(directory)).toEqual(['stable.appinstaller'])
+    expect(await readFile(ordinary!)).toEqual(bytes)
     const chunkTarget: ChannelTarget = structuredClone(target)
+    chunkTarget.manifestSha256 = 'e'.repeat(64)
     const buildId = chunkTarget.manifest.request.buildId
     const facts = { size: bytes.length, sha256: chunkTarget.package.artifact.sha256 }
     chunkTarget.manifest.request.publicBase = new URL(url).origin

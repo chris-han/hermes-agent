@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, rm } from 'node:fs/promises'
 import path from 'node:path'
 
 import type { App } from 'electron'
@@ -20,40 +20,37 @@ export async function verifyPreparedChannelInstaller(
   target: ChannelTarget,
   command: (script: string, input: string) => Promise<NativeCommandResult> = runChannelPowerShell,
   fetchArtifact: typeof fetch = fetch
-): Promise<string | void> {
+): Promise<string> {
   const pkg = target.package
 
   if (pkg.platform !== 'win32' || !pkg.publisher) {
     throw new Error('Expected a publisher-bound Windows package')
   }
 
-  const directory: string = pkg.artifact.chunks
-    ? await prepareChannelArtifactCache(path.dirname(file), {
-        manifestSha256: target.manifestSha256,
-        artifactSha256: pkg.artifact.sha256,
-        buildId: target.manifest.request.buildId,
-        version: pkg.version,
-        identity: pkg.identity,
-        publisher: pkg.publisher
-      })
-    : await mkdtemp(path.join(path.dirname(file), '.channel-artifact-'))
+  const directory: string = await prepareChannelArtifactCache(path.dirname(file), {
+    manifestSha256: target.manifestSha256,
+    artifactSha256: pkg.artifact.sha256,
+    buildId: target.manifest.request.buildId,
+    version: pkg.version,
+    identity: pkg.identity,
+    publisher: pkg.publisher
+  })
 
-  try {
-    const artifact: string = await downloadPinnedArtifact(
-      directory,
-      {
-        url: target.artifactUrl,
-        chunks: pkg.artifact.chunks,
-        chunkBase: target.manifest.request.publicBase,
-        sha256: pkg.artifact.sha256,
-        size: pkg.artifact.size,
-        format: pkg.artifact.key.endsWith('.msixbundle') ? 'msixbundle' : 'msix'
-      },
-      fetchArtifact
-    )
+  const artifact: string = await downloadPinnedArtifact(
+    directory,
+    {
+      url: target.artifactUrl,
+      chunks: pkg.artifact.chunks,
+      chunkBase: target.manifest.request.publicBase,
+      sha256: pkg.artifact.sha256,
+      size: pkg.artifact.size,
+      format: pkg.artifact.key.endsWith('.msixbundle') ? 'msixbundle' : 'msix'
+    },
+    fetchArtifact
+  )
 
-    await command(
-      String.raw`
+  await command(
+    String.raw`
 $ErrorActionPreference='Stop'
 $p=[Console]::In.ReadToEnd() | ConvertFrom-Json
 function Read-SafeXml($stream) {
@@ -83,29 +80,24 @@ try {
   if ($identity.Name -cne $p.identity -or $identity.Publisher -cne $p.publisher -or $identity.Version -cne $p.version) { throw 'Native manifest binding mismatch' }
 } finally { $zip.Dispose() }
 `,
-      JSON.stringify({
-        file,
-        artifact,
-        feedUrl: target.feedUrl,
-        artifactUrl: target.artifactUrl,
-        identity: pkg.identity,
-        publisher: pkg.publisher,
-        version: pkg.version,
-        arch: pkg.arch
-      })
-    )
+    JSON.stringify({
+      file,
+      artifact,
+      feedUrl: target.feedUrl,
+      artifactUrl: target.artifactUrl,
+      identity: pkg.identity,
+      publisher: pkg.publisher,
+      version: pkg.version,
+      arch: pkg.arch
+    })
+  )
 
-    // Keep exact verified bytes alive for Windows' local-package handoff.
-    if (pkg.artifact.chunks) {
-      await rm(path.join(directory, `chunks-${pkg.artifact.sha256}`), { recursive: true, force: true })
-
-      return artifact
-    }
-  } finally {
-    if (!pkg.artifact.chunks) {
-      await rm(directory, { recursive: true, force: true })
-    }
+  // Keep exact verified bytes alive for Windows' local-package handoff.
+  if (pkg.artifact.chunks) {
+    await rm(path.join(directory, `chunks-${pkg.artifact.sha256}`), { recursive: true, force: true })
   }
+
+  return artifact
 }
 
 /** Query the current user's OS package, never infer support from an OS version string. */
