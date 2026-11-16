@@ -44,6 +44,7 @@ export function forgetConnectionRoster(connectionId: string): void {
     ...data, profiles: data.profiles?.filter(row => (row.connectionId || data.primaryConnectionId) !== connectionId)
   } : data)
 }
+
 // Bounded retries. `retry: true` keeps React Query in isLoading until the
 // first success, so a stalled profiles.list (live state.db write lock, SSH
 // flap) leaves the Bots sidebar on a spinner with no error card. The 5s

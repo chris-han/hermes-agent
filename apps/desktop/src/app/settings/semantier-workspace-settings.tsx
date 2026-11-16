@@ -1,12 +1,13 @@
 import { useEffect, useId, useRef, useState } from 'react'
 
-import type { WorkspaceIdentity } from '../../../electron/semantier-workspace-client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { DesktopRegistryConnection } from '@/global'
 import { useI18n } from '@/i18n'
 import { semantierWorkspaceCopy } from '@/i18n/semantier-workspace'
 import { refreshConnectionsRegistry } from '@/store/connections'
+
+import type { WorkspaceIdentity } from '../../../electron/semantier-workspace-client'
 
 import { ListRow } from './primitives'
 
@@ -19,9 +20,11 @@ export function SemantierWorkspaceSettings({
 }) {
   const { locale } = useI18n()
   const copy = semantierWorkspaceCopy(locale)
+
   const [origin, setOrigin] = useState(
     () => connections.find(c => c.transport === 'semantier-workspace-http')?.url || 'https://cloud.semantier.cn'
   )
+
   const [identity, setIdentity] = useState<WorkspaceIdentity | null>(null)
   const [checking, setChecking] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -51,6 +54,7 @@ export function SemantierWorkspaceSettings({
           setChecking(false)
         }
       })
+
     return () => {
       generation.current++
     }
@@ -60,27 +64,36 @@ export function SemantierWorkspaceSettings({
     const current = generation.current
     setBusy(true)
     setError('')
+
     try {
       const api = window.hermesDesktop.workspace
+
       if (!api) {
         throw new Error(copy.failed)
       }
+
       // Re-read before deciding whether to open hosted login; UI state is not authority.
       let actual = await api.identity(origin)
+
       if (!actual.authenticated) {
         actual = await api.login(origin)
       }
+
       if (generation.current !== current) {
         return
       }
+
       if (!actual.authenticated || !actual.user?.user_id || !actual.workspace?.id || !actual.organization_id) {
         throw new Error(copy.identityRequired)
       }
+
       setIdentity(actual)
       const normalized = new URL(origin).origin
+
       const saved = connections.find(
         c => c.transport === 'semantier-workspace-http' && new URL(c.url!).origin === normalized
       )
+
       const connection =
         saved ||
         (
@@ -93,9 +106,11 @@ export function SemantierWorkspaceSettings({
             transport: 'semantier-workspace-http'
           })
         ).connection
+
       if (generation.current !== current) {
         return
       }
+
       await refreshConnectionsRegistry()
       await onConnect(connection.id)
     } catch {
@@ -110,6 +125,7 @@ export function SemantierWorkspaceSettings({
   const signOut = async () => {
     setBusy(true)
     setError('')
+
     try {
       await window.hermesDesktop.workspace!.logout(origin)
       setIdentity(null)
@@ -125,23 +141,24 @@ export function SemantierWorkspaceSettings({
       className="mb-5 grid min-w-0 gap-3"
       onSubmit={event => {
         event.preventDefault()
+
         if (!checking && !busy) {
           void connect()
         }
       }}
     >
-      <ListRow title={copy.title} description={copy.description} />
+      <ListRow description={copy.description} title={copy.title} />
       <div className="grid gap-1.5">
         <label className="text-xs text-muted-foreground" htmlFor={addressId}>
           {copy.address}
         </label>
         <Input
-          id={addressId}
-          type="url"
-          value={origin}
           disabled={busy}
+          id={addressId}
           onChange={event => setOrigin(event.target.value)}
           required
+          type="url"
+          value={origin}
         />
       </div>
       <p className="break-words text-xs text-muted-foreground" role="status">
@@ -153,11 +170,11 @@ export function SemantierWorkspaceSettings({
         </p>
       ) : null}
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" disabled={checking || busy}>
+        <Button disabled={checking || busy} type="submit">
           {busy ? copy.waiting : identity?.authenticated ? copy.open : copy.signIn}
         </Button>
         {identity?.authenticated ? (
-          <Button type="button" variant="outline" disabled={busy} onClick={() => void signOut()}>
+          <Button disabled={busy} onClick={() => void signOut()} type="button" variant="outline">
             {copy.signOut}
           </Button>
         ) : null}

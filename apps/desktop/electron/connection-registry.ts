@@ -1067,6 +1067,7 @@ export function normalizeConnectionInput(input: ConnectionInput, registry: Conne
       if (input.token !== undefined || Object.keys(input.headers || {}).length) {
         throw new Error('Semantier Workspace uses its own signed-in browser session, not gateway credentials.')
       }
+
       entry.transport = input.transport
     }
 
@@ -1286,6 +1287,7 @@ export function normalizeRegistry(raw: unknown): ConnectionRegistry {
 
       if (entry.transport !== undefined && (entry.transport !== 'semantier-workspace-http' || kind !== 'cloud')) {
         quarantine('entry-unrecognized-transport', item)
+
         continue
       }
 
@@ -1327,16 +1329,21 @@ export function normalizeRegistry(raw: unknown): ConnectionRegistry {
         if (entry.transport === 'semantier-workspace-http') {
           try { clean.url = normalizeSemantierWorkspaceOrigin(url) } catch {
             quarantine('entry-invalid-workspace-origin', item)
+
             continue
           }
+
           if (entry.token !== undefined || Object.keys(entry.headers || {}).length) {
             quarantine('entry-workspace-gateway-credentials', item)
+
             continue
           }
+
           clean.transport = entry.transport
         } else {
           clean.url = url
         }
+
         clean.authMode = storedAuthMode(kind, entry.authMode, entry.token)
 
         if (entry.token !== undefined) {

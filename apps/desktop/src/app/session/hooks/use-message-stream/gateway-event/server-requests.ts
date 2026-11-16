@@ -564,20 +564,26 @@ const previewReconnect: Handler = ({ deps, request, sessionId, isActiveSession }
   const expected = request.params.expected_binding as PreviewBinding | undefined
   const owner = previewOwnerFor(sessionId)
   const candidate = activePreviewBinding(owner)
+
   if (!isActiveSession || !expected || !candidate || !expected.profile_id ||
       candidate.session_id !== expected.session_id || candidate.window_id !== expected.window_id ||
       candidate.profile_id !== expected.profile_id) {
     previewFailure(request, new Error('WRONG_OWNER'))
+
     return
   }
+
   if ((candidate.user_selection ?? 0) <= (expected.user_selection ?? 0)) {
     previewFailure(request, new Error('USER_INTENT_REQUIRED'))
+
     return
   }
+
   void readActivePreview({ require_live: true, expected_binding: candidate }, owner).then(result => {
     if (!previewRequestIsCurrent(deps, sessionId) || bindingStatus(candidate, false, owner)) {
       throw new Error('STALE_TARGET')
     }
+
     answerValue(request, { ...result, success: true, live_verified: true, explicit_user_selection: true })
   }).catch(error => previewFailure(request, error))
 }

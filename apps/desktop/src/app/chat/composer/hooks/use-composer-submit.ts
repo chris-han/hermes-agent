@@ -1,7 +1,7 @@
-import { WorkspaceRequestStopped } from '@/api/client'
 import { SLASH_COMMAND_RE } from '@hermes/shared'
 import { type RefObject, useLayoutEffect, useRef } from 'react'
 
+import { WorkspaceRequestStopped } from '@/api/client'
 import { usePaneVisible } from '@/components/pane-shell/pane-visibility'
 import { translateNow, useI18n } from '@/i18n'
 import { isSlashCommandText } from '@/lib/chat-runtime'
@@ -169,7 +169,7 @@ export function useComposerSubmit({
       .then(accepted => void (accepted === false ? rejected() : clearSessionDraft(submittedScope)))
       .catch(error => {
         // The user withdrew this exact attempt; keep newer edits and never restore it as Retry.
-        if (error instanceof WorkspaceRequestStopped && error.requestId === submissionId) return
+        if (error instanceof WorkspaceRequestStopped && error.requestId === submissionId) {return}
         rejected()
       })
   }

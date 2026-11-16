@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { connectionScopeSuffix, connectionScopedAtom, rescopeConnectionScopedStores } from './connection-scoped'
+import { connectionScopedAtom, connectionScopeSuffix, rescopeConnectionScopedStores } from './connection-scoped'
 
 const remote = (profile: string, baseUrl = 'https://gw.example:8443') => ({
   baseUrl,
@@ -38,6 +38,7 @@ describe('connectionScopeSuffix', () => {
 it('separates accounts and signed-out state on the same Semantier Workspace origin', () => {
   const a = { ...remote('default'), transport: 'semantier-workspace-http' as const,
     workspaceScope: { userId: 'a', workspaceId: 'wa', organizationId: 'org' } }
+
   const b = { ...a, workspaceScope: { userId: 'b', workspaceId: 'wb', organizationId: 'org' } }
   const signedOut = { ...a, workspaceScope: undefined }
   expect(connectionScopeSuffix(a)).not.toBe(connectionScopeSuffix(b))
@@ -50,6 +51,7 @@ it('separates accounts and signed-out state on the same Semantier Workspace orig
 it('loads account-owned persisted values only after that account is authenticated again', () => {
   const a = { ...remote('default'), transport: 'semantier-workspace-http' as const,
     workspaceScope: { userId: 'a', workspaceId: 'wa', organizationId: 'org' } }
+
   const b = { ...a, workspaceScope: { userId: 'b', workspaceId: 'wb', organizationId: 'org' } }
   const value = connectionScopedAtom<string[]>('account-isolation-fixture', [])
   rescopeConnectionScopedStores(a)

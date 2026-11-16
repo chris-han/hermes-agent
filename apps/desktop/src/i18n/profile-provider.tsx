@@ -33,7 +33,7 @@ export function ProfileI18nProvider({ children }: { children: ReactNode }) {
 
   useBackendLocalePacks(scopeKey)
 
-  return <I18nProvider scopeKey={scopeKey} configClient={configClient}>{children}</I18nProvider>
+  return <I18nProvider configClient={configClient} scopeKey={scopeKey}>{children}</I18nProvider>
 }
 
 /**

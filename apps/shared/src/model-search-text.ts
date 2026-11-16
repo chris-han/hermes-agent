@@ -65,12 +65,16 @@ export function catalogModelMetadata(provider: CatalogSearchProvider | undefined
 export function catalogModelIssue(provider: CatalogSearchProvider | undefined, model: string): string | undefined {
   if (provider?.slug !== 'semantier-cloud') { return undefined }
   const metadata = catalogModelMetadata(provider, model)
+
   const missing = (['context_window', 'max_output_tokens'] as const).filter(key =>
     !Number.isSafeInteger(metadata?.[key]) || (metadata?.[key] ?? 0) <= 0)
 
   if (metadata?.protocol && !['chat', 'chat_completions', 'openai_chat_completions'].includes(metadata.protocol)) { return 'protocol' }
+
   if (missing.length) { return missing.join(', ') }
+
   if (metadata!.max_output_tokens! > metadata!.context_window!) { return 'context_window / max_output_tokens' }
+
   return undefined
 }
 

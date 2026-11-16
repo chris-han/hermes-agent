@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
 
-import { $sessionTiles, dropTilesForConnection } from './session-states'
 import { $connection } from './session'
+import { $sessionTiles, dropTilesForConnection } from './session-states'
 
 it('drops old Cloud account tabs while preserving Local and other connection tabs', () => {
   $sessionTiles.set([

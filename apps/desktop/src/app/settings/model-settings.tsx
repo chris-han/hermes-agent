@@ -136,6 +136,7 @@ function providerHasUnknownEligibility(provider?: ModelOptionProvider): boolean 
 
 function selectedModelUnavailable(provider: ModelOptionProvider | undefined, model: string, unknown: boolean): boolean {
   if (catalogModelIssue(provider, model)) { return true }
+
   if ((provider?.unavailable_models ?? []).some(value => normalize(value) === normalize(model))) { return true }
 
   return provider?.eligible_models != null && !unknown && !!model && !availableMainModels(provider).includes(model)

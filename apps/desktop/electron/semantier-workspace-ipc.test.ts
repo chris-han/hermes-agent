@@ -2,25 +2,30 @@ import { expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({ BrowserWindow: vi.fn(), ipcMain: { handle: vi.fn() }, session: { fromPartition: vi.fn() } }))
 
-import { assertWorkspaceScope, registerSemantierWorkspaceIpc } from './semantier-workspace-ipc'
 import { ipcMain, session } from 'electron'
+
+import { assertWorkspaceScope, registerSemantierWorkspaceIpc } from './semantier-workspace-ipc'
 
 const scope = { userId: 'user-a', workspaceId: 'workspace-a', organizationId: 'org-a' }
 const identity = { authenticated: true, user: { user_id: 'user-a', workspace_id: 'workspace-a' }, workspace: { id: 'workspace-a' }, organization_id: 'org-a' }
 
 it('accepts only the current authenticated server scope', () => {
   expect(() => assertWorkspaceScope(identity, scope)).not.toThrow()
+
   for (const expected of [{ ...scope, userId: 'user-b' }, { ...scope, workspaceId: 'workspace-b' }, { ...scope, organizationId: 'org-b' }]) {
     expect(() => assertWorkspaceScope(identity, expected)).toThrow('changed')
   }
+
   expect(() => assertWorkspaceScope({ ...identity, authenticated: false }, scope)).toThrow('changed')
 })
 
 
 it('signals account invalidation only after clearing the origin-owned cookie jar', async () => {
   const order: string[] = []
+
   const owned = { fetch: vi.fn(), clearStorageData: vi.fn(async () => { order.push('cookies') }),
     clearCache: vi.fn(async () => { order.push('cache') }) }
+
   vi.mocked(session.fromPartition).mockReturnValue(owned as never)
   vi.mocked(ipcMain.handle).mockClear()
   const changed = vi.fn(() => { order.push('changed') })
@@ -35,6 +40,7 @@ it('forwards incremental reads through the same before-and-after account guard',
   const fetch = vi.fn().mockResolvedValueOnce(Response.json(identity))
     .mockResolvedValueOnce(Response.json({ sessionId: 'original', messages: [], nextCursor: '218' }))
     .mockResolvedValueOnce(Response.json({ ...identity, user: { ...identity.user, user_id: 'user-b' } }))
+
   vi.mocked(session.fromPartition).mockReturnValue({ fetch } as never)
   vi.mocked(ipcMain.handle).mockClear()
   registerSemantierWorkspaceIpc()
@@ -67,10 +73,13 @@ it.each(['native-context','bind-native-context','send-native'])('rejects a chang
 
 it('creates only in the captured account and returns the real concurrent history snapshot', async () => {
   const fetcher=vi.fn(async (url:string,init?:RequestInit)=>{
-    if(url.endsWith('/auth/context')) return Response.json(identity)
-    if(url.endsWith('/api/sessions')&&init?.method==='POST') return Response.json({ok:true,sessionKey:'session_desktop_create-001',entry:{key:'session_desktop_create-001'}})
+    if(url.endsWith('/auth/context')) {return Response.json(identity)}
+
+    if(url.endsWith('/api/sessions')&&init?.method==='POST') {return Response.json({ok:true,sessionKey:'session_desktop_create-001',entry:{key:'session_desktop_create-001'}})}
+
     return Response.json({sessionId:'session_desktop_create-001',messages:[{messageId:'91',role:'assistant',text:'Server-owned'}]})
   })
+
   vi.mocked(session.fromPartition).mockReturnValue({fetch:fetcher} as never)
   vi.mocked(ipcMain.handle).mockClear()
   registerSemantierWorkspaceIpc()
@@ -87,17 +96,22 @@ it('creates only in the captured account and returns the real concurrent history
 it('cancels only the caller-owned in-flight Main stream without retrying or submitting another turn', async () => {
   let streamSignal: AbortSignal | undefined
   let streamController: ReadableStreamDefaultController<Uint8Array> | undefined
+
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
-    if (url.endsWith('/auth/context')) return Response.json(identity)
+    if (url.endsWith('/auth/context')) {return Response.json(identity)}
+
     if (url.endsWith('/api/send-stream')) {
       streamSignal = init?.signal as AbortSignal
+
       return new Response(new ReadableStream<Uint8Array>({ start(controller) {
         streamController = controller
         streamSignal.addEventListener('abort', () => controller.error(new DOMException('Stopped', 'AbortError')), { once: true })
       } }), { headers: { 'Content-Type': 'text/event-stream' } })
     }
+
     throw new Error('Unexpected request: ' + url)
   })
+
   vi.mocked(session.fromPartition).mockReturnValue({ fetch } as never)
   vi.mocked(ipcMain.handle).mockClear()
   registerSemantierWorkspaceIpc()
@@ -125,11 +139,15 @@ it('cancels only the caller-owned in-flight Main stream without retrying or subm
 it('withdraws a Main send stopped while its initial identity check is still waiting', async () => {
   let release: (() => void) | undefined
   let reads = 0
+
   const fetch = vi.fn(async (url: string) => {
-    if (!url.endsWith('/auth/context')) throw new Error('Stopped request must not be sent')
-    if (++reads === 1) await new Promise<void>(resolve => { release = resolve })
+    if (!url.endsWith('/auth/context')) {throw new Error('Stopped request must not be sent')}
+
+    if (++reads === 1) {await new Promise<void>(resolve => { release = resolve })}
+
     return Response.json(identity)
   })
+
   vi.mocked(session.fromPartition).mockReturnValue({ fetch } as never)
   vi.mocked(ipcMain.handle).mockClear()
   registerSemantierWorkspaceIpc()
@@ -149,14 +167,21 @@ it('stops Native work by awaiting its original admission and cancelling that exa
   let admit: ((value: Response) => void) | undefined
   let cancelled = false
   const admission = 'a'.repeat(32)
+
   const fetch = vi.fn(async (url: string) => {
-    if (url.endsWith('/auth/context')) return Response.json(identity)
-    if (url.endsWith('/api/winman/messages/canonical-a')) return new Promise<Response>(resolve => { admit = resolve })
+    if (url.endsWith('/auth/context')) {return Response.json(identity)}
+
+    if (url.endsWith('/api/winman/messages/canonical-a')) {return new Promise<Response>(resolve => { admit = resolve })}
     const receipt = { admission_id: admission, status: cancelled ? 'terminal' : 'queued', outcome: cancelled ? 'cancelled' : null }
-    if (url.endsWith('/cancel')) { cancelled = true; return Response.json({ cancel_requested: true, receipt: { ...receipt, status:'terminal', outcome:'cancelled' } }) }
-    if (url.includes('/api/winman/history/')) return Response.json({ session_id:'canonical-a', bot_id:'bot-a',native_profile_id:'profile-a',canonical_session:{id:'canonical-a'},messages:[],admission_receipt:receipt })
+
+    if (url.endsWith('/cancel')) { cancelled = true;
+
+ return Response.json({ cancel_requested: true, receipt: { ...receipt, status:'terminal', outcome:'cancelled' } }) }
+
+    if (url.includes('/api/winman/history/')) {return Response.json({ session_id:'canonical-a', bot_id:'bot-a',native_profile_id:'profile-a',canonical_session:{id:'canonical-a'},messages:[],admission_receipt:receipt })}
     throw new Error('Unexpected request '+url)
   })
+
   vi.mocked(session.fromPartition).mockReturnValue({ fetch } as never)
   vi.mocked(ipcMain.handle).mockClear()
   registerSemantierWorkspaceIpc()

@@ -23,6 +23,7 @@ export function forgetFleetRosterConnection(connectionId: string): void {
   generation++
   fetchedAt = 0
   const current = $fleetRoster.get()
+
   if (current) { $fleetRoster.set({ ...current, agents: current.agents.filter(row => row.connectionId !== connectionId) }) }
 }
 

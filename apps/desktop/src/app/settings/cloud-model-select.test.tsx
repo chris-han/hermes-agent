@@ -45,6 +45,7 @@ it('Settings searches combined BYOK provider/model terms without changing the ma
 
 it('retains an incomplete model with its configuration issue while other models stay usable', async () => {
   const onChange = vi.fn()
+
   const provider = { slug: 'semantier-cloud', name: 'Semantier Model Provider', authenticated: true,
     eligible_models: ['good', 'unknown-id'], models: ['good', 'unknown-id'],
     model_profiles: {

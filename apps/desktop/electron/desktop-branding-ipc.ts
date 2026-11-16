@@ -46,18 +46,22 @@ export function installDesktopBranding(file: string, createShortcuts = defaultBr
 
   ipcMain.handle('hermes:branding:shortcuts:create', (event, request: BrandShortcutRequest) => {
     assertSender(event)
+
     if (!shortcuts) {
       throw new Error('Windows shortcuts unavailable')
     }
+
     return shortcuts.create(request)
   })
   ipcMain.handle(
     'hermes:branding:shortcuts:reveal',
     (event, request: { name: string; destination: ShortcutDestination }) => {
       assertSender(event)
+
       if (!shortcuts) {
         throw new Error('Windows shortcuts unavailable')
       }
+
       shortcuts.reveal(request?.name, request?.destination)
     }
   )

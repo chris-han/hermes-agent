@@ -24,6 +24,7 @@ class Debugger extends EventEmitter {
         ''
       )
     }
+
     if (method === 'Runtime.enable') {
       const id = session ? 'child' : 'top'
       this.emit(
@@ -34,13 +35,17 @@ class Debugger extends EventEmitter {
         session || ''
       )
     }
+
     if (method === 'Page.getFrameTree') {
       const id = session ? 'child' : 'top'
+
       return { frameTree: { frame: { id, loaderId: `${id}-loader`, ...(session ? { parentId: 'top' } : {}) } } }
     }
+
     if (method === 'Runtime.evaluate') {
       return { result: { value: String((_params as any)?.expression).startsWith('document.hasFocus()') ? true : 'ok' } }
     }
+
     return {}
   })
 }
@@ -104,6 +109,7 @@ describe('preview frame debugger', () => {
       if (method === 'Runtime.evaluate') {
         return { result: { value: false } }
       }
+
       return original(method, params, session)
     })
     const frames = new PreviewFrames(dbg as never)
@@ -122,6 +128,7 @@ describe('preview frame debugger', () => {
       if (method === 'Input.dispatchMouseEvent' && (params as any).type === 'mouseReleased') {
         dbg.emit('message', {}, 'Runtime.executionContextDestroyed', { executionContextId: 1 }, 'child-session')
       }
+
       return original(method, params, session)
     })
     await expect(frames.input(child, { type: 'mouseUp', x: 23, y: 42, button: 'left', clickCount: 1 })).resolves.toBeUndefined()
@@ -137,6 +144,7 @@ describe('preview frame debugger', () => {
       if (method === 'Runtime.enable' && session === 'child-session') {
         throw new Error('child failed')
       }
+
       return original(method, params, session)
     })
     const frames = new PreviewFrames(dbg as never)
@@ -151,6 +159,7 @@ describe('preview frame debugger', () => {
       if (method === 'Runtime.enable' && session === 'child-session') {
         return {}
       }
+
       return original(method, params, session)
     })
     const frames = new PreviewFrames(dbg as never)

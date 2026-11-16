@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { DesktopAgentRoster } from '@/global'
 
-import { $fleetRoster, _resetFleetRosterForTests, refreshFleetRoster, forgetFleetRosterConnection } from './fleet-roster'
+import { $fleetRoster, _resetFleetRosterForTests, forgetFleetRosterConnection, refreshFleetRoster } from './fleet-roster'
 
 afterEach(() => {
   _resetFleetRosterForTests()
