@@ -4056,6 +4056,7 @@ html[data-hud-window] [data-slot='popover-content'] {
   -webkit-backdrop-filter: none;
 }
 
+/* Shared input chrome already highlights its border, including input groups. */
 :root[data-hermes-design='asimov']
   :is(
     button,
@@ -4067,7 +4068,7 @@ html[data-hud-window] [data-slot='popover-content'] {
     [role='combobox'],
     [role='tab'],
     summary
-  ):focus-visible {
+  ):focus-visible:not(:where(.desktop-input-chrome, .desktop-input-chrome *)) {
   outline: 2px solid var(--dt-ring);
   outline-offset: 2px;
 }
