@@ -10,7 +10,7 @@ import feedContract from '../../update-feed.cjs'
 
 import { ChannelResolver } from './channel'
 import type { ChannelBuild, ChannelManifest, ChannelRecord, RetiredChannel } from './channel-protocol'
-import { decodeChannelManifest, decodeChannelRecord, sameChannelIdentity } from './channel-protocol'
+import { decodeChannelManifest, decodeChannelRecord, decodeNativePackageGraph, sameChannelIdentity } from './channel-protocol'
 import { ChannelStrategy } from './channel-strategy'
 import { createNativeUriAppInstallerStrategy } from './channel-windows-host'
 
@@ -1071,4 +1071,45 @@ test('channel decoder ignores storage-only native archive bookkeeping', async ()
     nativeRetirePending: null }
 
   expect(decodeChannelRecord(JSON.stringify(record))).toEqual(decodeChannelRecord(JSON.stringify(f.record)))
+})
+
+
+test('bundled schema2 resolves one large native MSIX without descriptor or full download', async () => {
+  const f = await fixture()
+  const request = {...f.manifest.request, buildId:'e'.repeat(32), sequence:3, version:'0.0.3', windowsVersion:'0.0.3.0'}
+  const prefix = `releases/channel-builds/${request.buildId}/`
+
+  const object = {key:prefix+'SemantierAgent.msix', kind:'main-package', arch:'x64', identity:request.identity.msixAppIdWithOrg,
+    publisher:'CN=Nous Research', version:request.windowsVersion, size:3_000_000_000, sha256:'d'.repeat(64),
+    nativeDigest:Buffer.alloc(32,1).toString('base64'), references:[]}
+
+  const graph = {schema:1, transport:'windows-package-uri', root:object.key, payloadInventorySha256:'f'.repeat(64), objects:[object]}
+  const graphBody = JSON.stringify(graph)
+  const descriptor = {key:prefix+'native-graph.json', sha256:createHash('sha256').update(graphBody).digest('hex'), size:Buffer.byteLength(graphBody)}
+
+  const pkg = {platform:'win32', arch:'x64', variant:'bundled', identity:object.identity, publisher:object.publisher, version:object.version,
+    artifact:{key:object.key, size:object.size, sha256:object.sha256}, feed:{key:descriptor.key, channel:'stable'},
+    native:{schema:1, api:'PackageManager.AddPackageByUriAsync', digestMethod:'IAppxDigestProvider.GetDigest', digestEncoding:'base64', graph:descriptor}}
+
+  const manifest = {schema:2, request, packages:[pkg]}
+  const body = JSON.stringify(manifest)
+  f.record.head = null
+  f.record.nativeHead = {buildId:request.buildId, sequence:3, manifestKey:prefix+'build.json', sha256:createHash('sha256').update(body).digest('hex')}
+  f.record.nextSequence = 4
+  f.objects.set('/'+f.record.nativeHead.manifestKey, body)
+  f.objects.set('/'+descriptor.key, graphBody)
+  f.objects.set(`/releases/channels/${f.record.name}.json`, JSON.stringify(f.record))
+  f.requests.length = 0
+  const resolver = new ChannelResolver({build:f.build, platform:'win32', arch:'x64', signer:object.publisher, nativePackageUri:true})
+  const result = await resolver.resolve()
+  expect(result.kind).toBe('active')
+
+  if(result.kind !== 'active') {throw new Error('Expected target')}
+  expect(result.target.nativeGraph).toEqual(graph)
+  expect(f.requests).toEqual([`/releases/channels/${f.record.name}.json`, '/'+prefix+'build.json', '/'+descriptor.key])
+  const decoded = decodeChannelManifest(body)
+  expect(() => decodeNativePackageGraph(JSON.stringify({...graph, objects:[{...object, nativeDigest:'invalid'}]}), decoded.request, decoded.packages[0])).toThrow()
+  expect(() => decodeNativePackageGraph(JSON.stringify({...graph, objects:[{...object, identity:'Wrong.Identity'}]}), decoded.request, decoded.packages[0])).toThrow()
+  expect(() => decodeNativePackageGraph(JSON.stringify({...graph, objects:[{...object, publisher:'Wrong'}]}), decoded.request, decoded.packages[0])).toThrow()
+  expect(() => decodeNativePackageGraph(JSON.stringify({...graph, objects:[{...object, references:[object.key]}]}), decoded.request, decoded.packages[0])).toThrow()
 })

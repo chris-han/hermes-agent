@@ -123,9 +123,11 @@ function Read-NativeUpdateGraph($request) {
  $base=[Uri]$request.base
  if(!$base.IsAbsoluteUri -or $base.UserInfo -or $base.Query -or $base.Fragment -or $request.base -match '[%\\\s;]' -or ($base.Scheme -cne 'https' -and !($base.Scheme -ceq 'http' -and $base.Host -cin @('127.0.0.1','localhost','[::1]')))){throw 'Native origin invalid'}
  $graph=$request.graph;$rows=@($graph.objects);$byKey=@{};$main=0;$bundle=0;$identities=@{}
+ $single=$rows.Count -eq 1 -and $rows[0].kind -ceq 'main-package'
+ $maximum=if($single){68719476736L}else{480000000L}
  if($graph.schema -ne 1 -or $graph.transport -cne 'windows-package-uri' -or $graph.payloadInventorySha256 -cnotmatch '^[a-f0-9]{64}$' -or !$rows.Count -or $rows.Count -gt 64){throw 'Native graph invalid'}
  foreach($row in $rows){
-  if($row.key -cnotmatch '^releases/channel-builds/[a-f0-9]{32}/[A-Za-z0-9_./+-]+\.(msix|msixbundle)$' -or $row.key -match '(^|/)\.{1,2}(/|$)' -or $byKey.ContainsKey($row.key) -or ($row.size -isnot [int] -and $row.size -isnot [long]) -or $row.size -le 0 -or $row.size -gt 480000000 -or $row.sha256 -cnotmatch '^[a-f0-9]{64}$' -or $row.identity -cne $request.identity -or $row.publisher -cne $request.publisher -or $row.version -cne $request.version -or $row.kind -cnotin @('main-bundle','main-package','asset-package')){throw 'Native object binding mismatch'}
+  if($row.key -cnotmatch '^releases/channel-builds/[a-f0-9]{32}/[A-Za-z0-9_./+-]+\.(msix|msixbundle)$' -or $row.key -match '(^|/)\.{1,2}(/|$)' -or $byKey.ContainsKey($row.key) -or ($row.size -isnot [int] -and $row.size -isnot [long]) -or $row.size -le 0 -or $row.size -gt $maximum -or $row.sha256 -cnotmatch '^[a-f0-9]{64}$' -or $row.identity -cne $request.identity -or $row.publisher -cne $request.publisher -or $row.version -cne $request.version -or $row.kind -cnotin @('main-bundle','main-package','asset-package')){throw 'Native object binding mismatch'}
   $digest=[Convert]::FromBase64String($row.nativeDigest)
   if($digest.Length -ne 32 -or [Convert]::ToBase64String($digest) -cne $row.nativeDigest){throw 'Native digest invalid'}
   if($row.kind -ceq 'main-package'){$main++;if($row.arch -cne 'x64' -or @($row.references).Count){throw 'Native main invalid'}}
@@ -136,7 +138,7 @@ function Read-NativeUpdateGraph($request) {
   if($identities.ContainsKey($id)){throw 'Native identity ambiguous'}
   $identities[$id]=$true;$byKey[$row.key]=$row
  }
- if($main -ne 1 -or $bundle -ne 1 -or !$byKey.ContainsKey($graph.root) -or $byKey[$graph.root].kind -cne 'main-bundle'){throw 'Native flat bundle root invalid'}
+ if($main -ne 1 -or !$byKey.ContainsKey($graph.root) -or (!$single -and ($bundle -ne 1 -or $byKey[$graph.root].kind -cne 'main-bundle')) -or ($single -and $byKey[$graph.root].kind -cne 'main-package')){throw 'Native package root invalid'}
  $references=@($byKey[$graph.root].references)
  if($references.Count -ne ($rows.Count-1) -or @($references|Select-Object -Unique).Count -ne $references.Count -or @($references|Where-Object{!$byKey.ContainsKey($_) -or $_ -ceq $graph.root}).Count){throw 'Native graph incomplete'}
  $prefix=($graph.root -split '/')[2]

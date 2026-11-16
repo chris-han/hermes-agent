@@ -393,7 +393,7 @@ def validate_manifest(value: object, record: dict, base_url: str, *, allow_nativ
         if not isinstance(package, dict):
             raise ChannelError("Invalid native package")
         target = tuple(package.get(field) for field in ("platform", "arch", "variant"))
-        if target[0] not in ("darwin", "win32") or target[1] not in ("arm64", "x64") or target[2] != ("native-msix-assets" if native_manifest else "bundled"):
+        if target[0] not in ("darwin", "win32") or target[1] not in ("arm64", "x64") or target[2] not in (("native-msix-assets", "bundled") if native_manifest else ("bundled",)):
             raise ChannelError("Unsupported channel package target")
         if target[:2] in seen:
             raise ChannelError("Duplicate package target")
@@ -445,7 +445,7 @@ def _validate_native_package(package: dict, request: dict) -> None:
         raise ChannelError("Native graph descriptor binding mismatch")
     require_sha256(graph.get("sha256"))
     _integer(graph.get("size"), "graph descriptor size", maximum=MAX_METADATA)
-    _integer(package["artifact"].get("size"), "native root size", maximum=480_000_000)
+    _integer(package["artifact"].get("size"), "native root size", maximum=64*1024**3 if package["variant"] == "bundled" else 480_000_000)
     if "chunks" in package["artifact"] or not package["artifact"]["key"].startswith(build_prefix(request["buildId"])):
         raise ChannelError("Native root cannot use legacy chunks or another build")
 
@@ -495,7 +495,7 @@ def validate_native_graph(value, *, build_id, identity, publisher, version, arch
         if kind not in ('main-package','optional-package','asset-package','main-bundle','optional-bundle'):
             raise ChannelError('Invalid native object kind')
         _native_object_identity(row,kind,identity,publisher,version,arch,identities)
-        if type(row.get('size')) is not int or not 0<row['size']<=480_000_000:
+        if type(row.get('size')) is not int or not 0<row['size']<=(64*1024**3 if len(objects)==1 and kind=='main-package' else 480_000_000):
             raise ChannelError('Native object exceeds cacheable cap')
         require_sha256(row.get('sha256'))
         digest=row.get('nativeDigest')

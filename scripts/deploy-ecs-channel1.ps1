@@ -4,8 +4,10 @@ function Publish-Channel1Artifacts([string]$Signed, [string]$Root, [string]$Stag
     throw 'Invalid Channel 1 publication binding.'
   }
   $protocol=Join-Path (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $Publisher))) 'hermes_cli/release_channels.py'
+  . (Join-Path (Split-Path -Parent $Publisher) '../../apps/desktop/scripts/native-package-digest.ps1')
+  $nativeDigest=Get-NativePackageDigest $Signed
   Run $BuildPython @('-B',$publisher,'prepare','--package',$Signed,'--output',$Metadata,
-    '--expected-sha256',$PackageSha256,'--source-commit',$SourceCommit,'--windows-version',$Version,'--build-id',$BuildId)
+    '--expected-sha256',$PackageSha256,'--source-commit',$SourceCommit,'--windows-version',$Version,'--build-id',$BuildId,'--native-digest',$nativeDigest)
   Upload $Signed "$Stage/SemantierAgent.msix"
   Upload $Metadata "$Stage/channel1-metadata.json"
   Upload $publisher "$Stage/channel1.py"
@@ -22,7 +24,7 @@ assert (root/'releases/installers/semantier-setup-ch1.exe').is_file()
 with (root/'releases/SemantierAgent.msix').open('rb') as stream:
     assert hashlib.file_digest(stream,'sha256').hexdigest()==wanted
 record=json.loads((root/'releases/channels/semantier-acceptance.json').read_bytes())
-head=record['head'];assert head['buildId']==build
+head=record['nativeHead'];assert head['buildId']==build
 body=(root/head['manifestKey']).read_bytes()
 assert hashlib.sha256(body).hexdigest()==head['sha256']
 manifest=json.loads(body);pkg=manifest['packages'][0]
@@ -41,13 +43,11 @@ root='__ROOT__'
 current='__BUILD__'
 ( cd "$root/releases" && sha256sum -c SemantierAgent.msix.sha256 )
 old="$root/releases/channel-builds"
-if test -d "$old"; then
+if test -d "$old" && ! find "$old" -name "*.appinstaller" -type f -print -quit | grep -q .; then
   find "$old" -mindepth 2 -maxdepth 5 -type f ! -path "$old/$current/*" \( -name '*.msix' -o -name '*.msixbundle' -o -name '*.zip' -o -name '*.msix.sha256' -o -name '*.msixbundle.sha256' -o -name '*.zip.sha256' \) -print -delete
 fi
-# The running Landing has been browser-verified to use the fixed Setup link.
-# Only now may these legacy discovery pointers be removed.
-rm -f "$root/releases/current-release.json" "$root/releases/build.json" \
-      "$root/releases/manual/catalog.json"
+# Existing descriptor/catalog readers remain supported until separately qualified.
+# Their retained closure also protects older packages from routine retirement.
 printf 'OLD_PACKAGE_CLEANUP_PASS\n'
 '@
   return $command.Replace('__ROOT__',$Root).Replace('__BUILD__',$Build)

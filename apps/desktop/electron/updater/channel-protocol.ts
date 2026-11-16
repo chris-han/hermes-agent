@@ -509,7 +509,7 @@ function packageEntry(value: unknown, schema: 1 | 2): ChannelPackage {
   if (
     (platform !== 'darwin' && platform !== 'win32') ||
     (arch !== 'x64' && arch !== 'arm64') ||
-    fields.get('variant') !== (schema === 2 ? 'native-msix-assets' : 'bundled')
+    !(fields.get('variant') === 'bundled' || (schema === 2 && fields.get('variant') === 'native-msix-assets'))
   ) {
     throw new Error('Unsupported channel package')
   }
@@ -520,7 +520,7 @@ function packageEntry(value: unknown, schema: 1 | 2): ChannelPackage {
   const result: ChannelPackage = {
     platform,
     arch,
-    variant: schema === 2 ? 'native-msix-assets' : 'bundled',
+    variant: fields.get('variant') === 'native-msix-assets' ? 'native-msix-assets' : 'bundled',
     version: fields.text('version', platform === 'darwin' ? VERSION : /^\d+\.\d+\.\d+\.\d+$/),
     identity: fields.text('identity'),
     artifact: {
@@ -558,7 +558,7 @@ function bindNativePackage(fields: Fields, result: ChannelPackage): void {
     result.arch !== 'x64' ||
     !result.publisher ||
     result.artifact.chunks ||
-    result.artifact.size > 480_000_000 ||
+    result.artifact.size > (result.variant === 'bundled' ? 64 * 1024 ** 3 : 480_000_000) ||
     native.get('api') !== 'PackageManager.AddPackageByUriAsync' ||
     native.get('digestMethod') !== 'IAppxDigestProvider.GetDigest' ||
     native.get('digestEncoding') !== 'base64'
@@ -718,11 +718,17 @@ export function decodeNativePackageGraph(body: string, build: ChannelRequest, pk
     throw new Error('Invalid native graph root')
   }
 
-  if (
+  const single = pkg.variant === 'bundled'
+
+  if (single && (objects.length !== 1 || main.kind !== 'main-package' || main.references.length)) {
+    throw new Error('Single MSIX requires exactly one main package')
+  }
+
+  if (!single && (
     main.kind !== 'main-bundle' ||
     objects.some(row => row.kind !== 'main-bundle' && row.kind !== 'main-package' && row.kind !== 'asset-package') ||
     main.references.length !== objects.length - 1
-  )
+  ))
     {throw new Error('Unsupported native asset layout')}
 
   const seen = new Set<string>(),
@@ -798,7 +804,7 @@ function nativePackageObject(entry: unknown, pkg: ChannelPackage, prefix: string
     version,
     arch,
     nativeDigest,
-    size: row.integer('size', 480_000_000),
+    size: row.integer('size', pkg.variant === 'bundled' ? 64 * 1024 ** 3 : 480_000_000),
     sha256: row.text('sha256', SHA256),
     references: refs as string[]
   }

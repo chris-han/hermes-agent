@@ -30,12 +30,13 @@ def package(stage, sequence):
     path = stage/'SemantierAgent.msix'
     # Disposable ZIP metadata fixture, never an installable/signed application.
     with zipfile.ZipFile(path, 'w') as archive:
+        archive.writestr(zipfile.ZipInfo('AppxBlockMap.xml'), '<BlockMap/>')
         archive.writestr(zipfile.ZipInfo('AppxManifest.xml'), f'<Package><Identity Name="Semantier.Agent.Acceptance" Publisher="CN=Semantier Technology, O=Semantier Technology" Version="{request["windowsVersion"]}" ProcessorArchitecture="x64"/></Package>')
         archive.writestr(zipfile.ZipInfo('app/resources/install-stamp.json'), json.dumps({'commit': request['commit'], 'dirty': False, 'channelBuild': request}))
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     metadata = stage/'channel1-metadata.json'
     channel1.prepare(path, metadata, expected_sha256=digest, source_commit=request['commit'],
-                     windows_version=request['windowsVersion'], build_id=request['buildId'])
+                     windows_version=request['windowsVersion'], build_id=request['buildId'], native_digest='AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=')
     return request, digest, hashlib.sha256(metadata.read_bytes()).hexdigest()
 
 
@@ -51,8 +52,8 @@ def test_real_metadata_and_repeated_publish_are_current_only(tmp_path):
     record_path = root/'releases/channels/semantier-acceptance.json'
     original = record_path.read_bytes()
     record = protocol.validate_record(json.loads(original))
-    manifest = json.loads((root/record['head']['manifestKey']).read_bytes())
-    protocol.validate_manifest(manifest, record, request['publicBase'])
+    manifest = json.loads((root/record['nativeHead']['manifestKey']).read_bytes())
+    protocol.validate_manifest(manifest, record, request['publicBase'], allow_native=True)
     artifact = root/manifest['packages'][0]['artifact']['key']
     assert hashlib.sha256(artifact.read_bytes()).hexdigest() == digest
     assert artifact.samefile(root/'releases/SemantierAgent.msix')
@@ -64,8 +65,8 @@ def test_real_metadata_and_repeated_publish_are_current_only(tmp_path):
     unrelated = root/'releases/channels/another.json'; unrelated.write_text('{}', encoding='utf-8')
     publish(root, tmp_path/'stage3', 110)
     current = json.loads(record_path.read_bytes())
-    assert current['head']['sequence'] == 110 and not {'nativeHead', 'nativeArchive'} & current.keys()
-    assert not (root/record['head']['manifestKey']).exists()
+    assert current['nativeHead']['sequence'] == 110 and current['head'] is None and 'nativeArchive' not in current
+    assert not (root/record['nativeHead']['manifestKey']).exists()
     assert not (artifact.parent/'win32/stable.appinstaller').exists()
     assert artifact.exists()  # package retirement remains the existing operator's owner
     assert marker.read_text(encoding='utf-8-sig') == 'preserve' and unrelated.read_text(encoding='utf-8-sig') == '{}'
@@ -95,7 +96,7 @@ def test_pointer_is_last_and_failure_restores_old_release(tmp_path, monkeypatch)
     assert (root/'releases/SemantierAgent.msix').read_bytes() == old_package
     assert not (root/f'releases/channel-builds/{request["buildId"]}').exists()
     channel1.publish(root, stage, metadata_sha256=metadata_digest, package_sha256=digest, protocol=protocol)
-    assert json.loads(pointer.read_bytes())['head']['sequence'] == 110
+    assert json.loads(pointer.read_bytes())['nativeHead']['sequence'] == 110
 
 
 def test_tampered_upload_or_downgrade_never_activates(tmp_path):
@@ -121,7 +122,7 @@ def test_cleanup_failure_restores_metadata_before_restoring_pointer(tmp_path, mo
     pointer = root/'releases/channels/semantier-acceptance.json'
     old_pointer = pointer.read_bytes()
     old_manifest = root/f'releases/channel-builds/{request["buildId"]}/build.json'
-    old_feed = old_manifest.parent/'win32/stable.appinstaller'
+    old_feed = old_manifest.parent/'native-graph.json'
     stage = tmp_path/'new'; _, digest, metadata_digest = package(stage, 110)
     unlink, replace = Path.unlink, channel1.os.replace
     def fail_cleanup(path, *args, **kwargs):
@@ -137,7 +138,7 @@ def test_cleanup_failure_restores_metadata_before_restoring_pointer(tmp_path, mo
         with pytest.raises(OSError, match='cleanup failure'):
             channel1.publish(root, stage, metadata_sha256=metadata_digest, package_sha256=digest, protocol=protocol)
     assert pointer.read_bytes() == old_pointer
-    protocol.validate_manifest(json.loads(old_manifest.read_bytes()), json.loads(old_pointer), request['publicBase'])
+    protocol.validate_manifest(json.loads(old_manifest.read_bytes()), json.loads(old_pointer), request['publicBase'], allow_native=True)
 
 
 def test_preparation_rejects_unbound_package_facts(tmp_path):
@@ -145,7 +146,7 @@ def test_preparation_rejects_unbound_package_facts(tmp_path):
     for overrides in ({'expected_sha256': '0'*64}, {'source_commit': 'c'*40},
                       {'windows_version': '0.0.110.0'}, {'build_id': 'e'*32}):
         arguments = dict(expected_sha256=digest, source_commit=request['commit'],
-                         windows_version=request['windowsVersion'], build_id=request['buildId'])
+                         windows_version=request['windowsVersion'], build_id=request['buildId'], native_digest='AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=')
         arguments.update(overrides)
         target = tmp_path/'invalid.json'
         with pytest.raises(ValueError): channel1.prepare(tmp_path/'input/SemantierAgent.msix', target, **arguments)
@@ -167,7 +168,9 @@ $ErrorActionPreference='Stop'
 foreach($file in @('deploy-ecs.ps1','deploy-ecs-channel1.ps1')){
  $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $Source ('scripts/'+$file)),[ref]$null,[ref]$null)
  foreach($f in $ast.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in @('Hash','Publish-Channel1Artifacts','Get-Channel1ProofCommand','Get-Channel1CleanupCommand')},$true)){
-  . ([scriptblock]::Create($f.Extent.Text))
+  # SDK digest is the external OS boundary; this disposable ZIP is not signed/installable.
+  $text=$f.Extent.Text.Replace('$nativeDigest=Get-NativePackageDigest $Signed', '$nativeDigest="AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="')
+  . ([scriptblock]::Create($text))
  }
 }
 function Run($Exe,$Arguments){ & $Exe @Arguments | Out-Host; if($LASTEXITCODE -ne 0){throw 'Local metadata preparation failed'} }
@@ -212,3 +215,81 @@ Get-Channel1CleanupCommand -Root $Public -Build $Build | Set-Content (Join-Path 
     assert not (old/'obsolete.msix').exists()
     assert (old/'semantier-setup-ch1.exe').exists()
     assert (root/'releases/channels/semantier-acceptance.json').exists()
+
+def test_descriptor_free_single_msix_metadata(tmp_path):
+    _, digest, _ = package(tmp_path/'stage', 112)
+    data = json.loads((tmp_path/'stage/channel1-metadata.json').read_bytes())
+    assert 'feed' not in data
+    assert data['manifest']['schema'] == 2
+    row = data['manifest']['packages'][0]
+    assert row['variant'] == 'bundled'
+    assert row['feed']['key'].endswith('/native-graph.json')
+    graph = data['graph']
+    assert len(graph['objects']) == 1
+    assert graph['root'] == row['artifact']['key']
+    assert graph['objects'][0]['kind'] == 'main-package'
+    assert graph['objects'][0]['sha256'] == digest
+    assert graph['objects'][0]['nativeDigest'] == 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE='
+
+
+def test_uploaded_native_metadata_rejects_rebound_graph_and_identity(tmp_path):
+    root=tmp_path/'public';root.mkdir()
+    _, _, _ = publish(root, tmp_path/'current', 110)
+    pointer=root/channel1.POINTER
+    before=pointer.read_bytes()
+    for field, value in (('publisher','CN=Wrong'),('identity','Wrong.Identity'),('version','0.0.1.0'),('nativeDigest','invalid')):
+        stage=tmp_path/field
+        _, digest, _=package(stage,111)
+        file=stage/'channel1-metadata.json';data=json.loads(file.read_bytes())
+        data['graph']['objects'][0][field]=value
+        file.write_bytes(protocol.canonical_json(data))
+        with pytest.raises(ValueError):
+            channel1.publish(root,stage,metadata_sha256=channel1.sha(file),package_sha256=digest,protocol=protocol)
+        assert pointer.read_bytes()==before
+
+
+@pytest.mark.platforms('windows')
+def test_production_native_graph_reader_accepts_single_msix_and_refuses_bad_bindings(tmp_path):
+    request, _, _=package(tmp_path/'stage',112)
+    data=json.loads((tmp_path/'stage/channel1-metadata.json').read_bytes())
+    native={'graph':data['graph'],'base':channel1.BASE,'identity':'Semantier.Agent.Acceptance',
+            'publisher':'CN=Semantier Technology, O=Semantier Technology','version':request['windowsVersion']}
+    native['graph']['objects'][0]['size']=3_000_000_000
+    file=tmp_path/'request.json';file.write_text(json.dumps(native),encoding='utf-8')
+    source=Path(__file__).resolve().parents[2]/'apps/desktop/scripts/native-package-update.ps1'
+    script=tmp_path/'reader.ps1'
+    script.write_text("param($Source,$InputFile)\n$ErrorActionPreference='Stop'\n. $Source\n$r=Get-Content -Raw $InputFile|ConvertFrom-Json\n$rows=@(Read-NativeUpdateGraph $r)\nif($rows.Count -ne 1){throw 'Unexpected graph'}\nforeach($field in @('publisher','identity','version','nativeDigest')){\n $copy=$r|ConvertTo-Json -Depth 16|ConvertFrom-Json; $copy.graph.objects[0].$field='invalid'\n $refused=$false;try{$null=Read-NativeUpdateGraph $copy}catch{$refused=$true}\n if(!$refused){throw ('Unsafe graph accepted: '+$field)}\n}\n'NATIVE_SINGLE_GRAPH_PASS'\n",encoding='utf-8')
+    result=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-File',str(script),str(source),str(file)],capture_output=True,text=True,timeout=30,check=False)
+    assert result.returncode==0,result.stdout+result.stderr
+    assert 'NATIVE_SINGLE_GRAPH_PASS' in result.stdout
+
+
+def test_new_sequence_cannot_publish_a_lower_version(tmp_path):
+    root=tmp_path/'public';root.mkdir()
+    publish(root,tmp_path/'current',110)
+    stage=tmp_path/'new';_,digest,_=package(stage,111)
+    file=stage/'channel1-metadata.json';data=json.loads(file.read_bytes())
+    data['manifest']['request']['windowsVersion']='0.0.109.0'
+    data['manifest']['packages'][0]['version']='0.0.109.0'
+    file.write_bytes(protocol.canonical_json(data))
+    before=(root/channel1.POINTER).read_bytes()
+    with pytest.raises(ValueError):
+        channel1.publish(root,stage,metadata_sha256=channel1.sha(file),package_sha256=digest,protocol=protocol)
+    assert (root/channel1.POINTER).read_bytes()==before
+
+
+def test_legacy_descriptor_and_metadata_remain_after_native_promotion(tmp_path):
+    root=tmp_path/'public';root.mkdir()
+    _,_,_=publish(root,tmp_path/'current',110)
+    pointer=root/channel1.POINTER;record=json.loads(pointer.read_bytes())
+    native_head=record.pop('nativeHead');record['head']=native_head
+    old_path=root/native_head['manifestKey'];old=json.loads(old_path.read_bytes())
+    old['schema']=1;row=old['packages'][0];row.pop('native')
+    row['feed']['key']=row['artifact']['key'].rsplit('/',1)[0]+'/win32/stable.appinstaller'
+    old_body=protocol.canonical_json(old);old_path.write_bytes(old_body)
+    record['head']['sha256']=hashlib.sha256(old_body).hexdigest();pointer.write_bytes(protocol.canonical_json(record))
+    descriptor=root/row['feed']['key'];descriptor.parent.mkdir();descriptor.write_bytes(b'legacy descriptor preserved')
+    publish(root,tmp_path/'new',111)
+    assert old_path.read_bytes()==old_body
+    assert descriptor.read_bytes()==b'legacy descriptor preserved'
+    assert json.loads(pointer.read_bytes())['head'] is None

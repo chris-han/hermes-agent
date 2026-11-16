@@ -40,15 +40,18 @@ def _safe(root, key):
     return path
 
 
-def prepare(package, output, *, expected_sha256, source_commit, windows_version, build_id):
+def prepare(package, output, *, expected_sha256, source_commit, windows_version, build_id, native_digest):
     """Bind metadata to the operator-verified signed package's embedded facts."""
     from hermes_cli import release_channels as protocol
-    from scripts.bundles.release_artifacts import write_appinstaller
     package, output = Path(package), Path(output)
+    decoded = base64.b64decode(native_digest, validate=True)
+    if len(decoded) != 32 or base64.b64encode(decoded).decode() != native_digest:
+        raise ValueError('Invalid native digest')
     if package.is_symlink() or sha(package) != expected_sha256:
         raise ValueError('Package SHA256 integrity mismatch')
     with zipfile.ZipFile(package) as archive:
         native = ET.fromstring(archive.read('AppxManifest.xml')).find('{*}Identity').attrib
+        inventory = hashlib.sha256(archive.read('AppxBlockMap.xml')).hexdigest()
         stamp = json.loads(archive.read('app/resources/install-stamp.json'))
     request = protocol.validate_request(stamp['channelBuild'], repository='chris-han/hermes-agent', base_url=BASE)
     if (stamp.get('dirty') is not False or stamp['commit'] != source_commit or request['commit'] != source_commit
@@ -60,20 +63,24 @@ def prepare(package, output, *, expected_sha256, source_commit, windows_version,
         raise ValueError('Package identity/version/source binding mismatch')
     prefix = protocol.build_prefix(build_id)
     artifact = {'key': prefix+'SemantierAgent.msix', 'sha256': expected_sha256, 'size': package.stat().st_size}
-    feed_key = prefix+'win32/stable.appinstaller'
+    graph = {'schema': 1, 'transport': 'windows-package-uri', 'root': artifact['key'],
+             'payloadInventorySha256': inventory,
+             'objects': [{**artifact, 'kind': 'main-package', 'identity': native['Name'],
+                          'publisher': native['Publisher'], 'version': windows_version, 'arch': 'x64',
+                          'nativeDigest': native_digest, 'references': []}]}
+    graph_body = protocol.canonical_json(graph)
+    descriptor = {'key': prefix+'native-graph.json', 'sha256': hashlib.sha256(graph_body).hexdigest(), 'size': len(graph_body)}
     row = {'platform': 'win32', 'arch': 'x64', 'variant': 'bundled', 'version': windows_version,
            'identity': native['Name'], 'publisher': native['Publisher'], 'artifact': artifact,
-           'feed': {'key': feed_key, 'channel': 'stable'}}
-    manifest = {'schema': 1, 'request': request, 'packages': [row]}
+           'feed': {'key': descriptor['key'], 'channel': 'stable'},
+           'native': {'schema': 1, 'api': 'PackageManager.AddPackageByUriAsync',
+                      'digestMethod': 'IAppxDigestProvider.GetDigest', 'digestEncoding': 'base64', 'graph': descriptor}}
+    manifest = {'schema': 2, 'request': request, 'packages': [row]}
     record = _record(manifest, None, protocol)
-    protocol.validate_manifest(manifest, record, BASE)
+    protocol.validate_manifest(manifest, record, BASE, allow_native=True)
+    protocol.validate_native_graph(graph, build_id=build_id, identity=native['Name'], publisher=native['Publisher'], version=windows_version, arch='x64')
+    result = {'manifest': manifest, 'graph': graph}
     output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix='channel1-feed-', dir=output.parent) as directory:
-        feed = Path(directory)/'stable.appinstaller'
-        write_appinstaller(feed, identity=native['Name'], publisher=native['Publisher'], version=windows_version,
-                           self_uri=BASE+'/'+feed_key, artifact_uri=BASE+'/'+artifact['key'],
-                           update_policy='pinned', package_arch='x64')
-        result = {'manifest': manifest, 'feed': base64.b64encode(feed.read_bytes()).decode()}
     output.write_bytes(protocol.canonical_json(result))
     return result
 
@@ -81,7 +88,7 @@ def prepare(package, output, *, expected_sha256, source_commit, windows_version,
 def _record(manifest, previous, protocol):
     request = manifest['request']
     digest = hashlib.sha256(protocol.canonical_json(manifest)).hexdigest()
-    same = bool(previous and (previous.get('head') or {}).get('sha256') == digest)
+    same = bool(previous and (previous.get('nativeHead') or previous.get('head') or {}).get('sha256') == digest)
     if previous:
         protocol.validate_record(previous, name=CHANNEL, repository=request['repository'])
         old = previous.get('nativeHead') or previous.get('head')
@@ -94,7 +101,7 @@ def _record(manifest, previous, protocol):
               'policy': previous['policy'] if previous else 'stable-release', 'identity': request['identity'],
               'revision': previous['revision'] + (not same) if previous else 1,
               'nextSequence': max(previous['nextSequence'] if previous else 1, request['sequence']+1),
-              'head': {'buildId': request['buildId'], 'sequence': request['sequence'],
+              'head': None, 'nativeHead': {'buildId': request['buildId'], 'sequence': request['sequence'],
                        'manifestKey': protocol.build_prefix(request['buildId'])+'build.json', 'sha256': digest}}
     return protocol.validate_record(record)
 
@@ -152,16 +159,28 @@ def _uploaded_metadata(stage, metadata_sha256, package_sha256, protocol):
     prefix = protocol.build_prefix(request['buildId'])
     if (request['publicBase'] != BASE or request['channel'] != CHANNEL or len(manifest['packages']) != 1
             or row['artifact'] != {'key': prefix+'SemantierAgent.msix', 'sha256': package_sha256, 'size': package.stat().st_size}
-            or row['feed'] != {'key': prefix+'win32/stable.appinstaller', 'channel': 'stable'}):
+            or manifest['schema'] != 2 or row['variant'] != 'bundled'
+            or row['feed'] != {'key': prefix+'native-graph.json', 'channel': 'stable'}):
         raise ValueError('Uploaded artifact namespace/binding mismatch')
-    feed = base64.b64decode(data['feed'], validate=True)
-    xml = ET.fromstring(feed); native = xml.find('{*}MainPackage')
-    if (native is None or native.attrib != {'Name': row['identity'], 'Publisher': row['publisher'], 'Version': row['version'],
-            'Uri': BASE+'/'+row['artifact']['key'], 'ProcessorArchitecture': 'x64'}
-            or xml.attrib != {'Uri': BASE+'/'+row['feed']['key'], 'Version': row['version']}
-            or xml.find('{*}UpdateSettings') is not None):
-        raise ValueError('App Installer descriptor binding mismatch')
-    return manifest, feed
+    protocol.validate_manifest(manifest, _record(manifest, None, protocol), BASE, allow_native=True)
+    graph = data['graph']
+    protocol.validate_native_graph(graph, build_id=request['buildId'], identity=row['identity'], publisher=row['publisher'], version=row['version'], arch='x64')
+    graph_body = protocol.canonical_json(graph)
+    if (len(graph['objects']) != 1 or graph['root'] != row['artifact']['key']
+            or any(graph['objects'][0][key] != row['artifact'][key] for key in ('key', 'sha256', 'size'))
+            or row['native']['graph'] != {'key': row['feed']['key'], 'sha256': hashlib.sha256(graph_body).hexdigest(), 'size': len(graph_body)}):
+        raise ValueError('Native graph binding mismatch')
+    with zipfile.ZipFile(package) as archive:
+        native = ET.fromstring(archive.read('AppxManifest.xml')).find('{*}Identity').attrib
+        stamp = protocol.decode_json(archive.read('app/resources/install-stamp.json'))
+        if (native['Name'] != row['identity'] or native['Publisher'] != row['publisher']
+                or native['Publisher'] != 'CN=Semantier Technology, O=Semantier Technology'
+                or native['Name'] != 'Semantier.Agent.Acceptance' or native['Version'] != row['version']
+                or native['ProcessorArchitecture'] != 'x64' or stamp['channelBuild'] != request
+                or stamp.get('dirty') is not False or stamp['commit'] != request['commit']
+                or graph['payloadInventorySha256'] != hashlib.sha256(archive.read('AppxBlockMap.xml')).hexdigest()):
+            raise ValueError('Uploaded signed package metadata binding mismatch')
+    return manifest, graph_body
 
 
 def _obsolete_metadata(root, prefix, request, protocol):
@@ -174,7 +193,10 @@ def _obsolete_metadata(root, prefix, request, protocol):
             continue
         if old_request.get('identity') != request['identity'] or old_request.get('publicBase') != BASE:
             raise ValueError('Unrecognized historical manifest; refusing cleanup')
-        for relative in ('build.json', 'native-graph.json', 'win32/stable.appinstaller'):
+        # Legacy consumers may still hold the former pointer; preserve its closure.
+        if old.get('schema') == 1:
+            continue
+        for relative in ('build.json', 'native-graph.json'):
             candidate = _safe(root, str((path.parent/relative).relative_to(root)))
             if candidate.exists(): obsolete.append(candidate)
     return obsolete
@@ -247,7 +269,18 @@ def publish(root, stage, *, metadata_sha256, package_sha256, protocol):
     with _lock(root), tempfile.TemporaryDirectory(prefix='.channel1-rollback-', dir=root.parent) as directory:
         previous = protocol.decode_json(pointer.read_bytes()) if pointer.exists() else None
         record = _record(manifest, previous, protocol)
-        protocol.validate_manifest(manifest, record, BASE)
+        if previous:
+            old_head = previous.get('nativeHead') or previous.get('head')
+            if old_head:
+                old_body = _safe(root, old_head['manifestKey']).read_bytes()
+                if hashlib.sha256(old_body).hexdigest() != old_head['sha256']:
+                    raise ValueError('Existing metadata integrity mismatch')
+                old_manifest = protocol.decode_json(old_body)
+                old_version = tuple(map(int, old_manifest['request']['windowsVersion'].split('.')))
+                new_version = tuple(map(int, request['windowsVersion'].split('.')))
+                if new_version < old_version or (new_version == old_version and old_head['sha256'] != record['nativeHead']['sha256']):
+                    raise ValueError('Version downgrade or changed same-version release')
+        protocol.validate_manifest(manifest, record, BASE, allow_native=True)
         bodies = {prefix+'build.json': protocol.canonical_json(manifest), row['feed']['key']: feed}
         artifact = _safe(root, row['artifact']['key'])
         for key, body in bodies.items():
@@ -260,14 +293,14 @@ def publish(root, stage, *, metadata_sha256, package_sha256, protocol):
         _activate(root, stage, record, row, bodies, obsolete, Path(directory), protocol)
     return {'buildId': request['buildId'], 'version': request['windowsVersion'],
             'channelSha256': hashlib.sha256(protocol.canonical_json(record)).hexdigest(),
-            'manifestSha256': record['head']['sha256'], 'alreadyPublished': record == previous}
+            'manifestSha256': record['nativeHead']['sha256'], 'alreadyPublished': record == previous}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
     local = commands.add_parser('prepare')
-    for name in ('package', 'output', 'expected-sha256', 'source-commit', 'windows-version', 'build-id'):
+    for name in ('package', 'output', 'expected-sha256', 'source-commit', 'windows-version', 'build-id', 'native-digest'):
         local.add_argument('--'+name, required=True)
     remote = commands.add_parser('publish')
     for name in ('root', 'stage', 'metadata-sha256', 'package-sha256', 'protocol', 'protocol-sha256'):
