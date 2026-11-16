@@ -55,6 +55,7 @@ finally:
   try {
     await once(server.stdout, 'data')
     const endpoint = { profile_id: home, instance_id: 'owner', runtime_protocol: 1, control_home: null }
+
     const resolveBackend = vi.fn(async () => ({
       command: bundled ? path.join(home, 'hermes.exe') : python,
       env,
@@ -62,6 +63,7 @@ finally:
       shell: false,
       ...(bundled ? { ticketCommand: python, ticketEnv: { PYTHONPATH: root } } : {})
     }))
+
     const mint = createGatewayTicketResolver(resolveBackend, () => root)
     const before = observed.helpers
 

@@ -96,6 +96,7 @@ function fireExit(fake: FakePty, event: { exitCode: number | null; signal: strin
 
 test('the Windows product sets Semantier CLI branding only inside a Semantier terminal', async () => {
   appName.value = 'Semantier Agent 0.0.77'
+
   try {
     await startSession()
     const branded = spawnMock.fn.mock.lastCall?.[2]?.env

@@ -53,6 +53,7 @@ describe('requestModelOptions', () => {
     const gateway = { request: vi.fn(() => Promise.resolve({
       discovery_contract: 'provider-query-v1', providers: [{ slug: 'lab', name: 'Lab', models: ['static-only'] }]
     })) }
+
     await expect(requestModelOptions({ gateway: gateway as never, queryOnly: true, queryScope: 'connection-a' })).rejects.toThrow()
   })
 
@@ -251,6 +252,7 @@ describe('providerSelectableModels', () => {
   it('accepts verified discovery without inventing an eligibility grant', () => {
     const row = { slug: 'lab', name: 'Lab', models: ['live', 'locked'], discovery_state: 'cached' as const,
       discovery_source_id: 'opaque', unavailable_models: ['locked'] }
+
     expect(providerSelectableModels(row)).toEqual(['live'])
     expect(providerSelectableModels({ ...row, eligible_models: ['locked'] })).toEqual([])
     expect(providerSelectableModels({ ...row, discovery_state: 'error' })).toEqual([])

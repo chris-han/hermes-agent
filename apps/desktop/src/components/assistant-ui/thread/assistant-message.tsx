@@ -216,8 +216,10 @@ const AssistantMessageBody: FC<AssistantMessageProps & { collapsedNotice?: null 
 }) => {
   const botAuthorName = useAuiState(s => {
     const author = s.message.metadata?.custom?.botAuthor as { displayName?: unknown } | undefined
+
     return typeof author?.displayName === 'string' ? author.displayName : ''
   })
+
   const messageId = useAuiState(s => s.message.id)
   const messageRuntime = useMessageRuntime()
   const threadRuntime = useThreadRuntime()
@@ -313,8 +315,8 @@ const AssistantMessageBody: FC<AssistantMessageProps & { collapsedNotice?: null 
           >
             {botAuthorName ? (
               <span
-                data-slot="message-bot-author"
                 className="mb-1 block text-[length:var(--conversation-caption-font-size)] font-medium text-(--ui-text-secondary)"
+                data-slot="message-bot-author"
               >
                 {botAuthorName}
               </span>

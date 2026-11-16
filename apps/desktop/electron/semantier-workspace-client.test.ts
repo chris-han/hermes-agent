@@ -37,6 +37,7 @@ it('projects server conversation and message IDs without replacement or precisio
     { messageId: '204', role: 'assistant', text: 'Reminder', timestamp: 1794102384000, metadata: { author_bot_id: 'bot_a' } },
     { messageId: '9007199254740993', role: 'user', text: 'Hello' }
   ] }
+
   const rows = workspaceTranscript(history)
   expect(rows[0]).toMatchObject({ messageId: '204', row_id: 204, content: 'Reminder', timestamp: 1794102384, display_metadata: { author_bot_id: 'bot_a' } })
   expect(rows[1].messageId).toBe('9007199254740993')
@@ -57,9 +58,11 @@ it('requires the actual completed SSE terminal and rejects failed or uncertain o
 it('projects only the server-selected Native Winman profile and canonical chat', async () => {
   const profile = { name: 'winman-server', path: 'profile-server', display_name: 'Custom Wing',
     canonical_session: { id: 'canonical-server', resolved_id: 'canonical-server' } }
+
   const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
     bot_id: 'bot-server', native_profile_id: 'profile-server', profile, bot_mode_protocol: true
   }))
+
   const client = createSemantierWorkspaceClient('https://cloud.example', transport)
   await expect(workspaceDesktopRead(client, '/api/profiles')).resolves.toMatchObject({
     profiles: [{ ...profile, runtime_bot_id: 'bot-server', native_profile_id: 'profile-server' }],
@@ -72,6 +75,7 @@ it('projects only the server-selected Native Winman profile and canonical chat',
 it('keeps canonical Native history IDs and refuses another conversation', async () => {
   const snapshot = { session_id: 'canonical-a', canonical_session: { id: 'canonical-a' },
     bot_id: 'bot-a', native_profile_id: 'native-a', messages: [{ row_id: 44, role: 'assistant', content: 'Native reply', timestamp: 10 }] }
+
   const transport = vi.fn<typeof fetch>().mockImplementation(async () => Response.json(snapshot))
   const client = createSemantierWorkspaceClient('https://cloud.example', transport)
   await expect(client.nativeHistory('canonical-a')).resolves.toEqual(snapshot)
@@ -101,6 +105,7 @@ it('ensures only the server canonical Chat with an empty JSON request and no POS
 it('retains the server Main binding and Native request identity without retrying a lost send', async () => {
   const transport=vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({binding_id:'server-token',original_conversation:{session_key:'main-a'}}))
     .mockRejectedValueOnce(new TypeError('Connection lost'))
+
   const client=createSemantierWorkspaceClient('https://cloud.example',transport)
   await expect(client.bindNativeContext('canonical-a','main-a')).resolves.toMatchObject({binding_id:'server-token'})
   await expect(client.sendNative('canonical-a','Hello','same-request','server-token')).rejects.toThrow('Connection lost')

@@ -35,8 +35,8 @@ import {
   $selectedBot,
   $selectedRosterHydrated,
   $selectedRosterKey,
-  focusedMentionProfile,
   clearSelectedRosterKey,
+  focusedMentionProfile,
   parseRosterKey
 } from './bot-state'
 import { isCanonicalChatOnScreen, openBotCanonicalChat } from './canonical-chat'
@@ -401,6 +401,7 @@ export default {
             if (payload?.reason === 'account-changed') {
               forgetConnectionRoster(payload.connectionId)
               const key = $selectedRosterKey.get()
+
               if (parseRosterKey(key).connectionId === payload.connectionId) {
                 clearSelectedRosterKey(key)
                 $selectedBot.set('default')
@@ -408,6 +409,7 @@ export default {
                 $botChatFocused.set(false)
               }
             }
+
             if (payload?.reason === 'removed') {
               sweepGroupChatMembersForRemovedConnection(payload.connectionId)
             }

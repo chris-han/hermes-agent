@@ -50,12 +50,16 @@ export interface PreviewFrameRunner {
 }
 
 const frameRunners = new Map<string, PreviewFrameRunner>()
+
 export function registerPreviewFrameRunner(tabId: string, runner: PreviewFrameRunner): () => void {
   frameRunners.set(tabId, runner)
+
   return () => { if (frameRunners.get(tabId) === runner) {frameRunners.delete(tabId)} }
 }
+
 export function activePreviewFrameRunner(owner?: PreviewOwner): PreviewFrameRunner | null {
   const tab = activePreviewTabFor(owner)
+
   return (tab && frameRunners.get(tab.id)) || null
 }
 
@@ -67,11 +71,15 @@ export function createPreviewFrameRunner(getGuest: () => Guest | null, bridge: F
   const invoke = async (payload: { operation: 'list' | 'run' | 'mapPoint' | 'input'; token?: string; code?: string; point?: { x: number; y: number }; event?: PreviewInputEvent }) => {
     const guest = getGuest()
     const webContentsId = guest?.getWebContentsId?.()
+
     if (!guest || typeof webContentsId !== 'number') {throw new Error('PANE_UNAVAILABLE')}
     const result = await bridge({ ...payload, webContentsId })
+
     if (getGuest() !== guest || guest.getWebContentsId?.() !== webContentsId) {throw new Error('STALE_TARGET')}
+
     return result
   }
+
   return {
     list: () => invoke({ operation: 'list' }),
     input: (token, event, point) => invoke({ operation: 'input', token, event, point }),
@@ -83,9 +91,12 @@ export function createPreviewFrameRunner(getGuest: () => Guest | null, bridge: F
 export async function readPreviewFrameText(runner: PreviewFrameRunner): Promise<string> {
   const frames = await runner.list()
   const pieces: string[] = []
+
   for (const frame of frames) {
     const text = await runner.run(frame.token, 'document.body ? document.body.innerText : ""')
+
     if (typeof text === 'string' && text.trim()) {pieces.push(text)}
   }
+
   return pieces.join('\n')
 }

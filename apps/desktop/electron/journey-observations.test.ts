@@ -1,11 +1,17 @@
 import { mkdtempSync,readFileSync,rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+
 import { afterEach,expect,it,vi } from 'vitest'
+
 import { JourneyObservations } from './journey-observations'
 const dirs:string[]=[]
-function root(){const d=mkdtempSync(path.join(os.tmpdir(),'semantier-journey-'));dirs.push(d);return d}
-afterEach(()=>{for(const d of dirs.splice(0))rmSync(d,{recursive:true,force:true})})
+
+function root(){const d=mkdtempSync(path.join(os.tmpdir(),'semantier-journey-'));dirs.push(d);
+
+return d}
+
+afterEach(()=>{for(const d of dirs.splice(0)){rmSync(d,{recursive:true,force:true})}})
 it('sends nothing without explicit consent',async()=>{
  const send=vi.fn();const owner=new JourneyObservations(root(),'http://127.0.0.1:8899',()=>false,send)
  await owner.firstOpen();expect(send).not.toHaveBeenCalled()
@@ -52,7 +58,11 @@ it('keeps the version unknown for a previously journaled observation',async()=>{
 })
 it('does not deliver after consent is withdrawn during session setup',async()=>{
  let allowed=true
- const send=vi.fn().mockImplementation(async()=>{allowed=false;return Response.json({status:'accepted'})})
+
+ const send=vi.fn().mockImplementation(async()=>{allowed=false;
+
+return Response.json({status:'accepted'})})
+
  const owner=new JourneyObservations(root(),'http://127.0.0.1:8899',()=>allowed,send,'0.0.65')
  await owner.firstOpen()
  expect(send.mock.calls.filter(([,init])=>init.body)).toHaveLength(0)
@@ -61,7 +71,9 @@ it('does not emit renderer state after consent is withdrawn during session setup
  let allowed=true
  const send=vi.fn().mockImplementation(async()=>Response.json({status:'accepted'}))
  const owner=new JourneyObservations(root(),'http://127.0.0.1:8899',()=>allowed,send,'0.0.65')
- await owner.firstOpen();send.mockClear();send.mockImplementation(async()=>{allowed=false;return Response.json({status:'accepted'})})
+ await owner.firstOpen();send.mockClear();send.mockImplementation(async()=>{allowed=false;
+
+return Response.json({status:'accepted'})})
  await owner.rendererState(true)
  expect(send.mock.calls.filter(([,init])=>init.body)).toHaveLength(0)
 })

@@ -230,11 +230,15 @@ describe('actOnActivePreview (drive_preview tool)', () => {
       () => ({ guest_id: guest, page_epoch: epoch, loading: false })))
     cleanups.push(registerPreviewInput(tabId, { focus: () => {}, send: event => {
       if (event.type !== 'mouseUp') {return}
+
       if (change === 'navigation') {epoch++}
+
       if (change === 'replacement') {guest++}
+
       if (change === 'cancellation') {controller.abort('interrupted')}
     } }))
     const result = actOnActivePreview({ kind: 'click', ref: '@e1', expectedBinding: activePreviewBinding()! }, controller.signal)
+
     if (change === 'navigation') {
       await expect(result).resolves.toMatchObject({ success: true, acted: expect.stringContaining('clicked'), note: expect.stringContaining('navigating') })
     } else {

@@ -217,6 +217,7 @@ export function localBackendProcess(port: number, electronPid: number, hermesHom
         })
         .map(record => record.pid)
     } catch { /* Missing/unreadable ledger provides no attachment evidence. */ }
+
     // Canonical gateway ensure detaches its owner; it publishes a lifecycle
     // record instead of an attachable serve entry. Require an exact live
     // incarnation here, then independently bind the OS socket and source below.
@@ -224,7 +225,9 @@ export function localBackendProcess(port: number, electronPid: number, hermesHom
       const record = z.object({ phase: z.literal('running'), pid: z.number().int().positive(),
         create_time: z.number().finite().positive() }).parse(JSON.parse(
         fs.readFileSync(path.join(ledgerRoot, 'state', 'gateway.lifecycle.json'), 'utf8')))
+
       const started = processStartTime(record.pid)
+
       if (started !== null && Math.abs(started - record.create_time) < 2) {
         gatewayPid = record.pid
       }

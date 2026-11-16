@@ -7,7 +7,9 @@ export const modelDiscoveryRefreshKey = (owner: string, profile: string): string
 export function setModelDiscoveryRefreshing(owner: string, profile: string, refreshing: boolean): void {
   const next = new Set($refreshingModelSources.get())
   const key = modelDiscoveryRefreshKey(owner, profile)
+
   if (refreshing) {next.add(key)}
   else {next.delete(key)}
+
   $refreshingModelSources.set(next)
 }

@@ -9,6 +9,7 @@ afterEach(() => vi.restoreAllMocks())
 
 it('signs in and opens the existing server workspace without creating another connection', async () => {
   const identity = vi.fn().mockResolvedValue({ authenticated: false })
+
   const login = vi
     .fn()
     .mockResolvedValue({
@@ -17,6 +18,7 @@ it('signs in and opens the existing server workspace without creating another co
       workspace: { id: 'wa' },
       organization_id: 'org'
     })
+
   const save = vi.fn()
   Object.defineProperty(window, 'hermesDesktop', {
     configurable: true,
@@ -47,9 +49,11 @@ it('signs in and opens the existing server workspace without creating another co
 
 it('creates an explicit HTTP connection only after authenticated sign-in', async () => {
   const identity = vi.fn().mockResolvedValue({ authenticated: false })
+
   const login = vi
     .fn()
     .mockResolvedValue({ authenticated: true, user: { user_id: 'a' }, workspace: { id: 'wa' }, organization_id: 'org' })
+
   const save = vi.fn().mockResolvedValue({ connection: { id: 'new-cloud' } })
   Object.defineProperty(window, 'hermesDesktop', {
     configurable: true,
@@ -67,6 +71,7 @@ it('creates an explicit HTTP connection only after authenticated sign-in', async
 it('does not save or open a workspace when hosted sign-in is cancelled', async () => {
   const save = vi.fn(),
     onConnect = vi.fn()
+
   Object.defineProperty(window, 'hermesDesktop', {
     configurable: true,
     value: {

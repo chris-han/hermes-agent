@@ -210,6 +210,7 @@ function messageBotAuthor(message: SessionMessage): ChatMessage['botAuthor'] {
   const metadata = parseDisplayMetadata(message.display_metadata)
   const botId = metadata?.author_bot_id
   const displayName = metadata?.author_display_name
+
   return typeof botId === 'string' && botId.trim() && typeof displayName === 'string' && displayName.trim()
     ? { botId, displayName } : undefined
 }
@@ -554,6 +555,7 @@ export function toChatMessages(messages: SessionMessage[]): ChatMessage[] {
     }
 
     const botAuthor = messageBotAuthor(message)
+
     if (message.role === 'assistant' && activeAssistantIndex !== null &&
         (result[activeAssistantIndex]?.botAuthor?.botId !== botAuthor?.botId ||
          result[activeAssistantIndex]?.botAuthor?.displayName !== botAuthor?.displayName)) {
