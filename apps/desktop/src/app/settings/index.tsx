@@ -421,7 +421,8 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
             }
           : group
       }),
-    [locale, 
+    [
+      locale,
       activeView,
       serviceCopy.advancedRuntime,
       serviceCopy.title,
