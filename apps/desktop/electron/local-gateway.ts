@@ -83,6 +83,17 @@ export function gatewayOwnerProfile(endpoint: GatewayEndpoint): string {
   return path.basename(path.dirname(home)) === 'profiles' ? path.basename(home) : 'default'
 }
 
+/** Package replacement drains only attached local owners, once per host/profile. */
+export async function drainNativePackageGateways(
+  connections: Array<{ mode?: string; gatewayEndpoint?: GatewayEndpoint } | null | undefined>,
+  stop: (ownerProfile: string) => Promise<void>
+): Promise<void> {
+  const owners = new Set(connections.flatMap(connection =>
+    connection?.mode === 'local' && connection.gatewayEndpoint ? [gatewayOwnerProfile(connection.gatewayEndpoint)] : []))
+
+  for (const owner of owners) {await stop(owner)}
+}
+
 /** One restart per (owner process, stale gateway, client) per Desktop process. An owner a restart cannot move
  *  (a service unit pinned to another checkout) is then attached as-is instead of being restarted
  *  on every dial. */

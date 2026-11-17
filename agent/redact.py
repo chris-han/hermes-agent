@@ -527,6 +527,21 @@ _DB_CONNSTR_RE = re.compile(
     re.IGNORECASE,
 )
 
+# libpq keyword DSNs are not URLs. Limit the password pass to lines with a
+# whitespace-delimited connection field; prose and ordinary URL queries retain
+# their existing policy. libpq quotes/backslash escapes may contain spaces.
+_LIBPQ_LINE_RE = re.compile(
+    r'^(?=[^\r\n]*(?<!\S)(?:hostaddr|host|port|dbname|user)[ \t]*=)[^\r\n]+', re.IGNORECASE | re.MULTILINE)
+_LIBPQ_PASSWORD_RE = re.compile(
+    r"(?<!\S)(password[ \t]*=[ \t]*)(?:'(?:\\[^\r\n]|[^'\\\r\n])*'|(?:\\[^\r\n]|[^\s'\"\\])+)", re.IGNORECASE)
+
+
+def _redact_libpq_credentials(text: str) -> str:
+    if 'password' not in text.lower() or '=' not in text:
+        return text
+    return _LIBPQ_LINE_RE.sub(
+        lambda line: _LIBPQ_PASSWORD_RE.sub(lambda value: value.group(1) + "'***'", line.group(0)), text)
+
 # Bare-token URL credential ``scheme://TOKEN@host`` (``git remote set-url
 # https://PASSWORD@github.com/...``): unambiguously a secret, since round-trip
 # URLs (OAuth callbacks, magic links) carry tokens in the QUERY STRING, never
@@ -936,6 +951,7 @@ def redact_sensitive_text(text: str, *, force: bool = False, code_file: bool = F
     # ``secret_file`` is authoritative: a caller that classified the source as secret-bearing must not
     # be silently fail-open because another flag (code_file, or file_read implying it) was also set.
     code_file = (code_file or file_read) and not secret_file
+    text = _redact_libpq_credentials(text)
 
     # Control/zero-width chars can split a token body so _PREFIX_RE alone misses it.
     if _has_known_prefix_substring(text):

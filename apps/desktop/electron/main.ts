@@ -5,6 +5,7 @@ import {
   configurePythonGatewayTicketClient,
   createLocalGatewayDials,
   createStaleGatewayRestarter,
+  drainNativePackageGateways,
   ensureLocalGateway,
   gatewayOwnerProfile,
   mintLocalGatewayTicket,
@@ -14,6 +15,7 @@ import {
   runGatewayEnsure
 } from './local-gateway'
 import { closeGatewayTicketBridges, createGatewayTicketResolver } from './local-gateway-python'
+import { looksBinary, previewFileMetadata } from './main_file_preview'
 import { assertWorkspaceScope, registerSemantierWorkspaceIpc, workspace as semantierWorkspace } from './semantier-workspace-ipc'
 import { registerSemantierFeedbackIpc } from './updater/semantier-feedback-ipc'
 
@@ -1783,56 +1785,6 @@ const PREVIEW_LANGUAGE_BY_EXT = {
   '.zsh': 'shell'
 }
 
-function looksBinary(buffer) {
-  if (!buffer.length) {
-    return false
-  }
-
-  let suspicious = 0
-
-  for (const byte of buffer) {
-    if (byte === 0) {
-      return true
-    }
-
-    // Allow common whitespace controls: tab, LF, CR.
-    if (byte < 32 && byte !== 9 && byte !== 10 && byte !== 13) {
-      suspicious += 1
-    }
-  }
-
-  return suspicious / buffer.length > 0.12
-}
-
-function previewFileMetadata(filePath, mimeType) {
-  let byteSize = 0
-  let binary = false
-
-  try {
-    const stat = fs.statSync(filePath)
-    byteSize = stat.size
-
-    if (!mimeType.startsWith('image/')) {
-      const fd = fs.openSync(filePath, 'r')
-
-      try {
-        const sample = Buffer.alloc(Math.min(byteSize, 4096))
-        const bytesRead = fs.readSync(fd, sample, 0, sample.length, 0)
-        binary = looksBinary(sample.subarray(0, bytesRead))
-      } finally {
-        fs.closeSync(fd)
-      }
-    }
-  } catch {
-    // Metadata is best-effort; the read handlers surface hard errors later.
-  }
-
-  return {
-    binary,
-    byteSize,
-    large: byteSize > TEXT_PREVIEW_MAX_BYTES
-  }
-}
 
 app.setName(APP_NAME)
 
@@ -3887,6 +3839,14 @@ function isLightVariant(): boolean {
 async function teardownBundledBackend(): Promise<void> {
   updateWorkGuard.assertBeforeStop()
   isQuittingForHandoff = true
+
+  if (IS_WINDOWS && INSTALL_STAMP?.updateMechanism === 'app-installer' && INSTALL_STAMP.channelBuild) {
+    const connections = await Promise.all([
+      backendConnectionState.getPromise(), ...[...backendPool.values()].map(entry => entry.connectionPromise)
+    ])
+
+    await drainNativePackageGateways(connections, stopLocalGatewayOwnerForPackageUpdate)
+  }
 
   const results = await Promise.allSettled([
     teardownPrimaryBackendAndWait(backendTeardownOptions('reconnect')),
@@ -5994,7 +5954,7 @@ async function previewFileTarget(rawTarget, baseDir) {
   ;({ resolvedPath: resolved } = await resolveReadableFileForIpc(resolved, { purpose: 'Preview target' }))
 
   const mimeType = mimeTypeForPath(resolved)
-  const metadata = previewFileMetadata(resolved, mimeType)
+  const metadata = previewFileMetadata(resolved, mimeType, TEXT_PREVIEW_MAX_BYTES)
   const isHtml = PREVIEW_HTML_EXTENSIONS.has(ext)
   const isImage = mimeType.startsWith('image/')
   const isPdf = PREVIEW_PDF_EXTENSIONS.has(ext) || mimeType === 'application/pdf'
@@ -11974,6 +11934,24 @@ async function dialPoolBackend(profile, entry, opts: { forceLocal?: boolean; poo
 // `hermes gateway restart` drains in-flight turns before the owner exits; the CLI client is
 // bounded so a wedged drain cannot hang Restart. The gateway's own drain is unaffected by the kill.
 const GATEWAY_RESTART_CLIENT_TIMEOUT_MS = 120_000
+
+async function stopLocalGatewayOwnerForPackageUpdate(ownerProfile: string): Promise<void> {
+  const backend = await ensureRuntime(
+    await resolveHermesBackend(['--profile', ownerProfile, 'gateway', 'stop', '--for-package-update']),
+    () => undefined
+  )
+
+  updateWorkGuard.assertBeforeStop()
+
+  const result = await runGatewayEnsure(
+    { ...backend, env: desktopBackendSpawnEnv(backend.env || {}) }, resolveHermesCwd(), HERMES_HOME,
+    profileBackendParentEnv({ hermesHome: HERMES_HOME, profile: ownerProfile }),
+    { label: 'native package Gateway shutdown' }
+  )
+
+  if (result.code !== 0) {throw new Error('Gateway shutdown was not confirmed; native package update was not started.')}
+  rememberLog(`[updates] native package Gateway shutdown confirmed for ${ownerProfile}`)
+}
 
 // Supervised restart of the per-host gateway Desktop attaches to (it never owns that process):
 // the same resolver, spawn helper and Windows quoting as `gateway ensure`, against the profile

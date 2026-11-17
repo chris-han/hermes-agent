@@ -35,3 +35,29 @@ def cmd_gateway_ensure(args) -> None:
         payload, code = {"state": "inaccessible", "reason_code": "invalid_invocation", "endpoint": None}, 2
     print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
     raise SystemExit(code)
+
+
+def cmd_gateway_package_stop(args) -> None:
+    """Explicit native handoff: guarded drain plus read-only absence proof, no start."""
+    import time
+    from hermes_constants import get_hermes_home
+    from hermes_cli.gateway_runtime import discover_gateway_endpoint
+    from hermes_cli.gateway_runtime_replace import replace_incompatible_owner, REFUSAL_DETAIL
+    if getattr(args, 'all', False) or getattr(args, 'system', False):
+        print('Native package shutdown cannot request an all-profile/system sweep.')
+        raise SystemExit(2)
+    home = get_hermes_home()
+    deadline = time.monotonic() + 30
+    refusal = replace_incompatible_owner(home, deadline=deadline, for_package_update=True)
+    if refusal is None:
+        while time.monotonic() < deadline:
+            observed = discover_gateway_endpoint(home, timeout=min(2, deadline - time.monotonic()))
+            if observed.state == 'absent':
+                print('Native package Gateway shutdown confirmed.')
+                return
+            if observed.state not in {'starting', 'draining'}:
+                break
+            time.sleep(0.05)
+        refusal = 'owner_did_not_exit'
+    print('Native package Gateway shutdown refused: ' + REFUSAL_DETAIL.get(refusal, 'owner unverified'))
+    raise SystemExit(2)

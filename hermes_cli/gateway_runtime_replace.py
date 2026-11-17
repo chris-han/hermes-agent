@@ -18,8 +18,11 @@ from __future__ import annotations
 
 import os
 import time
+import sys
 from pathlib import Path
 from typing import Any
+
+from hermes_platform.host.windows_package import package_source as _windows_package_source
 
 # Graceful drain before the guarded force kill; an idle old gateway exits in well under a second.
 _GRACEFUL_STOP_SECONDS = 10.0
@@ -67,12 +70,13 @@ def _within_install(home: Path, root: Path) -> bool:
     return home == root or (home.parent == root / "profiles")
 
 
-def _verified_owner(control: Path, payload: dict) -> tuple[int, Any] | str:
+def _verified_owner(control: Path, payload: dict, *, require_install_root: bool = True) -> tuple[int, Any] | str:
     from gateway.status import _GATEWAY_KIND, _pid_exists, get_process_start_time, start_time_fingerprints_match
     protocol = payload.get("runtime_protocol")
     if type(protocol) is int and protocol > 1:
         return "owner_newer"
-    if not _within_install(control, _install_root()) or not _same(payload.get("hermes_home"), control):
+    if ((require_install_root and not _within_install(control, _install_root()))
+            or not _same(payload.get("hermes_home"), control)):
         return "foreign_install"
     pid, recorded = payload.get("pid"), payload.get("start_time")
     if (payload.get("kind") != _GATEWAY_KIND or type(pid) is not int or pid <= 1
@@ -85,6 +89,54 @@ def _verified_owner(control: Path, payload: dict) -> tuple[int, Any] | str:
     except (TypeError, ValueError):
         return "owner_unverified"
     return pid, current
+
+
+def _native_process_source(pid: int) -> Path:
+    import psutil
+    import subprocess
+    from gateway.runtime_bootstrap_windows import _process_sid
+    from gateway.status import looks_like_gateway_runtime_command_line
+    if _process_sid(pid) != _process_sid(os.getpid()):
+        raise PermissionError('Native Gateway user mismatch')
+    try:
+        process = psutil.Process(pid)
+        if not looks_like_gateway_runtime_command_line(subprocess.list2cmdline(process.cmdline())):
+            raise ValueError('Native Gateway process role mismatch')
+        return Path(process.exe()).resolve()
+    except psutil.Error:
+        raise OSError('Native Gateway process identity unavailable') from None
+
+
+def native_package_owner(control: Path, payload: dict) -> str | None:
+    """Compatibility of the verified live image, not a version/port self-claim."""
+    try:
+        client = _windows_package_source(sys.executable, registered=True)
+        if client is None:
+            return None  # Existing source/dev discovery is unchanged.
+        verified = _verified_owner(control, payload, require_install_root=False)
+        if isinstance(verified, str):
+            return verified
+        pid, birth = verified
+        from gateway.status import get_process_start_time, start_time_fingerprints_match
+        # Windows creation time comes from the kernel; macOS clock-drift slack
+        # must not admit a recycled Windows PID even a second after its owner.
+        if not start_time_fingerprints_match(payload['start_time'], birth, tolerance=0):
+            return 'owner_unverified'
+        image = _native_process_source(pid)
+        current_birth = get_process_start_time(pid)
+        if current_birth is None or not start_time_fingerprints_match(birth, current_birth, tolerance=0):
+            return 'owner_unverified'
+        owner = _windows_package_source(image, registered=False)
+        if (owner is None or owner[0].parent != client[0].parent
+                or owner[1] != client[1] or owner[3] != client[3]):
+            return 'foreign_install'
+        if owner[0] == client[0]:
+            return 'same'
+        if not _within_install(control, _install_root()):
+            return 'foreign_install'  # Reuse never grants permission to replace another home.
+        return 'older' if owner[2] < client[2] else 'owner_newer'
+    except (OSError, ValueError, TypeError):
+        return 'owner_unverified'
 
 
 def _write_planned_stop(control: Path, pid: int, start_time: Any) -> None:
@@ -107,7 +159,7 @@ def _wait_gone(pid: int, seconds: float) -> bool:
     return True
 
 
-def replace_incompatible_owner(home: Path, *, deadline: float) -> str | None:
+def replace_incompatible_owner(home: Path, *, deadline: float, for_package_update: bool = False) -> str | None:
     """Stop the older-Hermes gateway answering for *home*; None once it is gone, else a refusal code
     (see :data:`REFUSAL_DETAIL`). Never starts anything: the caller's ensure loop does that."""
     from gateway.status import terminate_pid
@@ -125,6 +177,13 @@ def replace_incompatible_owner(home: Path, *, deadline: float) -> str | None:
     if isinstance(verdict, str):
         return verdict
     pid, start_time = verdict
+    native = native_package_owner(control, payload)
+    if native == 'same' and not for_package_update:
+        return None  # A new owner won the discovery/stop race; do not stop it.
+    if for_package_update and native is None:
+        return 'owner_unverified'  # This explicit drain never stops an unpackaged owner.
+    if native not in (None, 'older', 'same'):
+        return native
     _write_planned_stop(control, pid, start_time)
     graceful = min(_GRACEFUL_STOP_SECONDS, max(deadline - time.monotonic() - _FORCED_STOP_SECONDS, 1.0))
     try:

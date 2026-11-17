@@ -102,6 +102,14 @@ def _endpoint(payload: dict, home: Path, control_home: Path | None = None) -> Ga
     supervisor = payload.get("supervisor")
     if supervisor not in {"none", "systemd", "launchd", "windows", "external"}:
         return GatewayDiscovery("inaccessible", reason_code="invalid_supervisor")
+    from hermes_cli.gateway_runtime_replace import native_package_owner, REFUSAL_DETAIL
+    native = native_package_owner(control_home or home, payload)
+    if native == 'older':
+        return GatewayDiscovery('incompatible', reason_code='native_package_generation')
+    if native not in (None, 'same'):
+        state = 'inaccessible' if native == 'owner_unverified' else 'incompatible'
+        return GatewayDiscovery(state, reason_code='native_package_' + native,
+                                detail=REFUSAL_DETAIL.get(native))
     return GatewayDiscovery("ready", GatewayEndpoint(
         profile_id=matches[0]["profile_id"], instance_id=instance,
         authority_epoch=epoch, runtime_protocol=1, api_origin=origin,
@@ -235,19 +243,18 @@ _RETIRING = frozenset({"idle_exit", "replaced"})
 
 
 def _observe_replacing_stale(home: Path, deadline: float, replaced: set[Path]) -> GatewayDiscovery:
-    """Discovery, except that a gateway an older Hermes left on this home is stopped once (like
-    ``hermes gateway stop``) and reported as retiring; a refusal keeps ``incompatible`` + its remedy."""
+    """Replace a verified obsolete protocol/MSIX owner once through the existing lifecycle."""
     from hermes_cli.gateway_runtime_service import remaining
     observed = discover_gateway_endpoint(home, timeout=remaining(deadline))
-    if observed.state != "incompatible" or observed.reason_code != "runtime_protocol":
+    if observed.state != "incompatible" or observed.reason_code not in {"runtime_protocol", "native_package_generation"}:
         return observed
     if home in replaced:
-        return GatewayDiscovery("incompatible", reason_code="runtime_protocol", detail=_REPLACE_FAILED_DETAIL)
+        return GatewayDiscovery("incompatible", reason_code=observed.reason_code, detail=_REPLACE_FAILED_DETAIL)
     from hermes_cli import gateway_runtime_replace as replace
     replaced.add(home)
     refusal = replace.replace_incompatible_owner(home, deadline=deadline)
     if refusal is not None:
-        return GatewayDiscovery("incompatible", reason_code="runtime_protocol",
+        return GatewayDiscovery("incompatible", reason_code=observed.reason_code,
                                 detail=replace.REFUSAL_DETAIL.get(refusal, _REPLACE_FAILED_DETAIL))
     return GatewayDiscovery("draining", reason_code="replaced")
 

@@ -2,8 +2,27 @@ import path from 'node:path'
 
 import { expect, test, vi } from 'vitest'
 
-import { createLocalGatewayDials, ensureLocalGateway, nativeGrantRoute, routedGatewayEndpoint, runGatewayEnsure } from './local-gateway'
+import { createLocalGatewayDials, drainNativePackageGateways, ensureLocalGateway, nativeGrantRoute, routedGatewayEndpoint, runGatewayEnsure } from './local-gateway'
 import { shortSocketTmpDir } from './local-gateway.test-helpers'
+
+test('native package handoff drains each attached local owner once and never a remote', async () => {
+  const endpoint = home => ({profile_id: home, control_home: home} as any)
+  const stopped: string[] = []
+
+  await drainNativePackageGateways([
+    {mode: 'local', gatewayEndpoint: endpoint('C:/state')},
+    {mode: 'local', gatewayEndpoint: {...endpoint('C:/state'), profile_id: 'C:/state/profiles/shared'}},
+    {mode: 'local', gatewayEndpoint: endpoint('C:/state/profiles/independent')},
+    {mode: 'remote', gatewayEndpoint: endpoint('C:/other-state')}, undefined
+  ], async owner => {stopped.push(owner)})
+  expect(stopped).toEqual(['default', 'independent'])
+})
+
+test('a refused native Gateway drain rejects the handoff', async () => {
+  await expect(drainNativePackageGateways([
+    {mode: 'local', gatewayEndpoint: {profile_id: 'C:/state'} as any}
+  ], async () => {throw new Error('owner unverified')})).rejects.toThrow('owner unverified')
+})
 
 test('the ensure client inherits the caller-scrubbed parent env, not the raw Desktop env', async () => {
   // #68367: a sibling profile's `gateway ensure` must not see the launch profile's dotenv
