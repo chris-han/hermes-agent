@@ -78,7 +78,7 @@ it.skipIf(!fixture)(
       await supervisor.enable(origin, folder)
       await expect.poll(() => supervisor.status().state, { timeout: 20000 }).toBe('Synced')
       const bytes = await request('/api/file-sync/files?download=true&path=' + name)
-      expect(bytes.status).toBe(200)
+      expect(bytes.status).toBe(206)
       expect(await bytes.text()).toBe('Portable supervisor upload\n')
       const activeOwner = (await supervisor.owners())[0]
       const credential = await options.binding()
