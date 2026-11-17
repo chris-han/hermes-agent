@@ -50,6 +50,9 @@ function Test-NativeReleasePreflight {
   Require-Signature $RecoveryMsix
   $signature=Get-PackageSignatureHash $RecoveryMsix
   if((Hash (Join-Path $package[0].InstallLocation 'AppxSignature.p7x')) -cne $signature){throw 'Recovery package does not match installed baseline signature'}
+  . (Join-Path $Repository 'apps/desktop/scripts/native-package-update.ps1')
+  $journalReadiness=Get-NativeUpdateJournalReadiness -Directory (Join-Path $NativeUserData 'updates') -ExpectedPackageFullName $package[0].PackageFullName -ExpectedSignatureSha256 $signature
+  if($journalReadiness.result -cne 'PASS'){throw ('Local native journal readiness STOP: '+$journalReadiness.reason)}
   foreach($tool in @($SignTool,$BuildPython,$Node)){if(!(Test-Path -LiteralPath $tool -PathType Leaf)){throw 'Required native release tool unavailable'}}
   & $BuildPython -B -c 'import curl_cffi'
   if($LASTEXITCODE -ne 0){throw 'Existing curl_cffi environment unavailable'}
@@ -92,7 +95,7 @@ print(json.dumps({'pointerSha256':expected,'record':r,'manifest':manifest,'packa
   if((Hash $RecoveryMsix) -cne $remote.packageSha256){throw 'Local recovery and ECS baseline package mismatch'}
   $public=Test-NativePublic $remote.manifest $RecoveryMsix -Active
   return @{result='PASS';stage='READ_ONLY_PREFLIGHT';producedAt=[DateTime]::UtcNow.ToString('o');source=$script:SourceBinding;
-    baseline=$NativeUpdateFrom;target=$ExpectedVersion;family=$package[0].PackageFamilyName;signature=$signature;
+    journalReadiness=$journalReadiness;baseline=$NativeUpdateFrom;target=$ExpectedVersion;family=$package[0].PackageFamilyName;signature=$signature;
     recoveryMsix=$RecoveryMsix;recoverySha256=$remote.packageSha256;remote=$remote;gateway=$gateway;files=$samples;
     public=$public;profileManifests=@{samples=(Hash $ProfileSampleManifest);critical=(Hash $CriticalFileManifest)};llmCalls=0}
 }

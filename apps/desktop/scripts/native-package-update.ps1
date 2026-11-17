@@ -206,6 +206,15 @@ function Write-NativeUpdateReceipt($Context, [string]$Name, $Value) {
 }
 
 # Read-only OS reconciliation; old intent/timeout history is never rewritten.
+function ConvertTo-NativeWaiterBirth($Value) {
+ if($Value -is [DateTime]){
+  if($Value.Kind -eq [DateTimeKind]::Unspecified){throw 'Native waiter birth lacks a timezone'}
+  return [DateTimeOffset]$Value
+ }
+ if([string]$Value -notmatch '(?:Z|[+-]\d{2}:\d{2})$'){throw 'Native waiter birth lacks a timezone'}
+ return [DateTimeOffset]::Parse([string]$Value)
+}
+
 function Get-NativeUpdateReconciliation([string]$Directory) {
  $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
  if((Get-Acl -LiteralPath $Directory).GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $sid){throw 'Native journal owner mismatch'}
@@ -217,7 +226,7 @@ function Get-NativeUpdateReconciliation([string]$Directory) {
  if($request.sourceSha256 -cne (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'native-package-update.ps1') -Algorithm SHA256).Hash.ToLowerInvariant()){return $result}
  $rows=@(Read-NativeUpdateGraph $request)
  $waiter=Get-Process -Id $request.waiterPid -ErrorAction SilentlyContinue
- if($waiter -and ([DateTimeOffset]$waiter.StartTime).ToUniversalTime().ToString('o') -ceq ([DateTimeOffset]::Parse($request.waiterBirth)).ToUniversalTime().ToString('o')){return $result}
+ if($waiter -and ([DateTimeOffset]$waiter.StartTime).ToUniversalTime().ToString('o') -ceq (ConvertTo-NativeWaiterBirth $request.waiterBirth).ToUniversalTime().ToString('o')){return $result}
  $packages=@(Get-AppxPackage -Name $request.identity|Where-Object{$_.Name -ceq $request.identity})
  if($packages.Count -ne 1){return $result}
  if(Test-NativeUpdateInstalled @{request=$request;rows=$rows} $packages[0]){
@@ -285,17 +294,23 @@ function Resolve-NativeSupersededFailure {
   $activity=[guid]::Empty
   if(![guid]::TryParse([string]$failure.activityId,[ref]$activity) -or $activity -eq [guid]::Empty){throw 'Native terminal activity missing'}
   $null=Read-NativeUpdateGraph $request
-  # PowerShell 7 deserializes ISO JSON dates as DateTime; 5.1 keeps strings.
-  # Preserve the UTC kind rather than round-tripping a localized date string.
-  if($request.waiterBirth -is [DateTime]){
-   if($request.waiterBirth.Kind -eq [DateTimeKind]::Unspecified){throw 'Native waiter birth lacks a timezone'}
-   $waiterBirth=[DateTimeOffset]$request.waiterBirth
-  }else{
-   if([string]$request.waiterBirth -notmatch '(?:Z|[+-]\d{2}:\d{2})$'){throw 'Native waiter birth lacks a timezone'}
-   $waiterBirth=[DateTimeOffset]::Parse([string]$request.waiterBirth)
-  }
+  $waiterBirth=ConvertTo-NativeWaiterBirth $request.waiterBirth
   $waiter=Get-Process -Id $request.waiterPid -ErrorAction SilentlyContinue
   if($waiter -and ([DateTimeOffset]$waiter.StartTime).ToUniversalTime() -eq $waiterBirth.ToUniversalTime()){throw 'Native historical waiter still alive'}
+  foreach($other in @(Get-ChildItem -LiteralPath (Split-Path -Parent $Directory) -Filter 'native-*' -Force)){
+   if($other.FullName -ieq $Directory){continue}
+   if(!$other.PSIsContainer -or ($other.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+     (!(Test-Path -LiteralPath (Join-Path $other.FullName 'completed.json')) -and !(Test-Path -LiteralPath (Join-Path $other.FullName 'reconciled.json')))){
+    throw 'Another native transaction is unresolved; preserve hold'
+   }
+   foreach($file in @(Get-ChildItem -LiteralPath $other.FullName -Force)){
+    if($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $file.Length -gt 4194304){throw 'Other native evidence ambiguous'}
+   }
+   $otherRequest=Get-Content -LiteralPath (Join-Path $other.FullName 'intent.json') -Raw -Encoding UTF8|ConvertFrom-Json
+   if((Get-Acl -LiteralPath $other.FullName).GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $sid -or $otherRequest.authorizedSid -cne $sid){throw 'Other native transaction owner ambiguous'}
+   $otherWaiter=Get-Process -Id $otherRequest.waiterPid -ErrorAction SilentlyContinue
+   if($otherWaiter -and ([DateTimeOffset]$otherWaiter.StartTime).ToUniversalTime() -eq (ConvertTo-NativeWaiterBirth $otherRequest.waiterBirth).ToUniversalTime()){throw 'Another native waiter is active'}
+  }
   $packages=@(Get-AppxPackage -Name $request.identity|Where-Object{$_.Name -ceq $request.identity})
   if($packages.Count -ne 1){throw 'Native registered package ambiguous'}
   $package=$packages[0]
@@ -315,10 +330,27 @@ function Resolve-NativeSupersededFailure {
    registeredPackage=$package.PackageFullName;registeredVersion=$package.Version.ToString();registeredSignatureSha256=$ExpectedSignatureSha256;
    fileSha256=$hashes;reconcilerSha256=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'native-package-update.ps1')).Hash.ToLowerInvariant();
    installation='NOT_ATTEMPTED';historicalOutcome='FAILURE_PRESERVED';reason='TERMINAL_FAILURE_SUPERSEDED_BY_VERIFIED_NEWER_REGISTRATION'}
+  $receiptPath=Join-Path $Directory 'reconciled.json'
+  if(Test-Path -LiteralPath $receiptPath){
+   if((Get-Item -LiteralPath $receiptPath).Length -gt 4194304){throw 'Native reconciliation oversized'}
+   $holds+=@([IO.File]::Open($receiptPath,'Open','Read','Read'))
+   $prior=Get-Content -LiteralPath $receiptPath -Raw -Encoding UTF8|ConvertFrom-Json
+   foreach($field in @('schema','status','manifestSha256','authorizedSid','historicalBaseline','historicalTarget','historicalSourceSha256','activityId','hresult','installation','historicalOutcome','reason')){
+    if([string]$prior.$field -cne [string]$result[$field]){throw 'Native prior reconciliation binding mismatch'}
+   }
+   foreach($name in $names){if($prior.fileSha256.$name -cne $hashes[$name]){throw 'Native reconciled original evidence changed'}}
+   $priorVersion=[Version]$prior.registeredVersion
+   if($priorVersion -le [Version]$request.version -or $priorVersion -le [Version]$request.currentVersion -or $priorVersion -gt $registeredVersion -or
+     $prior.registeredPackage -cne ($request.identity+'_'+$prior.registeredVersion+'_x64__'+($package.PackageFamilyName -split '_')[-1]) -or
+     $prior.registeredSignatureSha256 -cnotmatch '^[a-f0-9]{64}$' -or $prior.reconcilerSha256 -cnotmatch '^[a-f0-9]{64}$'){
+    throw 'Native prior registration provenance invalid'
+   }
+   if($priorVersion -eq $registeredVersion -and ($prior.registeredPackage -cne $ExpectedPackageFullName -or $prior.registeredSignatureSha256 -cne $ExpectedSignatureSha256)){throw 'Native prior registered signature changed'}
+   return $prior # Historical proof remains immutable after later verified upgrades.
+  }
   if($Apply){
    $current=@(Get-AppxPackage -Name $request.identity|Where-Object{$_.Name -ceq $request.identity})
    if($current.Count -ne 1 -or $current[0].PackageFullName -cne $ExpectedPackageFullName -or $current[0].Status.ToString() -cne 'Ok'){throw 'Native registration changed during reconciliation'}
-   if(Test-Path -LiteralPath (Join-Path $Directory 'reconciled.json')){throw 'Native reconciliation already exists; preserve prior receipt'}
    Write-NativeUpdateReceipt @{directory=$Directory} 'reconciled.json' $result
   }
   return $result
@@ -362,4 +394,69 @@ function Get-NativeUpdateFileId($Stream) {
  $info=New-Object SemantierNativeUpdateFacts+Info
  if(![SemantierNativeUpdateFacts]::GetFileInformationByHandle($Stream.SafeFileHandle,[ref]$info)){throw 'Native file identity unavailable'}
  return ('{0}:{1}:{2}' -f $info.volume,$info.indexHigh,$info.indexLow)
+}
+
+# Read-only qualification of this operator's selected local profile, never customers.
+function Get-NativeUpdateJournalReadiness {
+ [CmdletBinding()]
+ param([Parameter(Mandatory=$true)][string]$Directory,
+       [Parameter(Mandatory=$true)][string]$ExpectedPackageFullName,
+       [Parameter(Mandatory=$true)][string]$ExpectedSignatureSha256)
+ $ErrorActionPreference='Stop'
+ $entries=@()
+ try {
+  if(!(Test-Path -LiteralPath (Split-Path -Parent $Directory) -PathType Container)){throw 'Local qualification profile missing'}
+  if(Test-Path -LiteralPath $Directory){
+   $cursor=Get-Item -LiteralPath $Directory -Force
+   if(!$cursor.PSIsContainer){throw 'Native journal root is not a directory'}
+   while($cursor){if($cursor.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Native journal reparse path refused'};$cursor=$cursor.Parent}
+   $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+   foreach($journal in @(Get-ChildItem -LiteralPath $Directory -Filter 'native-*' -Force)){
+    if(!$journal.PSIsContainer -or ($journal.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Native journal path invalid'}
+    if((Get-Acl -LiteralPath $journal.FullName).GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $sid){throw 'Native journal owner mismatch'}
+    foreach($file in @(Get-ChildItem -LiteralPath $journal.FullName -Force)){
+     if($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $file.Length -gt 4194304){throw 'Native journal evidence invalid'}
+    }
+    $request=Get-Content -LiteralPath (Join-Path $journal.FullName 'intent.json') -Raw -Encoding UTF8|ConvertFrom-Json
+    if($request.schema -ne 1 -or $request.authorizedSid -cne $sid -or
+      $request.manifestSha256 -cnotmatch '^[a-f0-9]{64}$' -or $journal.Name -cnotmatch ('^native-'+$request.manifestSha256+'-[a-f0-9]{32}$') -or
+      [IO.Path]::GetFullPath($request.journalDirectory) -ine $journal.FullName){throw 'Native journal actor/path mismatch'}
+    $waiter=Get-Process -Id $request.waiterPid -ErrorAction SilentlyContinue
+    if($waiter -and ([DateTimeOffset]$waiter.StartTime).ToUniversalTime() -eq (ConvertTo-NativeWaiterBirth $request.waiterBirth).ToUniversalTime()){throw 'Native journal waiter active'}
+    $receipt=Join-Path $journal.FullName 'reconciled.json'
+    if(Test-Path -LiteralPath $receipt){
+     $closed=Get-Content -LiteralPath $receipt -Raw -Encoding UTF8|ConvertFrom-Json
+     if($closed.status -ceq 'SUPERSEDED_TERMINAL_FAILURE'){
+      $closed=Resolve-NativeSupersededFailure -Directory $journal.FullName -ExpectedPackageFullName $ExpectedPackageFullName -ExpectedSignatureSha256 $ExpectedSignatureSha256
+     }else{
+      $fresh=Get-NativeUpdateReconciliation $journal.FullName
+      if($closed.schema -ne 1 -or $closed.manifestSha256 -cne $request.manifestSha256 -or $closed.status -cnotin @('TARGET_GRAPH_REGISTERED','NOT_STARTED','BASELINE_INTACT_FAILED') -or $fresh.status -cne $closed.status){throw 'Historical reconciliation requires explicit supported proof'}
+     }
+    }elseif(Test-Path -LiteralPath (Join-Path $journal.FullName 'completed.json')){
+     if((Test-Path -LiteralPath (Join-Path $journal.FullName 'unresolved.json')) -or (Test-Path -LiteralPath (Join-Path $journal.FullName 'deployment-unresolved.json'))){throw 'Conflicting native terminal evidence'}
+     # A closed success is historical evidence, not a claim that today's script ran.
+     $closed=Get-Content -LiteralPath (Join-Path $journal.FullName 'completed.json') -Raw -Encoding UTF8|ConvertFrom-Json
+     $deployment=Get-Content -LiteralPath (Join-Path $journal.FullName 'deployment.json') -Raw -Encoding UTF8|ConvertFrom-Json
+     $null=Read-NativeUpdateGraph $request
+     $registered=@(Get-AppxPackage -Name $request.identity|Where-Object{$_.Name -ceq $request.identity})
+     if($registered.Count -ne 1){throw 'Native completed registration ambiguous'}
+     $package=$registered[0]
+     if($closed.schema -ne 1 -or $closed.status -cne 'TARGET_GRAPH_REGISTERED_PROCESS_LAUNCHED' -or $closed.sid -cne $sid -or
+       $closed.manifestSha256 -cne $request.manifestSha256 -or $deployment.schema -ne 1 -or $deployment.status -cne 'OS_SUCCESS' -or $deployment.manifestSha256 -cne $request.manifestSha256 -or
+       $closed.fullName -cne ($request.identity+'_'+$request.version+'_x64__'+($package.PackageFamilyName -split '_')[-1]) -or
+       $package.PackageFullName -cne $ExpectedPackageFullName -or $package.PackageFamilyName -cne $request.familyName -or $package.Publisher -cne $request.publisher -or
+       $package.Status.ToString() -cne 'Ok' -or $package.Architecture.ToString() -cne 'X64' -or $package.IsDevelopmentMode -ne $false -or [Version]$package.Version -lt [Version]$request.version -or
+       $ExpectedSignatureSha256 -cnotmatch '^[a-f0-9]{64}$' -or (Get-FileHash (Join-Path $package.InstallLocation 'AppxSignature.p7x')).Hash.ToLowerInvariant() -cne $ExpectedSignatureSha256){throw 'Native completed historical proof insufficient'}
+    }else{
+     # Unknown script revisions and ambiguous deployments remain blocking.
+     $closed=Get-NativeUpdateReconciliation $journal.FullName
+     if($closed.status -cnotin @('TARGET_GRAPH_REGISTERED','NOT_STARTED','BASELINE_INTACT_FAILED')){throw 'Native journal UNKNOWN; preserve hold'}
+    }
+    $entries+=@{directory=$journal.FullName;status=$closed.status}
+   }
+  }
+  return @{result='PASS';stage='LOCAL_NATIVE_JOURNAL_READINESS';journals=$entries;readOnly=$true;llmCalls=0}
+ }catch{
+  return @{result='STOP';stage='LOCAL_NATIVE_JOURNAL_READINESS';journals=$entries;reason=$_.Exception.Message;readOnly=$true;llmCalls=0}
+ }
 }
