@@ -7,6 +7,7 @@ import sys
 import shutil
 import shlex
 import zipfile
+import types
 
 import pytest
 
@@ -44,6 +45,118 @@ def publish(root, stage, sequence):
     request, digest, metadata_digest = package(stage, sequence)
     result = channel1.publish(root, stage, metadata_sha256=metadata_digest, package_sha256=digest, protocol=protocol)
     return request, digest, result
+
+
+def test_expected_previous_is_checked_under_lock_before_mutation(tmp_path):
+    root = tmp_path/'public'; root.mkdir()
+    publish(root, tmp_path/'old', 121)
+    pointer = root/channel1.POINTER
+    before = pointer.read_bytes()
+    _, digest, metadata = package(tmp_path/'new', 122)
+    with pytest.raises(ValueError, match='Concurrent'):
+        channel1.publish(root, tmp_path/'new', metadata_sha256=metadata,
+                         package_sha256=digest, protocol=protocol,
+                         expected_previous_sha256='0'*64)
+    assert pointer.read_bytes() == before
+    assert not (root/'releases/channel-builds'/f'{122:032x}').exists()
+
+
+def test_durable_rollback_preserves_previous_closure_and_never_downgrades_os(tmp_path):
+    root = tmp_path/'public'; root.mkdir()
+    publish(root, tmp_path/'old', 121)
+    pointer = root/channel1.POINTER
+    before = pointer.read_bytes()
+    old_package = (root/'releases/SemantierAgent.msix').read_bytes()
+    _, digest, metadata = package(tmp_path/'new', 122)
+    backup = root.parent/'.channel1-recovery-test'
+    channel1.publish(root, tmp_path/'new', metadata_sha256=metadata,
+                     package_sha256=digest, protocol=protocol,
+                     expected_previous_sha256=hashlib.sha256(before).hexdigest(), recovery=backup)
+    # The old native metadata and package must still be available to in-flight readers.
+    assert (root/'releases/channel-builds'/f'{121:032x}'/'build.json').exists()
+    result = channel1.restore(root, backup)
+    assert result['osDowngrade'] == 'NOT_ATTEMPTED'
+    assert pointer.read_bytes() == before
+    assert (root/'releases/SemantierAgent.msix').read_bytes() == old_package
+    assert channel1.restore(root, backup)['result'] == 'POINTER_RESTORED'
+    assert backup.exists()
+
+
+def test_rollback_refuses_concurrent_pointer(tmp_path):
+    root = tmp_path/'public'; root.mkdir()
+    publish(root, tmp_path/'old', 121)
+    _, digest, metadata = package(tmp_path/'new', 122)
+    backup = root.parent/'.channel1-recovery-test'
+    channel1.publish(root, tmp_path/'new', metadata_sha256=metadata,
+                     package_sha256=digest, protocol=protocol,
+                     expected_previous_sha256=channel1.sha(root/channel1.POINTER), recovery=backup)
+    publish(root, tmp_path/'other', 123)
+    with pytest.raises(ValueError, match='Concurrent'):
+        channel1.restore(root, backup)
+
+
+def test_native_staging_probes_before_pointer_and_restores_route(tmp_path, monkeypatch):
+    root = tmp_path/'public'; root.mkdir()
+    publish(root, tmp_path/'old', 121)
+    before = (root/channel1.POINTER).read_bytes()
+    caddy = tmp_path/'Caddyfile'
+    old = '/releases/channel-builds/'+f'{121:032x}'+'/'
+    body = '\n'.join(old+name for name in ('SemantierAgent.msix', 'build.json', 'native-graph.json')).encode()
+    caddy.write_bytes(body)
+    real_path = Path
+    monkeypatch.setattr(channel1, 'Path', lambda p: caddy if str(p) == '/opt/semantier-cloud-live-v1/Caddyfile' else real_path(p))
+    monkeypatch.setattr(channel1, '_apply_route', lambda path, data: path.write_bytes(data))
+    _, digest, metadata = package(tmp_path/'new', 122)
+    backup = root.parent/'.channel1-recovery-test'
+    args = dict(metadata_sha256=metadata, package_sha256=digest, protocol=protocol,
+                expected_previous_sha256=hashlib.sha256(before).hexdigest(), recovery=backup)
+    channel1.stage_native(root, tmp_path/'new', caddy_sha256=hashlib.sha256(body).hexdigest(), **args)
+    assert (root/channel1.POINTER).read_bytes() == before
+    assert (root/'releases/channel-builds'/f'{122:032x}'/'SemantierAgent.msix').exists()
+    staged_caddy = caddy.read_bytes()
+    assert old.encode() in staged_caddy and f'{122:032x}'.encode() in staged_caddy
+    channel1.stage_native(root, tmp_path/'new', caddy_sha256=hashlib.sha256(body).hexdigest(), **args)
+    assert caddy.read_bytes() == staged_caddy
+    channel1.publish(root, tmp_path/'new', **args)
+    channel1.restore(root, backup)
+    assert (root/channel1.POINTER).read_bytes() == before
+    assert caddy.read_bytes() == body
+
+
+@pytest.mark.parametrize('failure', ['421', 'http1', 'wrong-bytes', 'wrong-graph', None])
+def test_native_public_probe_checks_real_response_predicates(tmp_path, monkeypatch, failure):
+    _, _, _ = package(tmp_path/'new', 122)
+    data = json.loads((tmp_path/'new/channel1-metadata.json').read_bytes())
+    manifest = data['manifest']; graph = protocol.canonical_json(data['graph'])
+    probe = tmp_path/'probe.msix'; probe.write_bytes(bytes(range(256))*1024)
+    manifest['packages'][0]['artifact']['size'] = probe.stat().st_size
+    # Exercise the actual embedded Python probe, mocking only external HTTP.
+    ps = (Path(__file__).resolve().parents[2]/'scripts/deploy-ecs-channel1.ps1').read_text()
+    code = ps.split('function Test-NativePublic {', 1)[1].split("$code=@'\n", 1)[1].split("\n'@", 1)[0]
+
+    class Session:
+        def __init__(self, **kwargs):
+            self.version = 3 if kwargs['http_version'] == 'v2' else 30
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def get(self, url, **kwargs):
+            status = 200; headers = {}; content = protocol.canonical_json(manifest)
+            if url.endswith('native-graph.json'):
+                content = graph if failure != 'wrong-graph' else b'changed'
+            if url.endswith('.msix'):
+                start, end = map(int, kwargs['headers']['Range'][6:].split('-'))
+                content = probe.read_bytes()[start:end+1]
+                if failure == 'wrong-bytes': content = b'changed'
+                status = 421 if failure == '421' else 206
+                headers['Content-Range'] = f'bytes {start}-{end}/{manifest["packages"][0]["artifact"]["size"]}'
+            return types.SimpleNamespace(status_code=status, content=content, headers=headers,
+                                         http_version=2 if failure == 'http1' else self.version)
+    monkeypatch.setitem(sys.modules, 'curl_cffi', types.SimpleNamespace(requests=types.SimpleNamespace(Session=Session), CurlOpt=types.SimpleNamespace(PROXY=1)))
+    monkeypatch.setattr(sys, 'argv', ['probe', json.dumps(manifest), str(probe), 'False'])
+    if failure:
+        with pytest.raises(AssertionError): exec(code, {})
+    else:
+        exec(code, {})
 
 
 def test_real_metadata_and_repeated_publish_are_current_only(tmp_path):

@@ -82,6 +82,13 @@ param(
   [switch]$UpdateSetup,
   [switch]$VerifyPublicDownload,
   [switch]$Latest,
+  [string]$NativeUpdateFrom = '',
+  [string]$ExpectedVersion = '',
+  [string]$ExpectedChannelSha256 = '',
+  [string]$RecoveryMsix = '',
+  [string]$NativeUserData = '',
+  [string]$ProfileSampleManifest = '',
+  [string]$CriticalFileManifest = '',
   [string]$Commit = '',
   [string]$BuildCache = 'D:\repo\deliverables\cache\desktop-inputs',
   [string]$BuildPython = '',
@@ -103,6 +110,56 @@ $script:releaseEnvironment = @{}
 $script:sourceLease = $null
 $script:sourceOwner = $null
 $script:sourceRecreated = $false
+$script:nativePreflight=$null
+$script:SourceBinding=$null
+function Invoke-InstalledPtyAcceptance($Registered,[string]$ArtifactHash) {
+  $registered=@($Registered);$hash=$ArtifactHash
+  $binding=Join-Path $Output 'installed-binding.json';$uiOutput=Join-Path $Output ('acceptance-'+[Guid]::NewGuid().ToString('N'))
+  Save-Json @{version=([Version]$Version).ToString(3);sourceCommit=$SourceCommit;artifactSha256=$hash;
+    executable=(Join-Path $registered[0].InstallLocation 'app\Semantier Agent.exe');output=$uiOutput;
+    playwright=(Join-Path $AcceptanceNodeModules '@playwright\test')} $binding
+  $harness=@'
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+const b=JSON.parse(fs.readFileSync(process.argv[2],'utf8').replace(/^\uFEFF/,''));
+const {_electron}=require(b.playwright);fs.mkdirSync(b.output);let app;const errors=[];
+(async()=>{try{
+ const env=Object.fromEntries(Object.entries(process.env).filter(([k])=>/^(PATH|SYSTEMROOT|WINDIR|COMSPEC|PATHEXT|USERPROFILE|SYSTEMDRIVE|PROCESSOR_ARCHITECTURE|NUMBER_OF_PROCESSORS|APPDATA|LOCALAPPDATA|TEMP|TMP|PROGRAMFILES|PROGRAMFILES\(X86\))$/i.test(k)));
+ app=await _electron.launch({executablePath:b.executable,cwd:path.dirname(b.executable),timeout:120000,
+ env:{...env,HERMES_HOME:path.join(b.output,'hermes-home'),HERMES_DESKTOP_USER_DATA_DIR:path.join(b.output,'userdata'),
+ HERMES_DESKTOP_IGNORE_EXISTING:'1',HERMES_DESKTOP_SKIP_QUIT_CONFIRM:'1',HERMES_DESKTOP_SKIP_PROTOCOL_REGISTRATION:'1',HERMES_DESKTOP_CDP_PORT:'off'}});
+ app.process().stderr.on('data',x=>{if(String(x).includes('ERR_MODULE_NOT_FOUND'))errors.push(String(x));});
+ const facts=await app.evaluate(({app})=>({packaged:app.isPackaged,version:app.getVersion(),executable:process.execPath,platform:process.platform}));
+ assert.equal(facts.packaged,true);assert.equal(facts.version,b.version);assert.equal(facts.platform,'win32');assert.equal(path.resolve(facts.executable),path.resolve(b.executable));
+ const page=await app.firstWindow({timeout:120000});await page.waitForLoadState('domcontentloaded');assert(await page.isVisible('body'));
+ assert(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().some(w=>w.isVisible())));
+ await page.waitForFunction(async()=>{try{const p=await window.hermesDesktop.api({path:'/api/profiles/active'});return typeof p.current==='string'&&p.current.length>0;}catch{return false;}},null,{timeout:180000,polling:2000});
+ const pty=await page.evaluate(async()=>{const api=window.hermesDesktop.terminal,s=await api.start({cols:100,rows:30});let off,timer;
+ try{return await new Promise((resolve,reject)=>{let output='';timer=setTimeout(()=>reject(Error('PTY deadline exceeded')),30000);
+ off=api.onData(s.id,data=>{output+=typeof data==='string'?data:JSON.stringify(data);if(output.includes('SEMANTIER_REAL_PTY_AMD64_OK')){clearTimeout(timer);resolve({shell:s.shell,output});}});
+ (async()=>{try{await api.attach(s.id);await api.write(s.id,'cmd.exe /d /c "echo SEMANTIER_REAL_PTY_%PROCESSOR_ARCHITECTURE%_OK"\r');}catch(e){clearTimeout(timer);reject(e);}})();});}
+ finally{clearTimeout(timer);if(off)off();await api.dispose(s.id);}});
+ assert.deepEqual(errors,[]);await page.screenshot({path:path.join(b.output,'window.png')});
+ fs.writeFileSync(path.join(b.output,'acceptance.json'),JSON.stringify({result:'WINDOW_PTY_PASS',binding:b,facts,pty,errors},null,2));
+ }finally{if(app)await app.close();}})().catch(e=>{fs.writeFileSync(path.join(b.output,'failure.txt'),e.stack);process.exitCode=1;});
+'@
+  $harnessPath=Join-Path $Output 'accept-installed.cjs';[IO.File]::WriteAllText($harnessPath,$harness,$utf8)
+  Report-Status 'Opening Electron and testing a real PTY command; backend startup can take several minutes.'
+  Run $Node @($harnessPath,$binding)
+  $ui=Get-Content -LiteralPath (Join-Path $uiOutput 'acceptance.json') -Raw | ConvertFrom-Json
+  if ($ui.result -cne 'WINDOW_PTY_PASS' -or $ui.binding.artifactSha256 -cne $hash) {throw 'Installed UI/PTY evidence mismatch.'}
+  return @{ui=$ui;output=$uiOutput}
+}
+function Assert-NativeReleaseOptions {
+  if(!$NativeUpdateFrom){return}
+  if($BuildMode -cne 'Prod' -or !$SkipLocalInstall -or $Latest -or $BuildOnly -or $LocalOnly -or
+     $DesktopOnly -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly){
+    throw 'Native release requires explicit Prod, SkipLocalInstall and exact Commit; incompatible release modes are forbidden.'
+  }
+  if($Commit -cnotmatch '^[a-f0-9]{40}$' -or $ExpectedChannelSha256 -cnotmatch '^[a-f0-9]{64}$' -or
+     $NativeUpdateFrom -cnotmatch '^\d+\.\d+\.\d+\.0$' -or $ExpectedVersion -cnotmatch '^\d+\.\d+\.\d+\.0$' -or
+     [Version]$ExpectedVersion -le [Version]$NativeUpdateFrom -or !$RecoveryMsix -or !$NativeUserData -or
+     !$ProfileSampleManifest -or !$CriticalFileManifest){throw 'Native release requires bound baseline/target, pointer SHA256, recovery package, user data and profile manifests.'}
+}
 function Get-ProfileFileHolders([string[]]$Files) {
   if(-not ('SemantierProfileLocks' -as [type])) {
     Add-Type -TypeDefinition @'
@@ -432,12 +489,17 @@ function Assert-StageInactive($Owner) {
   $processes=@(Get-CimInstance Win32_Process -ErrorAction Stop)
   foreach($process in $processes){
     if($process.ProcessId -eq $PID){continue}
+    # Native Git can leave this operator's Windows console host alive. It owns
+    # no source/cache bytes; keep all other child and previous-owner checks.
+    if($IsWindows -and $Owner.pid -eq $PID -and $process.ParentProcessId -eq $PID -and
+      $process.ExecutablePath -ieq (Join-Path $env:WINDIR 'System32/conhost.exe') -and
+      (!$process.CommandLine -or $process.CommandLine.IndexOf($Owner.source,[StringComparison]::OrdinalIgnoreCase) -lt 0)){continue}
     if(($process.ProcessId -eq $Owner.pid -and $process.CreationDate.ToUniversalTime().ToString('o') -ceq $Owner.started) -or
        ($process.ParentProcessId -eq $Owner.pid -and $process.CreationDate.ToUniversalTime() -ge [datetime]$Owner.started) -or
        ($process.ExecutablePath -and ($process.ExecutablePath.StartsWith($Owner.source+'\',[StringComparison]::OrdinalIgnoreCase) -or
          $process.ExecutablePath.StartsWith($Owner.cache+'\',[StringComparison]::OrdinalIgnoreCase))) -or
        ($process.CommandLine -and $process.CommandLine.IndexOf($Owner.source,[StringComparison]::OrdinalIgnoreCase) -ge 0)){
-      throw 'Stage may have active children or an active previous operator; cleanup/recovery deferred.'
+      throw "Stage may have active children or an active previous operator ($($process.ProcessId) $($process.Name)); cleanup/recovery deferred."
     }
   }
 }
@@ -1379,6 +1441,7 @@ function Build-CommitPackage {
   $source=if($record){[string]$record.source}else{$BuildSource}
   $null=Assert-LocalWindowsPath $source
   Initialize-LocalBuildSource $source $Commit
+  if($script:nativePreflight){Write-RunEvent @{type='native-preflight';preflight=$script:nativePreflight;at=[DateTime]::UtcNow.ToString('o')}}
   Reset-StalePreparation (Join-Path $Output 'desktop-job\prepared.json')
   if(!$record){
     $next=& (Join-Path $PSScriptRoot 'next-windows-build-version.ps1') -State $VersionState -SourceCommit $Commit
@@ -1530,6 +1593,7 @@ function Publish-IndependentSetup {
   }
 }
 try {
+if($NativeUpdateFrom){Assert-NativeReleaseOptions}
 if($Latest){
   if($Commit -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly -or $PSBoundParameters.ContainsKey('Msix')){
     throw '-Latest is for a Runtime-pinned commit build only; do not combine with -Commit, Setup, preflight-only or a fixed MSIX.'
@@ -1542,6 +1606,14 @@ if($BuildOnly -and (!$Commit -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or
 if($SkipLocalInstall -and ($BuildOnly -or $LocalOnly -or $DesktopOnly -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly)){throw '-SkipLocalInstall is for MSIX publication only.'}
 $script:explicitOutput=$PSBoundParameters.ContainsKey('Output')
 Initialize-ReleasePaths
+if($NativeUpdateFrom -and !$WhatIfPreference){
+  . (Join-Path $PSScriptRoot 'deploy-ecs-channel1.ps1')
+  $script:sshOptions=@('-o','ConnectTimeout=15','-o','StrictHostKeyChecking=yes','-o','ServerAliveInterval=15','-o','ServerAliveCountMax=3')
+  if($IdentityFile){$script:sshOptions+=@('-i',(Resolve-Path -LiteralPath $IdentityFile).Path)}
+  if(!(Get-EcsSshPassword $CredentialsEnv)){$script:sshOptions+=@('-o','BatchMode=yes')}
+  if(Test-NativeCompletedRelease){return}
+  $script:nativePreflight=Test-NativeReleasePreflight
+}
 if($Commit){
   if(!$NewRun -and !$script:explicitOutput){
     foreach($candidate in (Get-ChildItem -LiteralPath (Split-Path -Parent $Output) -Directory -Filter 'ecs-deploy-*' | Sort-Object LastWriteTime -Descending)){
@@ -1587,6 +1659,7 @@ if($Commit){
   }
   if(!$AcceptanceNodeModules){$AcceptanceNodeModules=Join-Path $built.source 'node_modules'}
   $Msix=$built.msix;$ExpectedInputSha256=$built.sha256;$SourceCommit=$Commit;$Version=$built.version+'.0'
+  if($NativeUpdateFrom -and $Version -cne $ExpectedVersion){throw 'Built version differs from the explicit native release target.'}
   $buildRequest=Get-Content -LiteralPath $built.request -Raw | ConvertFrom-Json
   $BuildId=$buildRequest.buildId
 }
@@ -1602,6 +1675,7 @@ $script:sshOptions = @('-o','ConnectTimeout=15','-o','StrictHostKeyChecking=yes'
 if ($IdentityFile) { $script:sshOptions += @('-i',(Resolve-Path -LiteralPath $IdentityFile).Path) }
 if($SetupOnly -or $UpdateSetup){Publish-IndependentSetup;return}
 $plan = [ordered]@{input=$Msix;version=$Version;sourceCommit=$SourceCommit;ssh=$SshTarget;
+  buildId=$BuildId;
   remoteRoot=$RemoteRoot;fixedMsixUrl="$PublicBase/releases/SemantierAgent.msix";
   profileBackup=(Join-Path $Output 'profile-backup');output=$Output;
   mode=$BuildMode;verification=($(if($BuildMode -eq 'Beta'){'SKIPPED_BETA'}else{'REQUIRED_PROD'}));stages=@('verify existing input','sign one MSIX','check independently published Setup',
@@ -1658,6 +1732,8 @@ if (!$LocalOnly) {
   $null=Ssh "set -eu; test -d '$RemoteRoot/releases'; test ! -L '$RemoteRoot'; command -v sha256sum"
 }
 $script:runBinding=([ordered]@{mode=$BuildMode;skipLocalInstall=[bool]$SkipLocalInstall;inputSha256=$ExpectedInputSha256;source=$SourceCommit;version=$Version;build=$BuildId;
+  nativeUpdateFrom=$NativeUpdateFrom;expectedVersion=$ExpectedVersion;expectedChannelSha256=$ExpectedChannelSha256;
+  nativeUserData=$NativeUserData;recoveryMsix=$RecoveryMsix;profileSampleManifest=$ProfileSampleManifest;criticalFileManifest=$CriticalFileManifest;
   signer=$Thumbprint;target=$SshTarget;root=$RemoteRoot;origin=$PublicBase;profile=$UserProfile;
   setupContract='verify-remote-expected-sha256-v2';channelContract='current-only-channel-metadata-v1'} | ConvertTo-Json -Compress)
 if (!$Commit -and !$NewRun -and !$PSBoundParameters.ContainsKey('Output')) {
@@ -1682,6 +1758,7 @@ $receipt=[ordered]@{result='IN_PROGRESS';mode=$BuildMode;plan=$plan;unsignedSha2
   reused=@('complete MSIX','npm dependencies','node-pty','Electron inputs','Python runtime/venv','uv cache','.NET/NuGet cache');
   signedMsix=$null;sha256=$null;localAcceptance=$null;publication='NOT_STARTED';
   h3='NOT_RUN';publicReadback='NOT_RUN';cleanup='NOT_STARTED';landingCutover='NOT_VERIFIED'}
+if($NativeUpdateFrom){$receipt.nativePreflight=$script:nativePreflight;$receipt.llmCalls=0}
 if($Commit -and $built.PSObject.Properties['tooling']){$receipt.tooling=$built.tooling}
 $script:checkpoints=@{}
 $checkpointPath=Join-Path $Output 'checkpoints.jsonl'
@@ -1814,39 +1891,8 @@ try {
   if ((Hash (Join-Path $registered[0].InstallLocation 'AppxSignature.p7x')) -cne $expectedSignature) {throw 'Windows retained different same-version package bytes.'}
   $receipt.installedSignature=$expectedSignature
   Complete-Checkpoint 'installed'
-  $binding=Join-Path $Output 'installed-binding.json';$uiOutput=Join-Path $Output ('acceptance-'+[Guid]::NewGuid().ToString('N'))
-  Save-Json @{version=([Version]$Version).ToString(3);sourceCommit=$SourceCommit;artifactSha256=$hash;
-    executable=(Join-Path $registered[0].InstallLocation 'app\Semantier Agent.exe');output=$uiOutput;
-    playwright=(Join-Path $AcceptanceNodeModules '@playwright\test')} $binding
-  $harness=@'
-const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
-const b=JSON.parse(fs.readFileSync(process.argv[2],'utf8').replace(/^\uFEFF/,''));
-const {_electron}=require(b.playwright);fs.mkdirSync(b.output);let app;const errors=[];
-(async()=>{try{
- const env=Object.fromEntries(Object.entries(process.env).filter(([k])=>/^(PATH|SYSTEMROOT|WINDIR|COMSPEC|PATHEXT|USERPROFILE|SYSTEMDRIVE|PROCESSOR_ARCHITECTURE|NUMBER_OF_PROCESSORS|APPDATA|LOCALAPPDATA|TEMP|TMP|PROGRAMFILES|PROGRAMFILES\(X86\))$/i.test(k)));
- app=await _electron.launch({executablePath:b.executable,cwd:path.dirname(b.executable),timeout:120000,
- env:{...env,HERMES_HOME:path.join(b.output,'hermes-home'),HERMES_DESKTOP_USER_DATA_DIR:path.join(b.output,'userdata'),
- HERMES_DESKTOP_IGNORE_EXISTING:'1',HERMES_DESKTOP_SKIP_QUIT_CONFIRM:'1',HERMES_DESKTOP_SKIP_PROTOCOL_REGISTRATION:'1',HERMES_DESKTOP_CDP_PORT:'off'}});
- app.process().stderr.on('data',x=>{if(String(x).includes('ERR_MODULE_NOT_FOUND'))errors.push(String(x));});
- const facts=await app.evaluate(({app})=>({packaged:app.isPackaged,version:app.getVersion(),executable:process.execPath,platform:process.platform}));
- assert.equal(facts.packaged,true);assert.equal(facts.version,b.version);assert.equal(facts.platform,'win32');assert.equal(path.resolve(facts.executable),path.resolve(b.executable));
- const page=await app.firstWindow({timeout:120000});await page.waitForLoadState('domcontentloaded');assert(await page.isVisible('body'));
- assert(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().some(w=>w.isVisible())));
- await page.waitForFunction(async()=>{try{const p=await window.hermesDesktop.api({path:'/api/profiles/active'});return typeof p.current==='string'&&p.current.length>0;}catch{return false;}},null,{timeout:180000,polling:2000});
- const pty=await page.evaluate(async()=>{const api=window.hermesDesktop.terminal,s=await api.start({cols:100,rows:30});let off,timer;
- try{return await new Promise((resolve,reject)=>{let output='';timer=setTimeout(()=>reject(Error('PTY deadline exceeded')),30000);
- off=api.onData(s.id,data=>{output+=typeof data==='string'?data:JSON.stringify(data);if(output.includes('SEMANTIER_REAL_PTY_AMD64_OK')){clearTimeout(timer);resolve({shell:s.shell,output});}});
- (async()=>{try{await api.attach(s.id);await api.write(s.id,'cmd.exe /d /c "echo SEMANTIER_REAL_PTY_%PROCESSOR_ARCHITECTURE%_OK"\r');}catch(e){clearTimeout(timer);reject(e);}})();});}
- finally{clearTimeout(timer);if(off)off();await api.dispose(s.id);}});
- assert.deepEqual(errors,[]);await page.screenshot({path:path.join(b.output,'window.png')});
- fs.writeFileSync(path.join(b.output,'acceptance.json'),JSON.stringify({result:'WINDOW_PTY_PASS',binding:b,facts,pty,errors},null,2));
- }finally{if(app)await app.close();}})().catch(e=>{fs.writeFileSync(path.join(b.output,'failure.txt'),e.stack);process.exitCode=1;});
-'@
-  $harnessPath=Join-Path $Output 'accept-installed.cjs';[IO.File]::WriteAllText($harnessPath,$harness,$utf8)
-  Report-Status 'Opening Electron and testing a real PTY command; backend startup can take several minutes.'
-  Run $Node @($harnessPath,$binding)
-  $ui=Get-Content -LiteralPath (Join-Path $uiOutput 'acceptance.json') -Raw | ConvertFrom-Json
-  if ($ui.result -cne 'WINDOW_PTY_PASS' -or $ui.binding.artifactSha256 -cne $hash) {throw 'Installed UI/PTY evidence mismatch.'}
+  $accepted=Invoke-InstalledPtyAcceptance $registered[0] $hash
+  $uiOutput=$accepted.output
   foreach ($file in $profileFiles) {
     if($file.relative -match '\.(db|sqlite|sqlite3)$'){continue}
     if (!(Test-Path -LiteralPath (Join-Path $UserProfile $file.relative) -PathType Leaf)) {throw "User profile file missing: $($file.relative)"}
@@ -1916,6 +1962,18 @@ mkdir -m 700 "$stage"
     $receipt.result='BETA_PUBLISHED_UNVERIFIED';$receipt.h3='SKIPPED_BETA';$receipt.publicReadback='SKIPPED_BETA';$receipt.cleanup='SKIPPED_BETA';Complete-Checkpoint 'finished';return
   }
   $null=Ssh $remoteProof
+  if($NativeUpdateFrom){
+    $receipt.result='PUBLISHED_122_CLIENT_NOT_YET_VERIFIED'
+    $receipt.localAcceptance='NOT_RUN_BEFORE_PUBLICATION'
+    Save-Json $receipt (Join-Path $Output 'result.json')
+    $metadata=Get-Content -LiteralPath (Join-Path $Output 'channel1-metadata.json') -Raw | ConvertFrom-Json
+    $receipt.nativePublicAfterPointer=Test-NativePublic $metadata.manifest $signed -Active
+    Invoke-NativeUpdateAcceptance $signed $hash
+    $receipt.result='PASS';$receipt.publicationStage='INSTALLED_121_TO_122_VERIFIED'
+    $receipt.cleanup='RECOVERY_AND_121_ARTIFACTS_RETAINED'
+    Complete-Checkpoint 'native-verified';Complete-Checkpoint 'finished'
+    return
+  }
   Report-Status 'Verifying public H3 status and package size with HEAD; no package body download.'
   Test-PublicMsix
   $receipt.h3='PUBLIC_H3_HEAD_STATUS_SIZE_PASS'
@@ -2005,6 +2063,12 @@ const fs=require('node:fs');
   if($landingReady -and !$SkipOldCleanup){Complete-Checkpoint 'finished'}
 } catch {
   $receipt.result='FAIL';$receipt.error=$_.Exception.Message
+  if($NativeUpdateFrom -and $receipt.Contains('nativeRecovery')){
+    try {
+      $receipt.pointerRollback=Ssh "python3 -B '$($receipt.nativeRecovery)/channel1.py' rollback --root '$RemoteRoot' --recovery '$($receipt.nativeRecovery)'"
+    } catch {$receipt.pointerRollback='STOP: '+$_.Exception.Message}
+    $receipt.osDowngrade='NOT_ATTEMPTED';$receipt.recovery='Preserve installed package and user data; pointer rollback only restores availability to future clients.'
+  }
   Report-Status ('FAILED: '+$_.Exception.Message)
   throw
 } finally {
@@ -2021,15 +2085,17 @@ const fs=require('node:fs');
 }
 
 } catch {
-  if($script:sourceOwner){
+  if($script:sourceOwner -or ($NativeUpdateFrom -and !$WhatIfPreference)){
+    if(!(Test-Path -LiteralPath $Output)){New-Item -ItemType Directory -Path $Output | Out-Null}
     $failurePath=Join-Path $Output 'result.json'
     if(Test-Path -LiteralPath $failurePath){
       $failure=Get-Content -LiteralPath $failurePath -Raw | ConvertFrom-Json
     } else {
       $failure=[pscustomobject]@{commit=$Commit;binding=$script:SourceBinding;signing='NOT_RUN';installation='NOT_RUN';publication='NOT_RUN'}
     }
-    $failure | Add-Member -NotePropertyName result -NotePropertyValue 'FAIL' -Force
+    $failure | Add-Member -NotePropertyName result -NotePropertyValue $(if($NativeUpdateFrom){'STOP'}else{'FAIL'}) -Force
     $failure | Add-Member -NotePropertyName error -NotePropertyValue $_.Exception.Message -Force
+    if($script:nativePreflight){$failure | Add-Member -NotePropertyName nativePreflight -NotePropertyValue $script:nativePreflight -Force}
     Save-Json $failure $failurePath
   }
   throw
@@ -2048,6 +2114,9 @@ const fs=require('node:fs');
     }
   } finally {
     if($script:sourceLease){$script:sourceLease.Dispose();$script:sourceLease=$null}
-    foreach($name in $script:releaseEnvironment.Keys){[Environment]::SetEnvironmentVariable($name,$script:releaseEnvironment[$name],'Process')}
+    foreach($name in $script:releaseEnvironment.Keys){
+      if($null -eq $script:releaseEnvironment[$name]){[Environment]::SetEnvironmentVariable($name,[NullString]::Value,'Process')}
+      else{[Environment]::SetEnvironmentVariable($name,$script:releaseEnvironment[$name],'Process')}
+    }
   }
 }
