@@ -243,7 +243,10 @@ def _activate(root, stage, record, row, bodies, obsolete, backup, protocol):
         stable.parent.mkdir(parents=True, exist_ok=True)
         temporary = stable.with_name('.channel1-package.tmp')
         if temporary.exists(): raise ValueError('Unreconciled package activation')
-        os.link(artifact, temporary); os.replace(temporary, stable)
+        # POSIX rename is a no-op when both names already share an inode.
+        # Avoid leaving the temporary link behind on an idempotent publish.
+        if not stable.exists() or not artifact.samefile(stable):
+            os.link(artifact, temporary); os.replace(temporary, stable)
         _atomic(checksum, (package_sha256+'  SemantierAgent.msix\n').encode())
         pointer.parent.mkdir(parents=True, exist_ok=True)
         for path in sorted(created_dirs, key=lambda p: len(p.parts), reverse=True):

@@ -61,6 +61,7 @@ def test_real_metadata_and_repeated_publish_are_current_only(tmp_path):
     assert record_path.read_bytes() == original
     assert first['buildId'] == second['buildId'] == request['buildId']
     assert second['alreadyPublished']
+    assert not (root/'releases/.channel1-package.tmp').exists()
     marker = root/'unrelated.txt'; marker.write_text('preserve', encoding='utf-8')
     unrelated = root/'releases/channels/another.json'; unrelated.write_text('{}', encoding='utf-8')
     publish(root, tmp_path/'stage3', 110)
