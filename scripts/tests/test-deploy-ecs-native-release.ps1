@@ -125,3 +125,36 @@ try {
  }
  'NATIVE_METADATA_REPLACE_PACKAGE_RESUME_PASS'
 }finally{Remove-Item -LiteralPath $Output}
+
+# Actual preflight must refuse a local UNKNOWN before build/network operations.
+& {
+ $preflightAst=[Management.Automation.Language.Parser]::ParseFile($channel,[ref]$null,[ref]$errors)
+ $fn=$preflightAst.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Test-NativeReleasePreflight'},$true)
+ . ([scriptblock]::Create($fn.Extent.Text))
+ $Repository=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+ $NativeUserData=Join-Path ([IO.Path]::GetTempPath()) ('native-preflight-'+[Guid]::NewGuid().ToString('N'))
+ $updates=Join-Path $NativeUserData 'updates';$unknown=Join-Path $updates 'native-unknown'
+ [IO.Directory]::CreateDirectory($unknown)|Out-Null
+ try {
+  [IO.File]::WriteAllText((Join-Path $unknown 'intent.json'),'{}')
+  $RemoteRoot='/opt/fixture/releases';$SshTarget='fixture@fixture';$PublicBase='https://download.semantier.cn'
+  $identity='fixture';$publisher='CN=Test';$NativeUpdateFrom='0.0.121.0';$Thumbprint='fixture';$RecoveryMsix='fixture'
+  $script:sshOptions=@()
+  function Get-EcsSshPassword {return 'fixture'}
+  function Get-AppxPackage {return [pscustomobject]@{Version='0.0.121.0';Publisher='CN=Test';Status='Ok';Architecture='X64';PackageFullName='fixture';InstallLocation='fixture'}}
+  function Get-Item {param($LiteralPath,$Path,$Force);if($LiteralPath -like 'Cert:*' -or $Path -like 'Cert:*'){return [pscustomobject]@{HasPrivateKey=$true;Subject='CN=Test';NotAfter=[DateTime]::UtcNow.AddDays(1)}};Microsoft.PowerShell.Management\Get-Item -LiteralPath $LiteralPath -Force:$Force}
+  function Require-Signature {}
+  function Get-PackageSignatureHash {return ('a'*64)}
+  function Hash {return ('a'*64)}
+  function Ssh {throw 'FORBIDDEN_NETWORK_REACHED'}
+  $failed=$false
+  try{Test-NativeReleasePreflight|Out-Null}catch{if($_.Exception.Message -notlike 'Local native journal readiness STOP:*'){throw};$failed=$true}
+  if(!$failed){throw 'UNKNOWN local journal did not stop actual preflight'}
+  'NATIVE_JOURNAL_PREFLIGHT_STOP_BEFORE_NETWORK_PASS'
+ }finally{
+  Remove-Item -LiteralPath (Join-Path $unknown 'intent.json')
+  Remove-Item -LiteralPath $unknown
+  Remove-Item -LiteralPath $updates
+  Remove-Item -LiteralPath $NativeUserData
+ }
+}
