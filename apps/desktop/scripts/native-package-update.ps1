@@ -1,6 +1,16 @@
 # Production native branch of the existing external relaunch waiter.
 # Windows owns all package transfers. No package bytes are downloaded here.
 . (Join-Path $PSScriptRoot 'native-package-digest.ps1')
+function New-NativeUpdateJournalDirectory([string]$directory,[string]$sid) {
+ if(Test-Path -LiteralPath $directory){throw 'Native transaction already exists; reconcile before retry'}
+ $null=[IO.Directory]::CreateDirectory($directory)
+ # The creator already owns the directory. Setting that owner again requires WRITE_OWNER,
+ # which ordinary Modify access does not grant; ownership itself permits the private DACL.
+ if([IO.Directory]::GetAccessControl($directory,[Security.AccessControl.AccessControlSections]::Owner).GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $sid){throw 'Native journal creator ownership mismatch'}
+ $acl=[Security.AccessControl.DirectorySecurity]::new();$acl.SetAccessRuleProtection($true,$false)
+ foreach($principal in @($sid,'S-1-5-18','S-1-5-32-544')){$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($principal),'FullControl','ContainerInherit,ObjectInherit','None','Allow'))}
+ [IO.Directory]::SetAccessControl($directory,$acl)
+}
 function Initialize-NativeUpdate($RequestPath, [int]$ParentId, [long]$ParentBirth, $Package) {
  $ErrorActionPreference='Stop'
  if((Get-Item -LiteralPath $RequestPath).Length -gt 4194304){throw 'Native request exceeds metadata limit'}
@@ -64,11 +74,7 @@ public static class SemantierNativeUpdateFacts {
    Write-NativeUpdateReceipt @{directory=$other.FullName} 'reconciled.json' $reconciliation
   }
  }
- if(Test-Path -LiteralPath $directory){throw 'Native transaction already exists; reconcile before retry'}
- $null=[IO.Directory]::CreateDirectory($directory)
- $acl=[Security.AccessControl.DirectorySecurity]::new();$acl.SetAccessRuleProtection($true,$false);$acl.SetOwner([Security.Principal.SecurityIdentifier]::new($sid))
- foreach($principal in @($sid,'S-1-5-18','S-1-5-32-544')){$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($principal),'FullControl','ContainerInherit,ObjectInherit','None','Allow'))}
- [IO.Directory]::SetAccessControl($directory,$acl)
+ New-NativeUpdateJournalDirectory $directory $sid
  $resources=@(Get-AppxPackage -PackageTypeFilter Resource|Where-Object{$_.PackageFamilyName -ceq $request.familyName}|ForEach-Object{$_.PackageFullName}|Sort-Object)
  $request|Add-Member -NotePropertyName baselineResources -NotePropertyValue $resources
  $request|Add-Member -NotePropertyName producedAt -NotePropertyValue ([DateTime]::UtcNow.ToString('o'))
