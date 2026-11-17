@@ -306,6 +306,19 @@ export function workspaceTranscript(history: WorkspaceHistory) {
   })
 }
 
+async function optionalNativeProfiles(client: ReturnType<typeof createSemantierWorkspaceClient>) {
+  try {
+    const result = await client.winman()
+
+    return { profiles: [{ ...result.profile, runtime_bot_id: result.bot_id,
+      native_profile_id: result.native_profile_id }], bot_mode_protocol: result.bot_mode_protocol }
+  } catch (error) {
+    if ((error as { statusCode?: number }).statusCode !== 503) { throw error }
+
+    return { profiles: [], unavailable: true }
+  }
+}
+
 /** Read projection for the existing Desktop Sessions surface, not another store. */
 export async function workspaceDesktopRead(
   client: ReturnType<typeof createSemantierWorkspaceClient>,
@@ -378,16 +391,7 @@ export async function workspaceDesktopRead(
   }
 
   if (pathname === '/api/profiles') {
-    try {
-      const result = await client.winman()
-
-      return { profiles: [{ ...result.profile, runtime_bot_id: result.bot_id,
-        native_profile_id: result.native_profile_id }], bot_mode_protocol: result.bot_mode_protocol }
-    } catch (error) {
-      if ((error as { statusCode?: number }).statusCode !== 503) { throw error }
-
-      return { profiles: [], unavailable: true }
-    }
+    return optionalNativeProfiles(client)
   }
 
   if (pathname === '/api/sessions' || pathname === '/api/profiles/sessions') {
