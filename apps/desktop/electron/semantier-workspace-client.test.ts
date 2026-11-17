@@ -186,3 +186,17 @@ it('cancels only a retained Native admission and validates the returned receipt'
   fetch.mockResolvedValue(Response.json({cancel_requested:true,receipt:{admission_id:'b'.repeat(32)}}))
   await expect(client.cancelNative('canonical-a','a'.repeat(32))).rejects.toThrow('receipt')
 })
+
+
+it('keeps authenticated Main available when optional Native Winman is unavailable', async () => {
+  const transport = vi.fn<typeof fetch>().mockResolvedValue(new Response('', { status: 503 }))
+  const client = createSemantierWorkspaceClient('https://cloud.example', transport)
+  await expect(workspaceDesktopRead(client, '/api/profiles')).resolves.toEqual({ profiles: [], unavailable: true })
+  await expect(workspaceDesktopRead(client, '/api/profiles', 'native-owner')).rejects.toMatchObject({ statusCode: 503 })
+})
+
+it.each([401, 403])('preserves profile authority refusal %s despite optional Native support', async status => {
+  const transport = vi.fn<typeof fetch>().mockResolvedValue(new Response('', { status }))
+  const client = createSemantierWorkspaceClient('https://cloud.example', transport)
+  await expect(workspaceDesktopRead(client, '/api/profiles')).rejects.toMatchObject({ statusCode: status })
+})

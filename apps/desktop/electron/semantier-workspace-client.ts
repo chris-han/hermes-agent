@@ -378,10 +378,16 @@ export async function workspaceDesktopRead(
   }
 
   if (pathname === '/api/profiles') {
-    const result = await client.winman()
+    try {
+      const result = await client.winman()
 
-    return { profiles: [{ ...result.profile, runtime_bot_id: result.bot_id,
-      native_profile_id: result.native_profile_id }], bot_mode_protocol: result.bot_mode_protocol }
+      return { profiles: [{ ...result.profile, runtime_bot_id: result.bot_id,
+        native_profile_id: result.native_profile_id }], bot_mode_protocol: result.bot_mode_protocol }
+    } catch (error) {
+      if ((error as { statusCode?: number }).statusCode !== 503) { throw error }
+
+      return { profiles: [], unavailable: true }
+    }
   }
 
   if (pathname === '/api/sessions' || pathname === '/api/profiles/sessions') {
