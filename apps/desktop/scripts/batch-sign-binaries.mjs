@@ -38,6 +38,9 @@
 // stage-msixbundle.mjs. The shared Windows tool provisioner supplies the
 // matching SDK, ATS dlib, and .NET runtime even when the cache is empty.
 
+import { createRequire } from 'node:module'
+const { isPinnedFilex } = createRequire(import.meta.url)('./filex-inputs.cjs')
+
 import { execFile } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -347,7 +350,7 @@ export async function batchSignAppTree(appOutDir, productExePath, opts = {}) {
   console.log(`[batch-sign] collecting signable binaries in ${appOutDir} (excluding product exe and uv-cache)`)
   const binaries = getBinaries(appOutDir, {
     skip: (file) =>
-      inCache(file) || (productExe ? path.resolve(file) === productExe : false)
+      isPinnedFilex(file) || inCache(file) || (productExe ? path.resolve(file) === productExe : false)
   })
   console.log(`[batch-sign] collected ${binaries.length} binaries`)
   if (binaries.length === 0) return { signed: 0, chunks: 0, skipped: false }
@@ -409,6 +412,7 @@ function isProductExe(file, packager) {
  */
 export async function customSign(configuration, packager, deps = {}) {
   const file = configuration.path
+  if (isPinnedFilex(file)) return true
   const base = path.basename(file)
   // Store-submission packages are Partner Center's to sign (see sign-msix.mjs).
   if (base.startsWith(STORE_ARTIFACT_PREFIX)) return true

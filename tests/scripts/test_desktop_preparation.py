@@ -17,7 +17,7 @@ def _project(tmp_path: Path) -> tuple[Path, str]:
     (source / "pyproject.toml").write_text('[project]\nname="fixture"\nversion="1.2.3"\n', encoding="utf-8")
     (source / "package.json").write_text('{"workspaces": ["apps/desktop"]}', encoding="utf-8")
     (source / "package-lock.json").write_text('{"packages": {}}', encoding="utf-8")
-    (source / ".gitignore").write_text(".build/\n", encoding="utf-8")
+    (source / ".gitignore").write_text(".build/\napps/desktop/resources/filex/\n", encoding="utf-8")
     (source / "pm").mkdir()
     (source / "pm/lock.json").write_text(json.dumps({"schema": 1, "packages": {
         name: {"version": "1.0.0", "artifacts": {current_target(): {"url": "https://example.test/tool", "sha256": "a" * 64}}}
@@ -306,8 +306,11 @@ def test_guarded_bundle_reuses_payload_python_for_icons(tmp_path, monkeypatch):
     from pm.environments import venv_python
     source, commit = _project(tmp_path)
     request = SimpleNamespace(source=source, commit=commit, work=tmp_path / 'work', cache=tmp_path / 'cache',
-                              variant='bundled', target='win32-x64', workspaces=lambda: [], validate_channel=lambda: None)
+                              variant='bundled', target='win32-x64', workspaces=list, validate_channel=lambda: None)
     request.work.mkdir()
+    filex = source / 'apps/desktop/resources/filex/filex.exe'
+    filex.parent.mkdir(parents=True)
+    filex.write_bytes(b'fixture-owned preparation output')
     monkeypatch.setattr(desktop_toolchain, 'prepare_tools', lambda *args: (Path(sys.executable), Path(sys.executable), {'HERMES_DESKTOP_NATIVE_TOOLCHAIN': 'fixture', 'UV_CACHE_DIR': str(request.cache)}))
     def observed(cache, env, diagnostic):
         diagnostic.update(complete=True)

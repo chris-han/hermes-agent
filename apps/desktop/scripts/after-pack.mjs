@@ -11,6 +11,8 @@
  *   - packager.appInfo.productFilename: the exe basename (e.g. 'Hermes')
  */
 
+import { createRequire } from 'node:module'
+const { hash: filexHash, pins: filexPins } = createRequire(import.meta.url)('./filex-inputs.cjs')
 import path from 'node:path'
 import fs from 'node:fs'
 import { copyFile, mkdir, readdir } from 'node:fs/promises'
@@ -144,6 +146,9 @@ export default async function afterPack(context) {
     config: context.packager.config,
     resourcesDir: context.packager.buildResourcesDir,
   })
+  if (process.env.SEMANTIER_DESKTOP_VERSION && filexHash(fs.readFileSync(path.join(context.appOutDir, 'resources/filex/filex.exe'))) !== filexPins['win32-x64']) {
+    throw new Error('Packaged filex bytes changed during sanitizing/signing')
+  }
   rehashPayloadDigests(payload)
   // Keep every offline wheel, but collapse the loose cache only AFTER all PE
   // members have passed the sanitizer and optional binary signer above.

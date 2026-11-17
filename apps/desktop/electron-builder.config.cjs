@@ -127,7 +127,7 @@ module.exports = {
   afterPack: 'scripts/after-pack.mjs',
   ...(process.platform === 'darwin' ? { afterSign: 'scripts/notarize.mjs' } : {}),
   extraResources: [
-    ...(require('node:fs').existsSync(require('node:path').join(__dirname,'resources','filex')) ? [{from:'resources/filex',to:'filex'}] : []),
+    ...((process.env.SEMANTIER_DESKTOP_VERSION || require('node:fs').existsSync(require('node:path').join(__dirname,'resources','filex'))) ? [{from:'resources/filex',to:'filex'}] : []),
     {
       from: 'build/install-stamp.json',
       to: 'install-stamp.json'

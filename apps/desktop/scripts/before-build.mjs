@@ -28,6 +28,7 @@ const {
 } = require('../product-identity.cjs')
 
 export default async function beforeBuild() {
+  if (process.env.SEMANTIER_DESKTOP_VERSION) require('./filex-inputs.cjs').verifyFilexInputs(path.join(import.meta.dirname, '..'))
   stageMsixAssets()
   writeMsixExtensions()
   if (store) stageStoreManifest(path.join(import.meta.dirname, '..'), process.env.HERMES_PAYLOAD_TAG)
