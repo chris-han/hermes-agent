@@ -58,10 +58,16 @@ function Test-NativeReleasePreflight {
   $null=Get-NativeWindow $package[0]
   $dirty=& git.exe -C $Repository status --porcelain
   if($LASTEXITCODE -ne 0 -or $dirty){throw 'Native release source must be committed and clean'}
-  if($script:SourceBinding.hermesGitlink -cne $Commit){throw 'Native source pin mismatch'}
+  $applicationCommit=if($Commit){$Commit}else{$SourceCommit}
+  if($script:SourceBinding.hermesGitlink -cne $script:SourceBinding.toolingHermesHead -or
+    ($Commit -and $script:SourceBinding.hermesGitlink -cne $Commit)){throw 'Native source pin mismatch'}
   $saved=Read-CommitBuild (Join-Path $Output 'checkpoints.jsonl')
   $ledger=Get-Content -LiteralPath $VersionState -Raw | ConvertFrom-Json
-  if($saved){if(($saved.version+'.0') -cne $ExpectedVersion){throw 'Saved reservation differs from requested version'}}
+  if(!$Commit){
+    if(!$NativePublishOnly -or $Version -cne $ExpectedVersion -or ($ledger.version+'.0') -cne $ExpectedVersion -or
+      $ledger.sourceCommit -cne $applicationCommit){throw 'Fixed native publication requires the exact reserved version and application source'}
+  }
+  elseif($saved){if(($saved.version+'.0') -cne $ExpectedVersion){throw 'Saved reservation differs from requested version'}}
   elseif(([Version]($ledger.version+'.0')).Build+1 -ne ([Version]$ExpectedVersion).Build){throw 'Next version reservation differs from explicit target'}
   if((Get-PSDrive ([IO.Path]::GetPathRoot($Output).Substring(0,1))).Free -lt 12GB){throw 'Insufficient native build space'}
   $code=@'
@@ -94,6 +100,22 @@ function Test-NativeCompletedRelease {
   $path=Join-Path $Output 'result.json'
   if(!(Test-Path -LiteralPath $path)){return $false}
   $saved=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+  if($NativePublishOnly -and $saved.result -ceq 'PUBLISHED_122_CLIENT_NOT_YET_VERIFIED'){
+    $applicationCommit=if($Commit){$Commit}else{$SourceCommit}
+    if($saved.plan.sourceCommit -cne $applicationCommit -or $saved.plan.version -cne $ExpectedVersion -or
+      $saved.signedMsix -ine (Join-Path $Output 'SemantierAgent.msix') -or (Hash $saved.signedMsix) -cne $saved.sha256){throw 'Completed publication binding changed'}
+    Require-Signature $saved.signedMsix
+    $null=Ssh (Get-Channel1ProofCommand -Root $RemoteRoot -PackageSha256 $saved.sha256 -Build $saved.plan.buildId)
+    $metadata=Get-Content -LiteralPath (Join-Path $Output 'channel1-metadata.json') -Raw | ConvertFrom-Json
+    $public=Test-NativePublic $metadata.manifest $saved.signedMsix -Active
+    $saved | Add-Member -NotePropertyName publicationVerification -NotePropertyValue 'PASS' -Force
+    $saved | Add-Member -NotePropertyName nativeAcceptance -NotePropertyValue 'NOT_RUN_OWNER_MANUAL' -Force
+    $saved | Add-Member -NotePropertyName nativePublicAfterPointer -NotePropertyValue $public -Force
+    $saved | Add-Member -NotePropertyName revalidatedAt -NotePropertyValue ([DateTime]::UtcNow.ToString('o')) -Force
+    Save-Json $saved $path
+    Report-Status 'PASS: ECS publication revalidated; native update remains manual. No allocation, signing, upload or installation.'
+    return $true
+  }
   if($saved.result -cne 'PASS'){return $false}
   if(!$saved.PSObject.Properties['nativeAcceptance'] -or $saved.nativeAcceptance.result -cne 'PASS' -or
     $saved.nativeAcceptance.from -cne $NativeUpdateFrom -or $saved.nativeAcceptance.to -cne $ExpectedVersion -or
@@ -143,157 +165,6 @@ function Get-NativeWindow($Package) {
   $windows=@(Get-Process | Where-Object {$_.Path -ieq (Join-Path $Package.InstallLocation 'app/Semantier Agent.exe') -and $_.MainWindowHandle -ne 0})
   if($windows.Count -ne 1){throw 'Expected exactly one real installed application window'}
   return $windows[0]
-}
-function Get-NativeButton($Root,[string[]]$Names) {
-  foreach($name in $Names){
-    $condition=[Windows.Automation.AndCondition]::new(
-      [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty,$name),
-      [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::Button))
-    $button=$Root.FindFirst([Windows.Automation.TreeScope]::Descendants,$condition)
-    if($button){return $button}
-  }
-  return $null
-}
-function Invoke-NativeButton($Button) {
-  if(!$Button -or !$Button.Current.IsEnabled){throw 'Required native UI control unavailable'}
-  $Button.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
-}
-function Get-NativeModelButton($Window) {
-  $root=[Windows.Automation.AutomationElement]::FromHandle($Window.MainWindowHandle)
-  $buttons=$root.FindAll([Windows.Automation.TreeScope]::Descendants,
-    [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::Button))
-  $selected=@($buttons | Where-Object {$_.Current.Name -match '^(模型|Model) · '})
-  if($selected.Count -ne 1){throw 'Current model selection UI unavailable'}
-  return $selected[0]
-}
-function Open-NativeAbout($Window) {
-  $root=[Windows.Automation.AutomationElement]::FromHandle($Window.MainWindowHandle)
-  $settings=Get-NativeButton $root @('打开设置','Open settings')
-  if($settings){Invoke-NativeButton $settings}
-  $deadline=[DateTime]::UtcNow.AddSeconds(15)
-  do {
-    $about=Get-NativeButton $root @('关于','About')
-    if($about){Invoke-NativeButton $about;return $root}
-    Start-Sleep -Milliseconds 250
-  } while([DateTime]::UtcNow -lt $deadline)
-  throw 'Native About control unavailable'
-}
-function Invoke-NativeUpdateAcceptance([string]$Signed,[string]$PackageHash) {
-  Add-Type -AssemblyName UIAutomationClient
-  Add-Type -AssemblyName UIAutomationTypes
-  $old=Get-AppxPackage -Name $identity
-  if($old.Version.ToString() -cne $NativeUpdateFrom){throw 'Baseline changed before native apply'}
-  $window=Get-NativeWindow $old
-  $selectedModel=(Get-NativeModelButton $window).Current.Name
-  $root=Open-NativeAbout $window
-  $deadline=[DateTime]::UtcNow.AddSeconds(30)
-  do {
-    $check=Get-NativeButton $root @('立即检查','Check now')
-    if($check){break};Start-Sleep -Milliseconds 250
-  } while([DateTime]::UtcNow -lt $deadline)
-  Invoke-NativeButton $check
-  $deadline=[DateTime]::UtcNow.AddSeconds(60)
-  do {
-    $apply=Get-NativeButton $root @('立即更新','Update now')
-    if($apply -and $apply.Current.IsEnabled){break};Start-Sleep -Milliseconds 500
-  } while([DateTime]::UtcNow -lt $deadline)
-  if(!$apply -or !$apply.Current.IsEnabled){throw 'Real in-app native update is not available'}
-  $metadata=Get-Content -LiteralPath (Join-Path $Output 'channel1-metadata.json') -Raw | ConvertFrom-Json
-  $manifestSha=Hash-CanonicalManifest $metadata.manifest
-  # Offset and inode are captured immediately before the real UI apply, excluding probes.
-  $boundary=Ssh "stat -c '%i %s' /opt/semantier-client-distribution/data/msix-h2h3-native-20261117/access.jsonl"
-  if($boundary.Trim() -cnotmatch '^(\d+) (\d+)$'){throw 'Native transfer log boundary unavailable'}
-  $receipt.nativeTransferBoundary=@{inode=$Matches[1];offset=$Matches[2];at=[DateTime]::UtcNow.ToString('o')}
-  $receipt.nativeApply=@{parentPid=$window.Id;parentBirth=$window.StartTime.ToUniversalTime().ToString('o');manifestSha256=$manifestSha;sha256=$PackageHash;status='UI_APPLY_INTENT'}
-  Save-Json $receipt (Join-Path $Output 'result.json')
-  Invoke-NativeButton $apply
-  $deadline=[DateTime]::UtcNow.AddMinutes(15)
-  $completed=$null;$journal=$null
-  do {
-    $journals=@(Get-ChildItem -LiteralPath (Join-Path $NativeUserData 'updates') -Directory -Filter ('native-'+$manifestSha+'-*'))
-    if($journals.Count -gt 1){throw 'Ambiguous native release journals'}
-    if($journals.Count -eq 1){
-      $journal=$journals[0].FullName
-      if(Test-Path -LiteralPath (Join-Path $journal 'failed.json')){throw 'Native waiter reported failure; preserve journal'}
-      if(Test-Path -LiteralPath (Join-Path $journal 'completed.json')){
-        $completed=Get-Content -LiteralPath (Join-Path $journal 'completed.json') -Raw | ConvertFrom-Json;break
-      }
-    }
-    Start-Sleep -Seconds 2
-  } while([DateTime]::UtcNow -lt $deadline)
-  if(!$completed -or $completed.status -cne 'TARGET_GRAPH_REGISTERED_PROCESS_LAUNCHED' -or $completed.manifestSha256 -cne $manifestSha){throw 'Native update/waiter completion timeout or mismatch'}
-  $intent=Get-Content -LiteralPath (Join-Path $journal 'intent.json') -Raw | ConvertFrom-Json
-  $deployment=Get-Content -LiteralPath (Join-Path $journal 'deployment.json') -Raw | ConvertFrom-Json
-  if($intent.currentVersion -cne $NativeUpdateFrom -or $intent.version -cne $Version -or $intent.targetBuildId -cne $BuildId -or
-    $intent.graph.objects[0].sha256 -cne $PackageHash -or $intent.graph.objects[0].nativeDigest -cne $metadata.graph.objects[0].nativeDigest -or
-    $deployment.status -cne 'OS_SUCCESS'){throw 'Native ExpectedDigests/OS result binding mismatch'}
-  $registered=Get-AppxPackage -Name $identity
-  if($registered.Version.ToString() -cne $Version -or $registered.Status.ToString() -cne 'Ok' -or
-    $registered.PackageFamilyName -cne $script:nativePreflight.family -or
-    (Hash (Join-Path $registered.InstallLocation 'AppxSignature.p7x')) -cne (Get-PackageSignatureHash $Signed)){throw 'Installed signed target mismatch'}
-  $successor=Get-Process -Id $completed.pid
-  if($successor.Path -ine $completed.exe -or $successor.StartTime.ToUniversalTime() -ne [DateTime]::Parse($completed.birth).ToUniversalTime()){throw 'Native successor process identity mismatch'}
-  $deadline=[DateTime]::UtcNow.AddMinutes(3)
-  do {
-    try{$gateway=Test-NativeGateway $registered $UserProfile;break}catch{$gateway=$null}
-    Start-Sleep -Seconds 2
-  } while([DateTime]::UtcNow -lt $deadline)
-  if(!$gateway -or $gateway.pid -eq $script:nativePreflight.gateway.pid){throw 'Native successor Gateway ownership not established'}
-  $stale=@(Get-Process | Where-Object {$_.Path -and $_.Path.StartsWith($old.InstallLocation+'\',[StringComparison]::OrdinalIgnoreCase)})
-  if($stale.Count){throw 'Old package processes remain after native update'}
-  $model=Get-NativeModelButton $successor
-  if($model.Current.Name -cne $selectedModel){throw 'User model selection changed during native update'}
-  Invoke-NativeButton $model
-  $modelRoot=[Windows.Automation.AutomationElement]::FromHandle($successor.MainWindowHandle)
-  $deadline=[DateTime]::UtcNow.AddSeconds(20)
-  do {
-    $cancel=Get-NativeButton $modelRoot @('取消','Cancel')
-    if($cancel){break};Start-Sleep -Milliseconds 250
-  } while([DateTime]::UtcNow -lt $deadline)
-  Invoke-NativeButton $cancel
-  $root=Open-NativeAbout $successor
-  $check=Get-NativeButton $root @('立即检查','Check now');Invoke-NativeButton $check
-  $deadline=[DateTime]::UtcNow.AddSeconds(60)
-  do {
-    $texts=@($root.FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.Condition]::TrueCondition) | ForEach-Object {$_.Current.Name})
-    $body=$texts -join "`n"
-    if($body -match '你正在运行最新版本|running the latest|up to date'){break};Start-Sleep -Milliseconds 500
-  } while([DateTime]::UtcNow -lt $deadline)
-  if($body -notmatch [Regex]::Escape(([Version]$Version).ToString(3)) -or $body -notmatch '你正在运行最新版本|running the latest|up to date' -or
-    $body -notmatch '通道 ?1|Channel 1'){throw 'Native successor version/channel/latest UI not established'}
-  foreach($file in $script:nativePreflight.files){if((Hash $file.path) -cne $file.sha256){throw 'Protected profile sample changed'}}
-  $pty=Invoke-InstalledPtyAcceptance $registered $PackageHash
-  $transfer=Get-NativeTransfer $metadata.manifest
-  $receipt.nativeAcceptance=@{result='PASS';from=$NativeUpdateFrom;to=$Version;sha256=$PackageHash;journal=$journal;completed=$completed;
-    expectedDigests=$intent.graph.objects[0].nativeDigest;gateway=$gateway;profileSamples=81;criticalFiles=7;modelSelection=$selectedModel;modelPicker='OPENED_AND_CANCELLED_WITH_SELECTION_PRESERVED';ui='NATIVE_SUCCESSOR_LATEST';pty=$pty.ui.result;transfer=$transfer;llmCalls=0}
-}
-function Get-NativeTransfer($Manifest) {
-  $code=@'
-import json,os,pathlib,sys
-path=pathlib.Path('/opt/semantier-client-distribution/data/msix-h2h3-native-20261117/access.jsonl')
-inode,offset=int(sys.argv[1]),int(sys.argv[2]);key=sys.argv[3];size=int(sys.argv[4])
-stat=path.stat();assert stat.st_ino==inode and stat.st_size>=offset,'Transfer log rotated or truncated'
-rows=[]
-with path.open('rb') as f:
- f.seek(offset)
- for line in f:
-  r=json.loads(line);q=r.get('request',{})
-  if q.get('uri')!='/'+key or q.get('method')!='GET':continue
-  assert q['proto']=='HTTP/2.0' and r['status']==206,'Non-H2 Range native response'
-  rows.append({'protocol':q['proto'],'status':r['status'],'bytes':r['size'],'range':r.get('content_range'),'requestRange':q.get('headers',{}).get('Range')})
-assert rows and sum(r['bytes'] for r in rows)>0,'No real native package transfer observed'
-total=sum(r['bytes'] for r in rows)
-print(json.dumps({'result':'PASS','transferredBodyBytes':total,'packageBytes':size,'responses':len(rows),
- 'savingsPercent':(1-total/size)*100,'scope':'All exact candidate URL GET bodies in bounded log window, including retries','rows':rows}))
-'@
-  $encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($code))
-  $row=$Manifest.packages[0].artifact
-  return ((Ssh "printf '%s' '$encoded' | base64 -d | python3 - '$($receipt.nativeTransferBoundary.inode)' '$($receipt.nativeTransferBoundary.offset)' '$($row.key)' '$($row.size)'") | ConvertFrom-Json)
-}
-function Hash-CanonicalManifest($Manifest) {
-  $value=& $BuildPython -B -c 'import hashlib,json,sys; print(hashlib.sha256((json.dumps(json.loads(sys.argv[1]),sort_keys=True,separators=(",", ":"))+"\n").encode()).hexdigest())' ($Manifest | ConvertTo-Json -Depth 30 -Compress)
-  if($LASTEXITCODE -ne 0 -or $value -cnotmatch '^[a-f0-9]{64}$'){throw 'Invalid manifest digest'}
-  return $value
 }
 function Publish-Channel1Artifacts([string]$Signed, [string]$Root, [string]$Stage, [string]$PackageSha256, [string]$Metadata, [string]$Publisher = (Join-Path $PSScriptRoot 'releases/channel1.py')) {
   if($Root -cnotmatch '^[A-Za-z0-9_:/.-]+$' -or $Stage -cnotmatch '^[A-Za-z0-9_:/.-]+$' -or $PackageSha256 -cnotmatch '^[a-f0-9]{64}$') {

@@ -270,8 +270,12 @@ def _save_recovery(root, recovery, record, package_sha256, protocol):
     pointer = root/POINTER
     if (recovery/'recovery.json').exists():
         saved = protocol.decode_json((recovery/'recovery.json').read_bytes())
-        if saved['afterPointerSha256'] != hashlib.sha256(protocol.canonical_json(record)).hexdigest():
+        if (saved['root'] != str(root) or saved['afterPackageSha256'] != package_sha256
+                or saved['afterPointerSha256'] != hashlib.sha256(protocol.canonical_json(record)).hexdigest()):
             raise ValueError('Recovery binding changed')
+        for row in saved['files']:
+            if sha(_safe(recovery, row['saved'])) != row['sha256']:
+                raise ValueError('Recovery SHA256 mismatch')
         return
     recovery.mkdir(mode=0o700, exist_ok=False)
     files = []
@@ -309,6 +313,16 @@ def restore(root, recovery):
             source = _safe(recovery, row['saved'])
             if sha(source) != row['sha256']:
                 raise ValueError('Recovery SHA256 mismatch')
+        old = json.loads((recovery/saved['files'][2]['saved']).read_bytes())
+        head = old.get('nativeHead') or old.get('head')
+        body = _safe(root, head['manifestKey']).read_bytes()
+        if hashlib.sha256(body).hexdigest() != head['sha256']:
+            raise ValueError('Previous immutable manifest changed')
+        row = json.loads(body)['packages'][0]
+        if sha(_safe(root, row['artifact']['key'])) != saved['files'][0]['sha256']:
+            raise ValueError('Previous immutable package changed')
+        if row.get('native') and sha(_safe(root, row['native']['graph']['key'])) != row['native']['graph']['sha256']:
+            raise ValueError('Previous immutable graph changed')
         route = saved.get('route')
         if route:
             live = Path(route['path'])

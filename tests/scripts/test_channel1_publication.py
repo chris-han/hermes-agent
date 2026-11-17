@@ -95,6 +95,21 @@ def test_rollback_refuses_concurrent_pointer(tmp_path):
         channel1.restore(root, backup)
 
 
+def test_recovery_tampering_refuses_republish_before_pointer_change(tmp_path):
+    root = tmp_path/'public'; root.mkdir()
+    publish(root, tmp_path/'old', 121)
+    _, digest, metadata = package(tmp_path/'new', 122)
+    backup = root.parent/'.channel1-recovery-test'
+    args = dict(metadata_sha256=metadata, package_sha256=digest, protocol=protocol,
+                expected_previous_sha256=channel1.sha(root/channel1.POINTER), recovery=backup)
+    channel1.publish(root, tmp_path/'new', **args)
+    before = (root/channel1.POINTER).read_bytes()
+    (backup/'2').write_bytes(b'changed')
+    with pytest.raises(ValueError, match='Recovery SHA256'):
+        channel1.publish(root, tmp_path/'new', **args)
+    assert (root/channel1.POINTER).read_bytes() == before
+
+
 def test_native_staging_probes_before_pointer_and_restores_route(tmp_path, monkeypatch):
     root = tmp_path/'public'; root.mkdir()
     publish(root, tmp_path/'old', 121)

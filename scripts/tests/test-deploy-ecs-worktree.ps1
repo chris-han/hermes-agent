@@ -161,7 +161,7 @@ try {
   if($OuterOperator){$outerAst=[Management.Automation.Language.Parser]::ParseFile($OuterOperator,[ref]$null,[ref]$errors);if($errors){throw ($errors | Out-String)}}
   $main=@($outerAst.EndBlock.Statements | Where-Object {$_ -is [Management.Automation.Language.TryStatementAst]})[-1]
   $script:releaseEnvironment=@{}
-  $NativeUpdateFrom='';$SkipLocalInstall=$false;$script:nativePreflight=$null
+  $NativeUpdateFrom='';$NativePublishOnly=$false;$SkipLocalInstall=$false;$script:nativePreflight=$null
   $Latest=$false;$BuildOnly=$true;$SetupOnly=$false;$LocalSetup=$false;$UpdateSetup=$false
   $PreflightOnly=$false;$DesktopOnly=$false;$NewRun=$true
   function Initialize-ReleasePaths {}
