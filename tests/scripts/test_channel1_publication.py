@@ -136,6 +136,29 @@ def test_native_staging_probes_before_pointer_and_restores_route(tmp_path, monke
     channel1.restore(root, backup)
     assert (root/channel1.POINTER).read_bytes() == before
     assert caddy.read_bytes() == body
+    # A prior safe rollback is an owned resumable state, not a foreign writer.
+    channel1.stage_native(root, tmp_path/'new', caddy_sha256=hashlib.sha256(body).hexdigest(), **args)
+    assert (root/channel1.POINTER).read_bytes() == before
+    assert caddy.read_bytes() == staged_caddy
+
+
+@pytest.mark.parametrize('admin_off', [True, False])
+def test_live_route_uses_restart_only_when_admin_is_disabled(tmp_path, monkeypatch, admin_off):
+    path = tmp_path/'Caddyfile'; path.write_bytes(b'old')
+    body = b'{\n admin off\n}\n' if admin_off else b':80 { respond "ok" }\n'
+    calls = []
+    inspected = [{'Id': 'edge-id', 'State': {'Running': True},
+                  'Mounts': [{'Source': str(path), 'Destination': '/etc/caddy/Caddyfile'}]}]
+    monkeypatch.setattr(channel1.subprocess, 'check_output', lambda *a, **k: json.dumps(inspected).encode())
+    def run(args, **kwargs):
+        calls.append(args)
+        return types.SimpleNamespace(returncode=0, stderr=b'')
+    monkeypatch.setattr(channel1.subprocess, 'run', run)
+    channel1._apply_route(path, body)
+    assert path.read_bytes() == body
+    assert calls[0][:3] == ['docker', 'exec', '-i']
+    assert calls[-1] == (['docker', 'restart', 'edge-id'] if admin_off else
+                        ['docker', 'exec', 'edge-id', 'caddy', 'reload', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile'])
 
 
 @pytest.mark.parametrize('failure', ['421', 'http1', 'wrong-bytes', 'wrong-graph', None])

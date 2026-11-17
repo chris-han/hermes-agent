@@ -892,7 +892,7 @@ function Ssh([string]$Command) {
   }
   return ($text -join "`n")
 }
-function Transfer-Sftp([string]$LocalFile, [string]$RemoteFile, [switch]$Download) {
+function Transfer-Sftp([string]$LocalFile, [string]$RemoteFile, [switch]$Download, [switch]$Overwrite) {
   if($LocalFile -match '[\r\n"]' -or $RemoteFile -match '[\r\n"]'){throw 'Invalid SFTP filename.'}
   if(!$Download) {
     # Windows OpenSSH reput requires the remote file to exist. Create only a
@@ -901,7 +901,7 @@ function Transfer-Sftp([string]$LocalFile, [string]$RemoteFile, [switch]$Downloa
     $null=Ssh "set -eu; if test ! -e '$RemoteFile'; then umask 077; : > '$RemoteFile'; fi; test -f '$RemoteFile'; test ! -L '$RemoteFile'"
   }
   $local=$LocalFile.Replace('\','/').Replace('[','\[').Replace(']','\]').Replace('*','\*').Replace('?','\?')
-  $command=if($Download){'get "'+$RemoteFile+'" "'+$local+'"'}else{'reput "'+$local+'" "'+$RemoteFile+'"'}
+  $command=if($Download){'get "'+$RemoteFile+'" "'+$local+'"'}elseif($Overwrite){'put "'+$local+'" "'+$RemoteFile+'"'}else{'reput "'+$local+'" "'+$RemoteFile+'"'}
   $batch=Join-Path $Output ('sftp-'+[Guid]::NewGuid().ToString('N')+'.txt')
   [IO.File]::WriteAllText($batch,"progress`n"+$command+"`nbye`n",$utf8)
   try {
@@ -925,7 +925,9 @@ function Upload([string]$Path, [string]$RemoteFile) {
   $remoteHash=Ssh "if test -f '$RemoteFile'; then sha256sum '$RemoteFile' | cut -d' ' -f1; fi"
   if($remoteHash -ceq $localHash) {Report-Status ('Reusing verified upload: '+[IO.Path]::GetFileName($Path));return}
   Report-Status ("Uploading {0} ({1:N1} MiB)" -f [IO.Path]::GetFileName($Path), ((Get-Item -LiteralPath $Path).Length / 1MB))
-  Transfer-Sftp $Path $RemoteFile
+  # Changed control files have different prefixes; reput may only resume the
+  # same immutable package bytes. Replace these small owned stage files whole.
+  Transfer-Sftp $Path $RemoteFile -Overwrite:($NativeUpdateFrom -and [IO.Path]::GetExtension($Path) -in @('.py','.json'))
   $remoteHash=Ssh "sha256sum '$RemoteFile' | cut -d' ' -f1"
   if($remoteHash -cne $localHash){throw 'Uploaded file hash mismatch.'}
   Complete-Checkpoint ('upload-'+[IO.Path]::GetFileName($Path))
@@ -1730,6 +1732,13 @@ if($NativeUpdateFrom -and !$Commit){
     source=$script:SourceBinding;operatorSha256=(Hash $PSCommandPath);
     publisherSha256=(Hash (Join-Path $PSScriptRoot 'releases/channel1.py'));channel1Sha256=(Hash (Join-Path $PSScriptRoot 'deploy-ecs-channel1.ps1'))}
 }
+$invocationTooling=if($receipt.Contains('tooling')){$receipt.tooling}else{$null}
+if($NativeUpdateFrom -and (Test-Path -LiteralPath (Join-Path $Output 'result.json'))){
+  $priorOutcome=Get-Content -LiteralPath (Join-Path $Output 'result.json') -Raw | ConvertFrom-Json
+  if($priorOutcome.result -in @('FAIL','STOP')){
+    $receipt.previousFailure=@{result=$priorOutcome.result;error=$priorOutcome.error;finishedAt=$priorOutcome.finishedAt}
+  }
+}
 if($Commit -and $built.PSObject.Properties['tooling']){$receipt.tooling=$built.tooling}
 $script:checkpoints=@{}
 $checkpointPath=Join-Path $Output 'checkpoints.jsonl'
@@ -1756,6 +1765,10 @@ if($saved) {
     (Hash (Join-Path $Output 'SemantierAgent.msix')) -ceq $previous.sha256) {
     $receipt.sha256=$previous.sha256;$script:checkpoints['signed']='imported-verified-hash'
   }
+}
+if($NativeUpdateFrom){
+  $receipt.nativePreflight=$script:nativePreflight
+  if($invocationTooling){$receipt.tooling=$invocationTooling}
 }
 $receipt.result='IN_PROGRESS'
 Write-RunEvent @{type='checkpoint';stage='resume-ready';binding=$script:runBinding;completed=$script:checkpoints;receipt=$receipt}

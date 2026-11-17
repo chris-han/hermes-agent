@@ -360,9 +360,30 @@ def _apply_route(path, body):
     # Keep the existing bind-mounted inode.
     with path.open('wb') as stream:
         stream.write(body); stream.flush(); os.fsync(stream.fileno())
-    subprocess.run(['docker', 'exec', edge, 'caddy', 'reload',
-                    '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile'],
-                   check=True, capture_output=True, timeout=45)
+    # The maintained production config deliberately disables the admin API.
+    # Select its supported apply operation before execution; never enable admin
+    # or treat an arbitrary reload failure as permission to restart.
+    if re.search(rb'(?m)^\s*admin\s+off\s*$', body):
+        command = ['docker', 'restart', edge]
+    else:
+        command = ['docker', 'exec', edge, 'caddy', 'reload',
+                   '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile']
+    applied = subprocess.run(command, check=False, capture_output=True, timeout=45)
+    if applied.returncode:
+        raise ValueError('Caddy apply failed: '+applied.stderr.decode(errors='replace')[-2000:])
+
+
+def _native_route_body(before, old_id, new_id):
+    if not re.fullmatch('[a-f0-9]{32}', old_id) or old_id == new_id:
+        raise ValueError('Invalid route baseline')
+    text = before.decode()
+    for name in ('SemantierAgent.msix', 'build.json', 'native-graph.json'):
+        old = '/releases/channel-builds/'+old_id+'/'+name
+        new = '/releases/channel-builds/'+new_id+'/'+name
+        if old not in text:
+            raise ValueError('Missing exact native route seam')
+        text = text.replace(old, old+' '+new)
+    return text.encode()
 
 
 def stage_native(root, stage, *, metadata_sha256, package_sha256, protocol,
@@ -394,22 +415,20 @@ def stage_native(root, stage, *, metadata_sha256, package_sha256, protocol,
         live = Path('/opt/semantier-cloud-live-v1/Caddyfile')
         saved = protocol.decode_json((recovery/'recovery.json').read_bytes())
         if saved.get('route'):
-            if sha(live) != saved['route']['after']:
+            current = sha(live)
+            if current not in (saved['route']['before'], saved['route']['after']):
                 raise ValueError('Concurrent Caddy configuration')
+            if current == saved['route']['before']:
+                before = (recovery/'Caddyfile').read_bytes()
+                after = _native_route_body(before, previous['nativeHead']['buildId'], request['buildId'])
+                if hashlib.sha256(after).hexdigest() != saved['route']['after']:
+                    raise ValueError('Recovery route binding changed')
+                _apply_route(live, after)
         else:
             if sha(live) != caddy_sha256:
                 raise ValueError('Concurrent Caddy configuration')
-            before = live.read_bytes(); text = before.decode()
-            old_id = previous['nativeHead']['buildId']; new_id = request['buildId']
-            if not re.fullmatch('[a-f0-9]{32}', old_id) or old_id == new_id:
-                raise ValueError('Invalid route baseline')
-            for name in ('SemantierAgent.msix', 'build.json', 'native-graph.json'):
-                old = '/releases/channel-builds/'+old_id+'/'+name
-                new = '/releases/channel-builds/'+new_id+'/'+name
-                if old not in text:
-                    raise ValueError('Missing exact native route seam')
-                text = text.replace(old, old+' '+new)
-            after = text.encode()
+            before = live.read_bytes()
+            after = _native_route_body(before, previous['nativeHead']['buildId'], request['buildId'])
             _atomic(recovery/'Caddyfile', before)
             saved['route'] = {'path': str(live), 'before': caddy_sha256,
                               'after': hashlib.sha256(after).hexdigest()}

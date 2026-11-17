@@ -105,3 +105,23 @@ try {
  if(!$failed){throw 'Changed signed artifact accepted by replay'}
  'NATIVE_PUBLISHED_REPLAY_NO_BUILD_SIGN_INSTALL_PASS'
 }finally{Remove-Item -LiteralPath (Join-Path $Output 'channel1-metadata.json');Remove-Item -LiteralPath (Join-Path $Output 'result.json');Remove-Item -LiteralPath $Output}
+$ast=[Management.Automation.Language.Parser]::ParseFile($path,[ref]$null,[ref]$errors)
+foreach($fn in $ast.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in @('Transfer-Sftp','Upload')},$true)){
+ . ([scriptblock]::Create($fn.Extent.Text))
+}
+$Output=Join-Path ([IO.Path]::GetTempPath()) ('native-transfer-test-'+[Guid]::NewGuid().ToString('N'))
+[IO.Directory]::CreateDirectory($Output)|Out-Null
+try {
+ $utf8=[Text.UTF8Encoding]::new($false);$BuildMode='Prod';$NativeUpdateFrom='0.0.121.0';$script:sshOptions=@();$SshTarget='fixture'
+ function Ssh {param($Command);if($Command.StartsWith('sha256sum ')){return ('a'*64)};return ''}
+ function Hash {param($Path);return ('a'*64)}
+ function Run {param($Exe,$Arguments);$i=[Array]::IndexOf($Arguments,'-b');$script:capturedBatch=[IO.File]::ReadAllText($Arguments[$i+1])}
+ foreach($extension in @('msix','py','json')){
+  $inputFile=Join-Path $Output ('fixture.'+$extension);[IO.File]::WriteAllText($inputFile,'fixture')
+  Upload $inputFile ('/owned-stage/fixture.'+$extension)
+  $verb=if($extension -eq 'msix'){'reput'}else{'put'}
+  if($script:capturedBatch -notmatch ('(?m)^'+$verb+' ')){throw "Unsafe transfer mode for $extension"}
+  Remove-Item -LiteralPath $inputFile
+ }
+ 'NATIVE_METADATA_REPLACE_PACKAGE_RESUME_PASS'
+}finally{Remove-Item -LiteralPath $Output}
