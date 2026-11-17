@@ -118,6 +118,9 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
   }
 
   return {
+    async fileSyncBinding(): Promise<{userId:string;workspaceId:string;remoteRoot:string;token:string;enginePath:string;version:string}> {
+      return (await request('/api/file-sync/binding', {})).json()
+    },
     async createSession(label: string, requestIdentity: string): Promise<{ sessionKey: string }> {
       if (!/^[A-Za-z0-9_-]{1,96}$/.test(requestIdentity)) { throw new Error('Invalid Main creation request identity.') }
       const result = await (await request('/api/sessions', { label, requestIdentity })).json()

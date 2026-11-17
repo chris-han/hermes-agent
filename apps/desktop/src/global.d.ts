@@ -266,6 +266,7 @@ declare global {
       oauthLogoutConnectionConfig: (remoteUrl: string) => Promise<DesktopOauthLogoutResult>
       // Hermes Cloud: one portal login powers discovery + silent per-agent
       // sign-in (cloud-auto-discovery Phase 3).
+      fileSync?: Record<'status'|'choose'|'pause'|'resume',()=>Promise<{state:'Paused'|'Syncing'|'Synced'|'Conflict'|'Error';folder?:string;message?:string}>>
       workspace?: DesktopWorkspaceApi
       cloud: {
         status: () => Promise<DesktopCloudStatus>
