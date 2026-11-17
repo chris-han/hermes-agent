@@ -16,7 +16,7 @@ it.skipIf(!fixture)(
   async () => {
     const f = JSON.parse(await fs.readFile(fixture!, 'utf8'))
     const services = JSON.parse(await fs.readFile(path.resolve(path.dirname(fixture!), '..', 'services.json'), 'utf8'))
-    const origin = services.web
+    const origin = services.containerWeb || services.web
 
     const login = await fetch(origin + '/auth/password/login', {
       method: 'POST',
@@ -74,8 +74,8 @@ it.skipIf(!fixture)(
     let supervisor = new FileSyncSupervisor(options)
 
     try {
-      await fs.writeFile(path.join(folder, name), 'Portable supervisor upload\n')
       await supervisor.enable(origin, folder)
+      await fs.writeFile(path.join(folder, name), 'Portable supervisor upload\n')
       await expect.poll(() => supervisor.status().state, { timeout: 20000 }).toBe('Synced')
       const bytes = await request('/api/file-sync/files?download=true&path=' + name)
       expect(bytes.status).toBe(206)

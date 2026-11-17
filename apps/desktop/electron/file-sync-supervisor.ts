@@ -180,6 +180,12 @@ export class FileSyncSupervisor {
       const owners = await this.owners()
       check()
       const match = this.matchOwner(owners, origin, identity, canonical)
+
+      if (!match && (await fs.readdir(canonical)).length) {
+        throw new Error('Choose an empty folder for a new File Sync binding. Existing files are preserved.')
+      }
+
+      check()
       const credential = await this.options.binding(origin)
       check()
 

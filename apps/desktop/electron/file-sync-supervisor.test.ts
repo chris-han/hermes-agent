@@ -54,8 +54,8 @@ async function setup() {
 
 it('keeps a durable A folder owner across pause, restart and fresh B pairing', async () => {
   const { folder, supervisor, switchTo } = await setup()
-  await fs.writeFile(path.join(folder, 'notes.md'), 'A private notes')
   await supervisor.enable('https://cloud.example', folder)
+  await fs.writeFile(path.join(folder, 'notes.md'), 'A private notes')
   await supervisor.pause()
   switchTo('b', 'wb')
   await expect(new FileSyncSupervisor(supervisor.options).enable('https://cloud.example', folder)).rejects.toThrow(
@@ -188,4 +188,21 @@ it('can pause and retry after an unavailable helper without poisoning the lifecy
   await expect(supervisor.enable('https://cloud.example', folder)).rejects.toThrow(/pairing state/)
   await expect(supervisor.pause()).resolves.toBeUndefined()
   await expect(supervisor.enable('https://cloud.example', folder)).rejects.toThrow(/pairing state/)
+})
+
+
+it('rejects residual files with no local owner before obtaining credentials or running the engine', async () => {
+  const { folder, supervisor, switchTo } = await setup()
+  await fs.writeFile(path.join(folder, 'notes.md'), 'Account A residual bytes')
+  switchTo('b', 'wb')
+  let bindingCalls = 0
+  let engineCalls = 0
+  const binding = supervisor.options.binding
+  supervisor.options.binding = async origin => { bindingCalls++; return binding(origin) }
+  supervisor.options.run = async () => { engineCalls++; return { code: 0, stdout: '[]' } }
+  await expect(supervisor.enable('https://cloud.example', folder)).rejects.toThrow(/empty folder/)
+  expect(bindingCalls).toBe(0)
+  expect(engineCalls).toBe(0)
+  expect(await supervisor.owners()).toEqual([])
+  expect(await fs.readFile(path.join(folder, 'notes.md'), 'utf8')).toBe('Account A residual bytes')
 })
