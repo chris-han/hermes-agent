@@ -1,6 +1,53 @@
 # Production native branch of the existing external relaunch waiter.
 # Windows owns all package transfers. No package bytes are downloaded here.
 . (Join-Path $PSScriptRoot 'native-package-digest.ps1')
+function Invoke-NativeWaiterBreakaway([string]$Script, [string[]]$Arguments) {
+ # MSIX's job permits explicit breakaway, not silent inheritance. Keep a real
+ # hidden console for PowerShell 5.1; DETACHED_PROCESS can exit before -File.
+ if(-not ('SemantierNativeWaiterProcess' -as [type])){Add-Type -TypeDefinition @'
+using System;using System.ComponentModel;using System.IO;using System.Text;using System.Runtime.InteropServices;
+public static class SemantierNativeWaiterProcess {
+ [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] struct Startup {
+  public uint cb;public IntPtr reserved,desktop,title;
+  public uint x,y,xSize,ySize,xChars,yChars,fill,flags;
+  public ushort show,reservedSize;public IntPtr reservedData,input,output,error;
+ }
+ [StructLayout(LayoutKind.Sequential)] struct Created {public IntPtr process,thread;public uint pid,tid;}
+ [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool CreateProcessW(string application,StringBuilder command,IntPtr processSecurity,IntPtr threadSecurity,bool inherit,uint flags,IntPtr environment,string directory,ref Startup startup,out Created created);
+ [DllImport("kernel32.dll",SetLastError=true)] static extern uint WaitForSingleObject(IntPtr handle,uint milliseconds);
+ [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetExitCodeProcess(IntPtr process,out uint code);
+ [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+ static string Quote(string value) {
+  if(value==null || value.IndexOfAny(new char[]{'\0','\r','\n'})>=0)throw new ArgumentException("Invalid native waiter argument");
+  StringBuilder result=new StringBuilder("\"");int slashes=0;
+  foreach(char c in value){
+   if(c=='\\'){slashes++;continue;}
+   result.Append('\\',c=='"'?slashes*2+1:slashes);result.Append(c);slashes=0;
+  }
+  return result.Append('\\',slashes*2).Append('"').ToString();
+ }
+ public static int Run(string script,string[] arguments) {
+  string exe=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),@"WindowsPowerShell\v1.0\powershell.exe");
+  StringBuilder command=new StringBuilder(Quote(exe));
+  foreach(string value in new string[]{"-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-File",script})command.Append(' ').Append(Quote(value));
+  foreach(string value in arguments)command.Append(' ').Append(Quote(value));
+  if(command.Length>32000)throw new ArgumentException("Native waiter command exceeds limit");
+  Startup startup=new Startup();startup.cb=(uint)Marshal.SizeOf(typeof(Startup));startup.flags=1;startup.show=0;
+  Created child;
+  // Same token/environment; no inherited handles or privilege changes. A job
+  // that forbids breakaway rejects creation rather than invoking a fallback.
+  if(!CreateProcessW(exe,command,IntPtr.Zero,IntPtr.Zero,false,0x01000010,IntPtr.Zero,Path.GetTempPath(),ref startup,out child))throw new Win32Exception(Marshal.GetLastWin32Error(),"Native waiter breakaway refused");
+  CloseHandle(child.thread);
+  try {
+   if(WaitForSingleObject(child.process,0xffffffff)!=0)throw new Win32Exception(Marshal.GetLastWin32Error(),"Native waiter wait failed");
+   uint code;if(!GetExitCodeProcess(child.process,out code))throw new Win32Exception(Marshal.GetLastWin32Error());
+   return unchecked((int)code);
+  } finally {CloseHandle(child.process);}
+ }
+}
+'@}
+ return [SemantierNativeWaiterProcess]::Run($Script,$Arguments)
+}
 function New-NativeUpdateJournalDirectory([string]$directory,[string]$sid) {
  if(Test-Path -LiteralPath $directory){throw 'Native transaction already exists; reconcile before retry'}
  $null=[IO.Directory]::CreateDirectory($directory)

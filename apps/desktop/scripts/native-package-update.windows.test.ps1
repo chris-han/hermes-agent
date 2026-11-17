@@ -145,15 +145,20 @@ foreach($mode in @('unknown','completed','legacy')){
 if(!$PlatformScript){$PlatformScript=Join-Path $PSScriptRoot '../../../tests/install/e2e-assets/semantier-registered-platform.ps1'}
 $platformAst=[Management.Automation.Language.Parser]::ParseFile($PlatformScript,[ref]$tokens,[ref]$errors)
 if($errors.Count){throw 'Platform source parser failed'}
-$nativeType=@($platformAst.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq 'Add-Type' -and $node.Extent.Text.Contains('public static class SemantierNativeFacts')},$true))
+$physicalScript=Join-Path (Split-Path -Parent $PlatformScript) 'windows-physical-path.ps1'
+$physicalAst=[Management.Automation.Language.Parser]::ParseFile($physicalScript,[ref]$tokens,[ref]$errors)
+if($errors.Count){throw 'Shared physical-path source parser failed'}
+$nativeType=@($physicalAst.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq 'Add-Type' -and $node.Extent.Text.Contains('public static class SemantierNativeFacts')},$true))
 if($nativeType.Count -ne 1){throw 'Platform native fact declaration ambiguous'}
 & ([scriptblock]::Create($nativeType[0].Extent.Text))
 foreach($name in @('Physical','Read-NativeProductionHandoff','Retire-NativeWaiterStage')){
- $definitions=@($platformAst.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))
+ $owner=if($name -ceq 'Physical'){$physicalAst}else{$platformAst}
+ $definitions=@($owner.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))
  if($definitions.Count -ne 1){throw 'Actual platform function ambiguous'}
  . ([scriptblock]::Create($definitions[0].Extent.Text))
 }
 $root=Join-Path ([IO.Path]::GetTempPath()) ('native-reader-unit-'+[guid]::NewGuid().ToString('N'))
+$desktopRoot=Join-Path $root 'userdata'
 $manifest='d'*64;$attempt=Join-Path $root ('userdata/updates/native-'+$manifest+'-unit')
 $null=[IO.Directory]::CreateDirectory($attempt)
 $global:nativeReaderWaiter=$null

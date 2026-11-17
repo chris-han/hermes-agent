@@ -6,7 +6,8 @@ param(
   [Parameter(Mandatory = $true)][string]$ReadyFile,
   [int]$TimeoutSeconds = 900,
   [int]$PollMillis = 500,
-  [string]$NativeRequest
+  [string]$NativeRequest,
+  [switch]$NativeIndependentChild
 )
 
 # The parent runs this detached with no stdio, so this file is the only record of why it gave up.
@@ -25,6 +26,17 @@ function Write-WaiterLog([string]$Message) {
     $text = ($lines | ForEach-Object { '{0} [{1}] pid={2} {3}' -f $stamp, $Attempt, $PID, $_ }) -join "`n"
     [IO.File]::AppendAllText($LogFile, $text + "`n", $Utf8NoBom)
   } catch {}
+}
+
+# This bootstrap remains in the existing cancellation tree until the handshake.
+# Only its child owns native intent/cleanup. Package replacement may terminate
+# the bootstrap's MSIX job, so its finally block must never remove child state.
+if($NativeRequest -and !$NativeIndependentChild){
+  try {
+    . (Join-Path $PSScriptRoot 'native-package-update.ps1')
+    $code=Invoke-NativeWaiterBreakaway $PSCommandPath @('-ProcessId',[string]$ProcessId,'-ProcessStartTimeMs',[string]$ProcessStartTimeMs,'-IdentityName',$IdentityName,'-ReadyFile',$ReadyFile,'-TimeoutSeconds',[string]$TimeoutSeconds,'-PollMillis',[string]$PollMillis,'-NativeRequest',$NativeRequest,'-NativeIndependentChild')
+    exit $code
+  } catch {Write-WaiterLog ('native bootstrap failed: '+($_|Out-String).Trim());exit 1}
 }
 
 try {
