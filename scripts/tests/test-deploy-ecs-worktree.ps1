@@ -120,7 +120,7 @@ try {
   if($native){
     $busyScript=Join-Path $BuildSource 'wait-child.ps1'
     [IO.File]::WriteAllText($busyScript,'Wait-Event -Timeout 120 | Out-Null')
-    $child=Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile','-File',$busyScript) -PassThru
+    $child=Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile','-File',$busyScript) -WindowStyle Hidden -PassThru
     try {Require ((Remove-OwnedBuildSource) -like 'CLEANUP_DEFERRED:*') 'Busy stage removed'}
     finally {Stop-Process -Id $child.Id -Force;$child.WaitForExit()}
   }
@@ -161,6 +161,7 @@ try {
   if($OuterOperator){$outerAst=[Management.Automation.Language.Parser]::ParseFile($OuterOperator,[ref]$null,[ref]$errors);if($errors){throw ($errors | Out-String)}}
   $main=@($outerAst.EndBlock.Statements | Where-Object {$_ -is [Management.Automation.Language.TryStatementAst]})[-1]
   $script:releaseEnvironment=@{}
+  $NativeUpdateFrom='';$NativePublishOnly=$false;$SkipLocalInstall=$false;$script:nativePreflight=$null
   $Latest=$false;$BuildOnly=$true;$SetupOnly=$false;$LocalSetup=$false;$UpdateSetup=$false
   $PreflightOnly=$false;$DesktopOnly=$false;$NewRun=$true
   function Initialize-ReleasePaths {}

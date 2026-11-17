@@ -77,14 +77,14 @@ if($value -cne 'fixture secret # retained'){throw 'Password parsing mismatch'}
 'PASSWORD_PARSE_PASS'
 """, encoding="utf-8")
     env = tmp_path / "explicit.env"
-    env.write_text('export ALI_ECS_SSH_PASSWORDE="fixture secret # retained" # comment\n', encoding="utf-8")
+    env.write_text('export ALI_ECS_SSH_PASSWORD="fixture secret # retained" # comment\n', encoding="utf-8")
     result = invoke_ps(script, SOURCE, env, "valid")
     assert result.returncode == 0, result.stdout + result.stderr
     assert "PASSWORD_PARSE_PASS" in result.stdout
     assert "fixture secret" not in result.stdout + result.stderr
-    for text in ["UNRELATED=value\n", "ALI_ECS_SSH_PASSWORDE=\n",
-                 'ALI_ECS_SSH_PASSWORDE="secret\n',
-                 "ALI_ECS_SSH_PASSWORDE=one\nALI_ECS_SSH_PASSWORDE=two\n"]:
+    for text in ["UNRELATED=value\n", "ALI_ECS_SSH_PASSWORD=\n",
+                 'ALI_ECS_SSH_PASSWORD="secret\n',
+                 "ALI_ECS_SSH_PASSWORD=one\nALI_ECS_SSH_PASSWORD=two\n"]:
         env.write_text(text, encoding="utf-8")
         result = invoke_ps(script, SOURCE, env, "invalid")
         assert result.returncode == 0, result.stdout + result.stderr
@@ -136,6 +136,7 @@ $e=$null;$t=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($args[0],[ref]$t,[ref]$e)
 if($e){throw ($e | Out-String)}
 $main=@($ast.EndBlock.Statements | Where-Object {$_ -is [Management.Automation.Language.TryStatementAst]})[-1]
+$NativeUpdateFrom='';$NativePublishOnly=$false;$SkipLocalInstall=$false;$script:sourceOwner=$null
 $Latest=$false;$BuildOnly=$true;$Commit='a'*40;$SetupOnly=$false;$LocalSetup=$false;$UpdateSetup=$false;$PreflightOnly=$false
 $DesktopOnly=$false;$WhatIfPreference=$false;$Output=$args[1];$utf8=New-Object Text.UTF8Encoding($false)
 $script:releaseEnvironment=@{}

@@ -240,6 +240,91 @@ function Get-NativeUpdateReconciliation([string]$Directory) {
 }
 
 
+# Explicit operator recovery only. Automatic UNKNOWN/source-pin handling above
+# stays unchanged. A newer independently verified single-package registration
+# can supersede an old terminal failure without claiming that old update passed.
+function Resolve-NativeSupersededFailure {
+ [CmdletBinding()]
+ param(
+  [Parameter(Mandatory=$true)][string]$Directory,
+  [Parameter(Mandatory=$true)][string]$ExpectedPackageFullName,
+  [Parameter(Mandatory=$true)][string]$ExpectedSignatureSha256,
+  [switch]$Apply
+ )
+ $ErrorActionPreference='Stop'
+ $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+ $Directory=[IO.Path]::GetFullPath($Directory)
+ $cursor=Get-Item -LiteralPath $Directory -Force
+ while($cursor){if($cursor.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Native recovery reparse path refused'};$cursor=$cursor.Parent}
+ $acl=Get-Acl -LiteralPath $Directory
+ if(!$acl.AreAccessRulesProtected -or $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $sid){throw 'Native recovery private owner mismatch'}
+ if($ExpectedSignatureSha256 -cnotmatch '^[a-f0-9]{64}$'){throw 'Verified registered signature required'}
+ $names=@('intent.json','deployment-intent.json','deployment-unresolved.json','unresolved.json')
+ $files=@(Get-ChildItem -LiteralPath $Directory -Force)
+ if(@($files|Where-Object{$_.Name -cnotin ($names+@('reconciled.json')) -or $_.PSIsContainer -or ($_.Attributes -band [IO.FileAttributes]::ReparsePoint)}).Count){throw 'Unknown native recovery evidence; preserve hold'}
+ $holds=@();$hashes=@{}
+ try {
+  foreach($name in $names){
+   $file=Join-Path $Directory $name
+   if((Get-Item -LiteralPath $file).Length -gt 4194304){throw 'Native recovery evidence oversized'}
+   $holds+=@([IO.File]::Open($file,'Open','Read','Read'))
+   $hashes[$name]=(Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+  }
+  $request=Get-Content -LiteralPath (Join-Path $Directory 'intent.json') -Raw -Encoding UTF8|ConvertFrom-Json
+  $deployment=Get-Content -LiteralPath (Join-Path $Directory 'deployment-intent.json') -Raw -Encoding UTF8|ConvertFrom-Json
+  $failure=Get-Content -LiteralPath (Join-Path $Directory 'deployment-unresolved.json') -Raw -Encoding UTF8|ConvertFrom-Json
+  $unresolved=Get-Content -LiteralPath (Join-Path $Directory 'unresolved.json') -Raw -Encoding UTF8|ConvertFrom-Json
+  if($request.schema -ne 1 -or $request.authorizedSid -cne $sid -or $deployment.sid -cne $sid -or
+    $request.manifestSha256 -cnotmatch '^[a-f0-9]{64}$' -or
+    [IO.Path]::GetFullPath($request.journalDirectory) -ine $Directory -or
+    [IO.Path]::GetFileName($Directory) -cnotmatch ('^native-'+$request.manifestSha256+'-[a-f0-9]{32}$')){throw 'Native recovery actor/path binding mismatch'}
+  foreach($row in @($deployment,$failure,$unresolved)){if($row.manifestSha256 -cne $request.manifestSha256){throw 'Native recovery evidence binding mismatch'}}
+  if($deployment.status -cne 'DEPLOYMENT_INTENT' -or $unresolved.status -cne 'UNKNOWN' -or
+    $failure.status -cne 'FAILURE' -or $failure.operationCompleted -isnot [bool] -or !$failure.operationCompleted -or
+    $failure.hresult -cnotmatch '^[89A-F][A-F0-9]{7}$'){throw 'Native failure is not terminal; preserve UNKNOWN hold'}
+  $activity=[guid]::Empty
+  if(![guid]::TryParse([string]$failure.activityId,[ref]$activity) -or $activity -eq [guid]::Empty){throw 'Native terminal activity missing'}
+  $null=Read-NativeUpdateGraph $request
+  # PowerShell 7 deserializes ISO JSON dates as DateTime; 5.1 keeps strings.
+  # Preserve the UTC kind rather than round-tripping a localized date string.
+  if($request.waiterBirth -is [DateTime]){
+   if($request.waiterBirth.Kind -eq [DateTimeKind]::Unspecified){throw 'Native waiter birth lacks a timezone'}
+   $waiterBirth=[DateTimeOffset]$request.waiterBirth
+  }else{
+   if([string]$request.waiterBirth -notmatch '(?:Z|[+-]\d{2}:\d{2})$'){throw 'Native waiter birth lacks a timezone'}
+   $waiterBirth=[DateTimeOffset]::Parse([string]$request.waiterBirth)
+  }
+  $waiter=Get-Process -Id $request.waiterPid -ErrorAction SilentlyContinue
+  if($waiter -and ([DateTimeOffset]$waiter.StartTime).ToUniversalTime() -eq $waiterBirth.ToUniversalTime()){throw 'Native historical waiter still alive'}
+  $packages=@(Get-AppxPackage -Name $request.identity|Where-Object{$_.Name -ceq $request.identity})
+  if($packages.Count -ne 1){throw 'Native registered package ambiguous'}
+  $package=$packages[0]
+  $registeredVersion=[Version]$package.Version
+  if($package.PackageFullName -cne $ExpectedPackageFullName -or $package.Publisher -cne $request.publisher -or
+    $package.PackageFamilyName -cne $request.familyName -or $package.Status.ToString() -cne 'Ok' -or
+    $package.Architecture.ToString() -cne 'X64' -or $package.IsDevelopmentMode -ne $false -or
+    $registeredVersion -le [Version]$request.currentVersion -or $registeredVersion -le [Version]$request.version){throw 'Native verified newer registration not established'}
+  $resources=@(Get-AppxPackage -PackageTypeFilter Resource|Where-Object{$_.PackageFamilyName -ceq $request.familyName})
+  if($resources.Count){throw 'Native recovery requires a complete single-package registration'}
+  $signature=Join-Path $package.InstallLocation 'AppxSignature.p7x'
+  $holds+=@([IO.File]::Open($signature,'Open','Read','Read'))
+  if((Get-FileHash -LiteralPath $signature -Algorithm SHA256).Hash.ToLowerInvariant() -cne $ExpectedSignatureSha256){throw 'Native registered signature binding mismatch'}
+  $result=@{schema=1;status='SUPERSEDED_TERMINAL_FAILURE';producedAt=[DateTime]::UtcNow.ToString('o');
+   manifestSha256=$request.manifestSha256;authorizedSid=$sid;historicalBaseline=$request.currentVersion;historicalTarget=$request.version;
+   historicalSourceSha256=$request.sourceSha256;activityId=$failure.activityId;hresult=$failure.hresult;
+   registeredPackage=$package.PackageFullName;registeredVersion=$package.Version.ToString();registeredSignatureSha256=$ExpectedSignatureSha256;
+   fileSha256=$hashes;reconcilerSha256=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'native-package-update.ps1')).Hash.ToLowerInvariant();
+   installation='NOT_ATTEMPTED';historicalOutcome='FAILURE_PRESERVED';reason='TERMINAL_FAILURE_SUPERSEDED_BY_VERIFIED_NEWER_REGISTRATION'}
+  if($Apply){
+   $current=@(Get-AppxPackage -Name $request.identity|Where-Object{$_.Name -ceq $request.identity})
+   if($current.Count -ne 1 -or $current[0].PackageFullName -cne $ExpectedPackageFullName -or $current[0].Status.ToString() -cne 'Ok'){throw 'Native registration changed during reconciliation'}
+   if(Test-Path -LiteralPath (Join-Path $Directory 'reconciled.json')){throw 'Native reconciliation already exists; preserve prior receipt'}
+   Write-NativeUpdateReceipt @{directory=$Directory} 'reconciled.json' $result
+  }
+  return $result
+ } finally {foreach($hold in $holds){$hold.Dispose()}}
+}
+
 function Start-NativeUpdateSuccessor($Context, $Package) {
  $r=$Context.request
  if(!(Test-NativeUpdateInstalled $Context $Package)){throw 'Native successor graph not established'}

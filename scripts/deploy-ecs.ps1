@@ -82,6 +82,14 @@ param(
   [switch]$UpdateSetup,
   [switch]$VerifyPublicDownload,
   [switch]$Latest,
+  [string]$NativeUpdateFrom = '',
+  [switch]$NativePublishOnly,
+  [string]$ExpectedVersion = '',
+  [string]$ExpectedChannelSha256 = '',
+  [string]$RecoveryMsix = '',
+  [string]$NativeUserData = '',
+  [string]$ProfileSampleManifest = '',
+  [string]$CriticalFileManifest = '',
   [string]$Commit = '',
   [string]$BuildCache = 'D:\repo\deliverables\cache\desktop-inputs',
   [string]$BuildPython = '',
@@ -103,6 +111,19 @@ $script:releaseEnvironment = @{}
 $script:sourceLease = $null
 $script:sourceOwner = $null
 $script:sourceRecreated = $false
+$script:nativePreflight=$null
+$script:SourceBinding=$null
+function Assert-NativeReleaseOptions {
+  if(!$NativeUpdateFrom){return}
+  if(!$NativePublishOnly -or $BuildMode -cne 'Prod' -or !$SkipLocalInstall -or $Latest -or $BuildOnly -or $LocalOnly -or
+     $DesktopOnly -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly){
+    throw 'Native release requires NativePublishOnly, explicit Prod, SkipLocalInstall and exact source; incompatible release modes are forbidden.'
+  }
+  if(($Commit -cnotmatch '^[a-f0-9]{40}$' -and (!$NativePublishOnly -or $SourceCommit -cnotmatch '^[a-f0-9]{40}$')) -or $ExpectedChannelSha256 -cnotmatch '^[a-f0-9]{64}$' -or
+     $NativeUpdateFrom -cnotmatch '^\d+\.\d+\.\d+\.0$' -or $ExpectedVersion -cnotmatch '^\d+\.\d+\.\d+\.0$' -or
+     [Version]$ExpectedVersion -le [Version]$NativeUpdateFrom -or !$RecoveryMsix -or !$NativeUserData -or
+     !$ProfileSampleManifest -or !$CriticalFileManifest){throw 'Native release requires bound baseline/target, pointer SHA256, recovery package, user data and profile manifests.'}
+}
 function Get-ProfileFileHolders([string[]]$Files) {
   if(-not ('SemantierProfileLocks' -as [type])) {
     Add-Type -TypeDefinition @'
@@ -432,12 +453,17 @@ function Assert-StageInactive($Owner) {
   $processes=@(Get-CimInstance Win32_Process -ErrorAction Stop)
   foreach($process in $processes){
     if($process.ProcessId -eq $PID){continue}
+    # Native Git can leave this operator's Windows console host alive. It owns
+    # no source/cache bytes; keep all other child and previous-owner checks.
+    if($IsWindows -and $Owner.pid -eq $PID -and $process.ParentProcessId -eq $PID -and
+      $process.ExecutablePath -ieq (Join-Path $env:WINDIR 'System32/conhost.exe') -and
+      (!$process.CommandLine -or $process.CommandLine.IndexOf($Owner.source,[StringComparison]::OrdinalIgnoreCase) -lt 0)){continue}
     if(($process.ProcessId -eq $Owner.pid -and $process.CreationDate.ToUniversalTime().ToString('o') -ceq $Owner.started) -or
        ($process.ParentProcessId -eq $Owner.pid -and $process.CreationDate.ToUniversalTime() -ge [datetime]$Owner.started) -or
        ($process.ExecutablePath -and ($process.ExecutablePath.StartsWith($Owner.source+'\',[StringComparison]::OrdinalIgnoreCase) -or
          $process.ExecutablePath.StartsWith($Owner.cache+'\',[StringComparison]::OrdinalIgnoreCase))) -or
        ($process.CommandLine -and $process.CommandLine.IndexOf($Owner.source,[StringComparison]::OrdinalIgnoreCase) -ge 0)){
-      throw 'Stage may have active children or an active previous operator; cleanup/recovery deferred.'
+      throw "Stage may have active children or an active previous operator ($($process.ProcessId) $($process.Name)); cleanup/recovery deferred."
     }
   }
 }
@@ -866,7 +892,7 @@ function Ssh([string]$Command) {
   }
   return ($text -join "`n")
 }
-function Transfer-Sftp([string]$LocalFile, [string]$RemoteFile, [switch]$Download) {
+function Transfer-Sftp([string]$LocalFile, [string]$RemoteFile, [switch]$Download, [switch]$Overwrite) {
   if($LocalFile -match '[\r\n"]' -or $RemoteFile -match '[\r\n"]'){throw 'Invalid SFTP filename.'}
   if(!$Download) {
     # Windows OpenSSH reput requires the remote file to exist. Create only a
@@ -875,7 +901,7 @@ function Transfer-Sftp([string]$LocalFile, [string]$RemoteFile, [switch]$Downloa
     $null=Ssh "set -eu; if test ! -e '$RemoteFile'; then umask 077; : > '$RemoteFile'; fi; test -f '$RemoteFile'; test ! -L '$RemoteFile'"
   }
   $local=$LocalFile.Replace('\','/').Replace('[','\[').Replace(']','\]').Replace('*','\*').Replace('?','\?')
-  $command=if($Download){'get "'+$RemoteFile+'" "'+$local+'"'}else{'reput "'+$local+'" "'+$RemoteFile+'"'}
+  $command=if($Download){'get "'+$RemoteFile+'" "'+$local+'"'}elseif($Overwrite){'put "'+$local+'" "'+$RemoteFile+'"'}else{'reput "'+$local+'" "'+$RemoteFile+'"'}
   $batch=Join-Path $Output ('sftp-'+[Guid]::NewGuid().ToString('N')+'.txt')
   [IO.File]::WriteAllText($batch,"progress`n"+$command+"`nbye`n",$utf8)
   try {
@@ -899,7 +925,9 @@ function Upload([string]$Path, [string]$RemoteFile) {
   $remoteHash=Ssh "if test -f '$RemoteFile'; then sha256sum '$RemoteFile' | cut -d' ' -f1; fi"
   if($remoteHash -ceq $localHash) {Report-Status ('Reusing verified upload: '+[IO.Path]::GetFileName($Path));return}
   Report-Status ("Uploading {0} ({1:N1} MiB)" -f [IO.Path]::GetFileName($Path), ((Get-Item -LiteralPath $Path).Length / 1MB))
-  Transfer-Sftp $Path $RemoteFile
+  # Changed control files have different prefixes; reput may only resume the
+  # same immutable package bytes. Replace these small owned stage files whole.
+  Transfer-Sftp $Path $RemoteFile -Overwrite:($NativeUpdateFrom -and [IO.Path]::GetExtension($Path) -in @('.py','.json'))
   $remoteHash=Ssh "sha256sum '$RemoteFile' | cut -d' ' -f1"
   if($remoteHash -cne $localHash){throw 'Uploaded file hash mismatch.'}
   Complete-Checkpoint ('upload-'+[IO.Path]::GetFileName($Path))
@@ -1379,6 +1407,7 @@ function Build-CommitPackage {
   $source=if($record){[string]$record.source}else{$BuildSource}
   $null=Assert-LocalWindowsPath $source
   Initialize-LocalBuildSource $source $Commit
+  if($script:nativePreflight){Write-RunEvent @{type='native-preflight';preflight=$script:nativePreflight;at=[DateTime]::UtcNow.ToString('o')}}
   Reset-StalePreparation (Join-Path $Output 'desktop-job\prepared.json')
   if(!$record){
     $next=& (Join-Path $PSScriptRoot 'next-windows-build-version.ps1') -State $VersionState -SourceCommit $Commit
@@ -1530,6 +1559,8 @@ function Publish-IndependentSetup {
   }
 }
 try {
+if($NativeUpdateFrom){Assert-NativeReleaseOptions}
+if($NativePublishOnly -and !$NativeUpdateFrom){throw '-NativePublishOnly requires the bound native release preflight.'}
 if($Latest){
   if($Commit -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly -or $PSBoundParameters.ContainsKey('Msix')){
     throw '-Latest is for a Runtime-pinned commit build only; do not combine with -Commit, Setup, preflight-only or a fixed MSIX.'
@@ -1542,6 +1573,14 @@ if($BuildOnly -and (!$Commit -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or
 if($SkipLocalInstall -and ($BuildOnly -or $LocalOnly -or $DesktopOnly -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly)){throw '-SkipLocalInstall is for MSIX publication only.'}
 $script:explicitOutput=$PSBoundParameters.ContainsKey('Output')
 Initialize-ReleasePaths
+if($NativeUpdateFrom -and !$WhatIfPreference){
+  . (Join-Path $PSScriptRoot 'deploy-ecs-channel1.ps1')
+  $script:sshOptions=@('-o','ConnectTimeout=15','-o','StrictHostKeyChecking=yes','-o','ServerAliveInterval=15','-o','ServerAliveCountMax=3')
+  if($IdentityFile){$script:sshOptions+=@('-i',(Resolve-Path -LiteralPath $IdentityFile).Path)}
+  if(!(Get-EcsSshPassword $CredentialsEnv)){$script:sshOptions+=@('-o','BatchMode=yes')}
+  if(Test-NativeCompletedRelease){return}
+  $script:nativePreflight=Test-NativeReleasePreflight
+}
 if($Commit){
   if(!$NewRun -and !$script:explicitOutput){
     foreach($candidate in (Get-ChildItem -LiteralPath (Split-Path -Parent $Output) -Directory -Filter 'ecs-deploy-*' | Sort-Object LastWriteTime -Descending)){
@@ -1587,6 +1626,7 @@ if($Commit){
   }
   if(!$AcceptanceNodeModules){$AcceptanceNodeModules=Join-Path $built.source 'node_modules'}
   $Msix=$built.msix;$ExpectedInputSha256=$built.sha256;$SourceCommit=$Commit;$Version=$built.version+'.0'
+  if($NativeUpdateFrom -and $Version -cne $ExpectedVersion){throw 'Built version differs from the explicit native release target.'}
   $buildRequest=Get-Content -LiteralPath $built.request -Raw | ConvertFrom-Json
   $BuildId=$buildRequest.buildId
 }
@@ -1602,6 +1642,7 @@ $script:sshOptions = @('-o','ConnectTimeout=15','-o','StrictHostKeyChecking=yes'
 if ($IdentityFile) { $script:sshOptions += @('-i',(Resolve-Path -LiteralPath $IdentityFile).Path) }
 if($SetupOnly -or $UpdateSetup){Publish-IndependentSetup;return}
 $plan = [ordered]@{input=$Msix;version=$Version;sourceCommit=$SourceCommit;ssh=$SshTarget;
+  buildId=$BuildId;
   remoteRoot=$RemoteRoot;fixedMsixUrl="$PublicBase/releases/SemantierAgent.msix";
   profileBackup=(Join-Path $Output 'profile-backup');output=$Output;
   mode=$BuildMode;verification=($(if($BuildMode -eq 'Beta'){'SKIPPED_BETA'}else{'REQUIRED_PROD'}));stages=@('verify existing input','sign one MSIX','check independently published Setup',
@@ -1658,6 +1699,9 @@ if (!$LocalOnly) {
   $null=Ssh "set -eu; test -d '$RemoteRoot/releases'; test ! -L '$RemoteRoot'; command -v sha256sum"
 }
 $script:runBinding=([ordered]@{mode=$BuildMode;skipLocalInstall=[bool]$SkipLocalInstall;inputSha256=$ExpectedInputSha256;source=$SourceCommit;version=$Version;build=$BuildId;
+  nativeUpdateFrom=$NativeUpdateFrom;expectedVersion=$ExpectedVersion;expectedChannelSha256=$ExpectedChannelSha256;
+  nativePublishOnly=[bool]$NativePublishOnly;
+  nativeUserData=$NativeUserData;recoveryMsix=$RecoveryMsix;profileSampleManifest=$ProfileSampleManifest;criticalFileManifest=$CriticalFileManifest;
   signer=$Thumbprint;target=$SshTarget;root=$RemoteRoot;origin=$PublicBase;profile=$UserProfile;
   setupContract='verify-remote-expected-sha256-v2';channelContract='current-only-channel-metadata-v1'} | ConvertTo-Json -Compress)
 if (!$Commit -and !$NewRun -and !$PSBoundParameters.ContainsKey('Output')) {
@@ -1682,6 +1726,19 @@ $receipt=[ordered]@{result='IN_PROGRESS';mode=$BuildMode;plan=$plan;unsignedSha2
   reused=@('complete MSIX','npm dependencies','node-pty','Electron inputs','Python runtime/venv','uv cache','.NET/NuGet cache');
   signedMsix=$null;sha256=$null;localAcceptance=$null;publication='NOT_STARTED';
   h3='NOT_RUN';publicReadback='NOT_RUN';cleanup='NOT_STARTED';landingCutover='NOT_VERIFIED'}
+if($NativeUpdateFrom){$receipt.nativePreflight=$script:nativePreflight;$receipt.llmCalls=0}
+if($NativeUpdateFrom -and !$Commit){
+  $receipt.tooling=@{applicationCommit=$SourceCommit;toolingCommit=$script:SourceBinding.toolingHermesHead;
+    source=$script:SourceBinding;operatorSha256=(Hash $PSCommandPath);
+    publisherSha256=(Hash (Join-Path $PSScriptRoot 'releases/channel1.py'));channel1Sha256=(Hash (Join-Path $PSScriptRoot 'deploy-ecs-channel1.ps1'))}
+}
+$invocationTooling=if($receipt.Contains('tooling')){$receipt.tooling}else{$null}
+if($NativeUpdateFrom -and (Test-Path -LiteralPath (Join-Path $Output 'result.json'))){
+  $priorOutcome=Get-Content -LiteralPath (Join-Path $Output 'result.json') -Raw | ConvertFrom-Json
+  if($priorOutcome.result -in @('FAIL','STOP')){
+    $receipt.previousFailure=@{result=$priorOutcome.result;error=$priorOutcome.error;finishedAt=$priorOutcome.finishedAt}
+  }
+}
 if($Commit -and $built.PSObject.Properties['tooling']){$receipt.tooling=$built.tooling}
 $script:checkpoints=@{}
 $checkpointPath=Join-Path $Output 'checkpoints.jsonl'
@@ -1708,6 +1765,10 @@ if($saved) {
     (Hash (Join-Path $Output 'SemantierAgent.msix')) -ceq $previous.sha256) {
     $receipt.sha256=$previous.sha256;$script:checkpoints['signed']='imported-verified-hash'
   }
+}
+if($NativeUpdateFrom){
+  $receipt.nativePreflight=$script:nativePreflight
+  if($invocationTooling){$receipt.tooling=$invocationTooling}
 }
 $receipt.result='IN_PROGRESS'
 Write-RunEvent @{type='checkpoint';stage='resume-ready';binding=$script:runBinding;completed=$script:checkpoints;receipt=$receipt}
@@ -1916,6 +1977,23 @@ mkdir -m 700 "$stage"
     $receipt.result='BETA_PUBLISHED_UNVERIFIED';$receipt.h3='SKIPPED_BETA';$receipt.publicReadback='SKIPPED_BETA';$receipt.cleanup='SKIPPED_BETA';Complete-Checkpoint 'finished';return
   }
   $null=Ssh $remoteProof
+  if($NativeUpdateFrom){
+    $receipt.result='PUBLISHED_122_CLIENT_NOT_YET_VERIFIED'
+    $receipt.localAcceptance='NOT_RUN_BEFORE_PUBLICATION'
+    Save-Json $receipt (Join-Path $Output 'result.json')
+    $metadata=Get-Content -LiteralPath (Join-Path $Output 'channel1-metadata.json') -Raw | ConvertFrom-Json
+    $receipt.nativePublicAfterPointer=Test-NativePublic $metadata.manifest $signed -Active
+    if((Hash $Msix) -cne $ExpectedInputSha256 -or (Hash $signed) -cne $hash){throw 'Local package changed during publication.'}
+    $receipt.publicationVerification='PASS'
+    $receipt.h3='PUBLIC_H3_RANGE_PASS'
+    $receipt.publicReadback='H2/H3 Range bytes match signed package; complete ECS stable/immutable disk SHA256 verified; no full public download'
+    $receipt.nativeAcceptance='NOT_RUN_OWNER_MANUAL'
+    $receipt.publicationStage='PUBLISHED_REMOTE_VERIFIED_CLIENT_MANUAL'
+    $receipt.cleanup='RECOVERY_AND_121_ARTIFACTS_RETAINED'
+    $receipt.installedVersion=(Get-AppxPackage -Name $identity).Version.ToString()
+    Complete-Checkpoint 'finished'
+    return
+  }
   Report-Status 'Verifying public H3 status and package size with HEAD; no package body download.'
   Test-PublicMsix
   $receipt.h3='PUBLIC_H3_HEAD_STATUS_SIZE_PASS'
@@ -2005,6 +2083,12 @@ const fs=require('node:fs');
   if($landingReady -and !$SkipOldCleanup){Complete-Checkpoint 'finished'}
 } catch {
   $receipt.result='FAIL';$receipt.error=$_.Exception.Message
+  if($NativeUpdateFrom -and $receipt.Contains('nativeRecovery')){
+    try {
+      $receipt.pointerRollback=Ssh "python3 -B '$($receipt.nativeRecovery)/channel1.py' rollback --root '$RemoteRoot' --recovery '$($receipt.nativeRecovery)'"
+    } catch {$receipt.pointerRollback='STOP: '+$_.Exception.Message}
+    $receipt.osDowngrade='NOT_ATTEMPTED';$receipt.recovery='Preserve installed package and user data; pointer rollback only restores availability to future clients.'
+  }
   Report-Status ('FAILED: '+$_.Exception.Message)
   throw
 } finally {
@@ -2021,15 +2105,17 @@ const fs=require('node:fs');
 }
 
 } catch {
-  if($script:sourceOwner){
+  if($script:sourceOwner -or ($NativeUpdateFrom -and !$WhatIfPreference)){
+    if(!(Test-Path -LiteralPath $Output)){New-Item -ItemType Directory -Path $Output | Out-Null}
     $failurePath=Join-Path $Output 'result.json'
     if(Test-Path -LiteralPath $failurePath){
       $failure=Get-Content -LiteralPath $failurePath -Raw | ConvertFrom-Json
     } else {
       $failure=[pscustomobject]@{commit=$Commit;binding=$script:SourceBinding;signing='NOT_RUN';installation='NOT_RUN';publication='NOT_RUN'}
     }
-    $failure | Add-Member -NotePropertyName result -NotePropertyValue 'FAIL' -Force
+    $failure | Add-Member -NotePropertyName result -NotePropertyValue $(if($NativeUpdateFrom){'STOP'}else{'FAIL'}) -Force
     $failure | Add-Member -NotePropertyName error -NotePropertyValue $_.Exception.Message -Force
+    if($script:nativePreflight){$failure | Add-Member -NotePropertyName nativePreflight -NotePropertyValue $script:nativePreflight -Force}
     Save-Json $failure $failurePath
   }
   throw
@@ -2048,6 +2134,9 @@ const fs=require('node:fs');
     }
   } finally {
     if($script:sourceLease){$script:sourceLease.Dispose();$script:sourceLease=$null}
-    foreach($name in $script:releaseEnvironment.Keys){[Environment]::SetEnvironmentVariable($name,$script:releaseEnvironment[$name],'Process')}
+    foreach($name in $script:releaseEnvironment.Keys){
+      if($null -eq $script:releaseEnvironment[$name]){[Environment]::SetEnvironmentVariable($name,[NullString]::Value,'Process')}
+      else{[Environment]::SetEnvironmentVariable($name,$script:releaseEnvironment[$name],'Process')}
+    }
   }
 }
