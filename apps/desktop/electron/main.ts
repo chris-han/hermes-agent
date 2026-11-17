@@ -1,5 +1,7 @@
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process'
 
+import { formatApiRequestFailure } from './api-request-failure'
+import { createFileSyncIpc } from './file-sync-ipc'
 import type { GatewayEndpoint } from './local-gateway'
 import {
   configurePythonGatewayTicketClient,
@@ -16744,19 +16746,12 @@ async function handleHermesApiRequest(request) {
   return response
 }
 
-// Format an api-request failure for desktop.log. The renderer only ever sees
-// the invoke rejection; the real stack lives here in main, so persist it
-// before rethrowing. Clamp: paths and error detail must not bloat the log.
-function formatApiRequestFailure(
-  request: { method?: string; path?: string } | null | undefined,
-  error: unknown
-): string {
-  const method = String(request?.method ?? 'GET').toUpperCase()
-  const path = String(request?.path ?? '(no path)').slice(0, 500)
-  const detail = error instanceof Error ? (error.stack ?? error.message) : String(error)
+const personalFileSync = createFileSyncIpc(senderId => {
+  const route = windowConnectionRoutes.get(senderId)
+  const source = readDesktopConnectionsRegistry().connections.find(item => item.id === route?.connectionId)
 
-  return `[hermes:api ${method} ${path}] ${detail}`.slice(0, 6000)
-}
+  return source?.transport === 'semantier-workspace-http' ? new URL(source.url).origin : null
+})
 
 registerSemantierWorkspaceIpc((origin, authenticated) => {
   for (const source of readDesktopConnectionsRegistry().connections) {
@@ -16774,7 +16769,7 @@ registerSemantierWorkspaceIpc((origin, authenticated) => {
 
     broadcastConnectionsChanged({ connectionId: source.id, reason: 'account-changed', authenticated })
   }
-})
+}, origin => personalFileSync.accountChanging(origin))
 
 ipcMain.handle('hermes:api', async (event, request) => {
   const ownRoute = windowConnectionRoutes.get(event.sender.id)
@@ -18467,6 +18462,7 @@ app.on('open-url', (event, url) => {
 })
 
 app.whenReady().then(async () => {
+  void personalFileSync.restore().catch(() => { /* Settings exposes reconnection; never reset pair state. */ })
   journeyObservations = new JourneyObservations(app.getPath('userData'), process.env.SEMANTIER_CLOUD_PUBLIC_ORIGIN ?? '', () => semantierObservations.status().journeyEnabled, (input, init) => electronNet.fetch(input, init), app.getVersion())
   void journeyObservations.firstOpen()
   // Post-update relaunch detection (App Installer arm): when the previous
@@ -18821,11 +18817,15 @@ function quitIfNoSurfaceLeft() {
   }
 }
 
+const holdQuitForWorkspaceWork = (event: Electron.Event) => heldQuitForActiveWork(event) || personalFileSync.holdQuit(
+  event, () => app.quit(), () => dialog.showErrorBox('File Sync', 'The sync process has not stopped. Retry after pausing File Sync.')
+)
+
 app.on('before-quit', event => {
   // Runs ahead of every teardown below, so "Keep Running" leaves the app
   // exactly as it was: a held quit is not a quit in progress, and the
   // overlay-suppression latch must not leak into the next close (#130810).
-  if (heldQuitForActiveWork(event)) {
+  if (holdQuitForWorkspaceWork(event)) {
     appQuitting = false
     quitInProgress = false
 

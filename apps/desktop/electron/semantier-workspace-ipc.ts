@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 
 import { BrowserWindow, ipcMain, session } from 'electron'
 
-import { assertWorkspaceScope, createSemantierWorkspaceClient, requireNativeCompletion, requireWorkspaceCompletion, WORKSPACE_USER_STOP_ERROR, type WorkspaceIdentity, type WorkspaceScope } from './semantier-workspace-client'
+import { assertWorkspaceScope, createSemantierWorkspaceClient, requireNativeCompletion, requireWorkspaceCompletion, WORKSPACE_USER_STOP_ERROR, type WorkspaceHistory, type WorkspaceIdentity, type WorkspaceMainContext, type WorkspaceNativeCancellation, type WorkspaceNativeSnapshot, type WorkspaceNativeSubmission, type WorkspaceScope, type WorkspaceWinmanProfile } from './semantier-workspace-client'
 
 export { assertWorkspaceScope } from './semantier-workspace-client'
 export type { WorkspaceScope } from './semantier-workspace-client'
@@ -11,17 +11,17 @@ export interface DesktopWorkspaceApi {
   identity: (origin: string) => Promise<WorkspaceIdentity>
   login: (origin: string) => Promise<WorkspaceIdentity>
   logout: (origin: string) => Promise<void>
-  ensureWinmanChat: (origin: string, scope: WorkspaceScope) => Promise<import('./semantier-workspace-client').WorkspaceWinmanProfile>
-  createSession: (origin: string, scope: WorkspaceScope, label: string, requestIdentity: string) => Promise<import('./semantier-workspace-client').WorkspaceHistory>
+  ensureWinmanChat: (origin: string, scope: WorkspaceScope) => Promise<WorkspaceWinmanProfile>
+  createSession: (origin: string, scope: WorkspaceScope, label: string, requestIdentity: string) => Promise<WorkspaceHistory>
   sessions: (origin: string, scope: WorkspaceScope) => Promise<{ sessions: Array<{ key: string; title?: string }> }>
-  history: (origin: string, scope: WorkspaceScope, sessionId: string, afterId?: string) => Promise<import('./semantier-workspace-client').WorkspaceHistory>
-  nativeContext: (origin: string, scope: WorkspaceScope, sessionId: string) => Promise<import('./semantier-workspace-client').WorkspaceMainContext | null>
-  bindNativeContext: (origin: string, scope: WorkspaceScope, sessionId: string, originalSessionKey: string) => Promise<import('./semantier-workspace-client').WorkspaceMainContext>
-  sendNative: (origin: string, scope: WorkspaceScope, sessionId: string, message: string, requestId: string, bindingId: string) => Promise<import('./semantier-workspace-client').WorkspaceNativeSnapshot>
-  cancelNative: (origin: string, scope: WorkspaceScope, sessionId: string, admissionId: string) => Promise<import('./semantier-workspace-client').WorkspaceNativeCancellation>
-  nativeHistory: (origin: string, scope: WorkspaceScope, sessionId: string) => Promise<import('./semantier-workspace-client').WorkspaceNativeSnapshot>
+  history: (origin: string, scope: WorkspaceScope, sessionId: string, afterId?: string) => Promise<WorkspaceHistory>
+  nativeContext: (origin: string, scope: WorkspaceScope, sessionId: string) => Promise<WorkspaceMainContext | null>
+  bindNativeContext: (origin: string, scope: WorkspaceScope, sessionId: string, originalSessionKey: string) => Promise<WorkspaceMainContext>
+  sendNative: (origin: string, scope: WorkspaceScope, sessionId: string, message: string, requestId: string, bindingId: string) => Promise<WorkspaceNativeSnapshot>
+  cancelNative: (origin: string, scope: WorkspaceScope, sessionId: string, admissionId: string) => Promise<WorkspaceNativeCancellation>
+  nativeHistory: (origin: string, scope: WorkspaceScope, sessionId: string) => Promise<WorkspaceNativeSnapshot>
   interrupt: (origin: string, scope: WorkspaceScope, sessionId: string, requestId: string) => Promise<{ cancel_requested: boolean; request_id?: string }>
-  send: (origin: string, scope: WorkspaceScope, sessionId: string, message: string, requestIdentity: string) => Promise<import('./semantier-workspace-client').WorkspaceHistory>
+  send: (origin: string, scope: WorkspaceScope, sessionId: string, message: string, requestIdentity: string) => Promise<WorkspaceHistory>
 }
 
 /** Cookies stay in an origin-owned Chromium jar, never in renderer payloads. */
@@ -35,10 +35,10 @@ export function workspace(origin: string) {
   return { owned, origin: canonicalOrigin, client: createSemantierWorkspaceClient(canonicalOrigin, owned.fetch.bind(owned)) }
 }
 
-export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string, authenticated: boolean) => void): void {
+export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string, authenticated: boolean) => void, beforeAccountChange?: (origin:string)=>Promise<void>): void {
   // Ephemeral ownership of this renderer's pending HTTP stream, never task state.
   const streams = new Map<string, { controller: AbortController; requestId: string }>()
-  const nativeStreams = new Map<string, { controller: AbortController; requestId: string; admission?: Promise<import('./semantier-workspace-client').WorkspaceNativeSubmission> }>()
+  const nativeStreams = new Map<string, { controller: AbortController; requestId: string; admission?: Promise<WorkspaceNativeSubmission> }>()
 
   const streamKey = (senderId: number, origin: string, scope: WorkspaceScope, sessionId: string) =>
     JSON.stringify([senderId, new URL(origin).origin, scope.userId, scope.workspaceId, scope.organizationId, sessionId])
@@ -70,12 +70,14 @@ export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string
   })
   ipcMain.handle('hermes:workspace:identity', (_event, origin: string) => workspace(origin).client.identity())
   ipcMain.handle('hermes:workspace:logout', async (_event, origin: string) => {
+    await beforeAccountChange?.(new URL(origin).origin)
     const { owned } = workspace(origin)
     await owned.clearStorageData()
     await owned.clearCache()
     onAccountChanged?.(new URL(origin).origin, false)
   })
   ipcMain.handle('hermes:workspace:login', async (_event, origin: string) => {
+    await beforeAccountChange?.(new URL(origin).origin)
     const target = workspace(origin)
 
     const win = new BrowserWindow({
@@ -166,7 +168,7 @@ export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string
     const key = streamKey(event.sender.id, origin, scope, sessionId)
 
     if (nativeStreams.has(key)) {throw new Error('A Native admission is already pending in this renderer.')}
-    const native: { controller: AbortController; requestId: string; admission?: Promise<import('./semantier-workspace-client').WorkspaceNativeSubmission> } = { controller: new AbortController(), requestId }
+    const native: { controller: AbortController; requestId: string; admission?: Promise<WorkspaceNativeSubmission> } = { controller: new AbortController(), requestId }
     nativeStreams.set(key, native)
 
     try {

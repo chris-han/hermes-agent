@@ -198,3 +198,21 @@ it('stops Native work by awaiting its original admission and cancelling that exa
   expect(fetch.mock.calls.filter(([url])=>url.endsWith('/cancel'))).toHaveLength(1)
   await expect(handler('hermes:workspace:interrupt')(event,'https://cloud.example',scope,'canonical-a','native-request')).resolves.toMatchObject({cancel_requested:false})
 })
+
+it('waits for File Sync to stop before logout can clear account cookies',async()=>{
+ const order:string[]=[]
+ const owned={fetch:vi.fn(),clearStorageData:vi.fn(async()=>{order.push('cookies')}),clearCache:vi.fn(async()=>{order.push('cache')})}
+ vi.mocked(session.fromPartition).mockReturnValue(owned as never);vi.mocked(ipcMain.handle).mockClear()
+ registerSemantierWorkspaceIpc(()=>{order.push('changed')},async()=>{order.push('sync-stopped')})
+ const handler=vi.mocked(ipcMain.handle).mock.calls.find(([name])=>name==='hermes:workspace:logout')![1]
+ await handler({} as never,'https://cloud.example')
+ expect(order).toEqual(['sync-stopped','cookies','cache','changed'])
+})
+it('refuses logout before cookie mutation if the sync process cannot stop',async()=>{
+ const owned={fetch:vi.fn(),clearStorageData:vi.fn(),clearCache:vi.fn()}
+ vi.mocked(session.fromPartition).mockReturnValue(owned as never);vi.mocked(ipcMain.handle).mockClear()
+ registerSemantierWorkspaceIpc(undefined,async()=>{throw new Error('child still alive')})
+ const handler=vi.mocked(ipcMain.handle).mock.calls.find(([name])=>name==='hermes:workspace:logout')![1]
+ await expect(handler({} as never,'https://cloud.example')).rejects.toThrow('child still alive')
+ expect(owned.clearStorageData).not.toHaveBeenCalled()
+})

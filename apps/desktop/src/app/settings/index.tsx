@@ -48,6 +48,7 @@ import { BILLING_VIEWS, BillingSettings, type BillingSubView } from './billing'
 import { deriveBillingView, useBillingState, useSubscriptionState } from './billing/use-billing-state'
 import { ConfigSettings } from './config-settings'
 import { SECTIONS } from './constants'
+import { FileSyncSettings } from './file-sync-settings'
 import { GatewaySettings } from './gateway-settings'
 import { KeybindSettings } from './keybind-settings'
 import { KEYS_VIEWS, KeysSettings, type KeysView } from './keys-settings'
@@ -70,6 +71,7 @@ import { vaultOwnerKey, VaultSettings } from './vault-settings'
 
 const SETTINGS_VIEWS: readonly SettingsViewId[] = [
   ...SECTIONS.map(s => `config:${s.id}` as SettingsViewId),
+  'file-sync',
   'providers',
   'gateway',
   // Legacy alias: the Connections page merged into Gateways. Kept in the enum
@@ -89,6 +91,7 @@ const SETTINGS_VIEWS: readonly SettingsViewId[] = [
 const SUBPAGE_VIEWS: Partial<Record<SettingsViewId, ComponentType<{ subpage?: string }>>> = {
   'config:appearance': AppearanceSettings,
   about: AboutSettings,
+  'file-sync':FileSyncSettings,
   // 'connections' renders the unified page too so the frame before the alias
   // redirect lands doesn't flash the fallback view.
   connections: GatewaySettings,
@@ -338,6 +341,7 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
             label: serviceCopy.title,
             onSelect: () => setActiveView('providers')
           },
+          {active:activeView==='file-sync',icon:RefreshCw,id:'file-sync',label:locale==='zh'?'文件同步':'File Sync',onSelect:()=>setActiveView('file-sync')},
           {
             active: activeView === 'gateway',
             icon: Globe,
@@ -417,7 +421,7 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
             }
           : group
       }),
-    [
+    [locale, 
       activeView,
       serviceCopy.advancedRuntime,
       serviceCopy.title,

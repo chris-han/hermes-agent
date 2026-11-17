@@ -325,3 +325,6 @@ native/fts5_cjk/*.so
 /pm/.lock.json.lock
 
 apps/desktop/.dist-build*
+
+# Pinned development filex binary/license/helper; prepared explicitly, never committed.
+apps/desktop/resources/filex/

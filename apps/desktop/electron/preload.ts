@@ -325,6 +325,12 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     discover: org => ipcRenderer.invoke('hermes:cloud:discover', org),
     agentSignIn: dashboardUrl => ipcRenderer.invoke('hermes:cloud:agent-sign-in', dashboardUrl)
   },
+  fileSync: {
+    status:()=>ipcRenderer.invoke('hermes:file-sync:status'),
+    choose:()=>ipcRenderer.invoke('hermes:file-sync:choose'),
+    pause:()=>ipcRenderer.invoke('hermes:file-sync:pause'),
+    resume:()=>ipcRenderer.invoke('hermes:file-sync:resume'),
+  },
   workspace: {
     identity: origin => ipcRenderer.invoke('hermes:workspace:identity', origin),
     login: origin => ipcRenderer.invoke('hermes:workspace:login', origin),
