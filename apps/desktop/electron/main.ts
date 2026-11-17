@@ -17213,7 +17213,8 @@ let updateWorkToken: unknown
 const updateWorkGuard = new UpdateWorkGuard(() => ({
   work: mergeActiveWork([...activeWorkByWebContents.values(), lastActiveWorkSeen]),
   revision: activeWorkRevision,
-  stopsWork: quitStopsBackendWork()
+  stopsWork: (process.platform === 'win32' && INSTALL_STAMP?.updateMechanism === 'app-installer') ||
+    quitStopsBackendWork()
 }))
 
 // Synchronous, webContents-independent cache of the most recent active-work

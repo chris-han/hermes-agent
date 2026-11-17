@@ -166,7 +166,7 @@ function Get-NativePackageIdentity([string]$Package) {
 }
 
 # Low-level supported API seam. Callers own authorization, durable intent and cleanup.
-function Invoke-BoundNativePackageUri([string[]]$Uris,[string[]]$Digests,[string]$Root,[int]$Minutes=25) {
+function Invoke-BoundNativePackageUri([string[]]$Uris,[string[]]$Digests,[string]$Root,[int]$Minutes=25,[bool]$ForceTargetAppShutdown=$false) {
  Add-Type -AssemblyName System.Runtime.WindowsRuntime
  $null=[Windows.Management.Deployment.PackageManager,Windows.Management.Deployment,ContentType=WindowsRuntime]
  $null=[Windows.Management.Deployment.AddPackageOptions,Windows.Management.Deployment,ContentType=WindowsRuntime]
@@ -174,6 +174,8 @@ function Invoke-BoundNativePackageUri([string[]]$Uris,[string[]]$Digests,[string
  $method=[Windows.Management.Deployment.PackageManager].GetMethod('AddPackageByUriAsync')
  if(!$method -or $Minutes -lt 1 -or $Minutes -gt 25 -or $Root -cnotin $Uris){throw 'Bounded native deployment API/root unavailable'}
  $options=[Windows.Management.Deployment.AddPackageOptions]::new()
+ # Only the explicit production handoff opts in after its active-work review.
+ if($ForceTargetAppShutdown){$options.ForceTargetAppShutdown=$true}
  $null=Set-NativeExpectedDigests $options $Uris $Digests
  $binding=@([System.WindowsRuntimeSystemExtensions].GetMethods()|Where-Object{$_.Name -ceq 'AsTask' -and $_.IsGenericMethodDefinition -and $_.GetGenericArguments().Count -eq 2 -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -ceq 'IAsyncOperationWithProgress`2'})
  if($binding.Count -ne 1){throw 'Native asynchronous binding unavailable'}

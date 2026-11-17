@@ -95,7 +95,7 @@ function Invoke-NativePackageUpdate($Context) {
  $start=[DateTime]::UtcNow.ToString('o')
  $uri=$request.base.TrimEnd('/')+'/'+$request.graph.root
  Write-NativeUpdateReceipt $Context 'deployment-intent.json' @{schema=1;status='DEPLOYMENT_INTENT';producedAt=$start;manifestSha256=$request.manifestSha256;uri=$uri;sid=$request.authorizedSid;session=$request.session}
- $deployment=Invoke-BoundNativePackageUri $uris $digests $uri 25
+ $deployment=Invoke-BoundNativePackageUri $uris $digests $uri 25 $true
  $deployment.manifestSha256=$request.manifestSha256
  if($deployment.status -cne 'SUCCESS'){
   Write-NativeUpdateReceipt $Context 'deployment-unresolved.json' $deployment

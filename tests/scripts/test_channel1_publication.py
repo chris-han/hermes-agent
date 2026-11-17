@@ -293,3 +293,31 @@ def test_legacy_descriptor_and_metadata_remain_after_native_promotion(tmp_path):
     assert old_path.read_bytes()==old_body
     assert descriptor.read_bytes()==b'legacy descriptor preserved'
     assert json.loads(pointer.read_bytes())['head'] is None
+
+@pytest.mark.platforms('windows')
+def test_production_native_options_close_only_target_after_review(tmp_path):
+    """Real SDK options + production caller; intercept only OS reads/deployment, never install."""
+    source=Path(__file__).resolve().parents[2]/'apps/desktop/scripts/native-package-update.ps1'
+    script=tmp_path/'native-options.ps1'
+    script.write_text(r'''
+param($Source,$Directory)
+$ErrorActionPreference='Stop'
+. $Source
+$binding=Get-Content (Join-Path (Split-Path -Parent $Source) 'native-package-digest.ps1') -Raw
+$call='$operation=$manager.AddPackageByUriAsync([Uri]$Root,$options)'
+if(!$binding.Contains($call)){throw 'Native SDK boundary changed; inspect before testing'}
+$replacement='$script:CapturedOptions=$options; return @{status="SUCCESS";startedAt=[DateTime]::UtcNow.ToString("o");producedAt=[DateTime]::UtcNow.ToString("o");activityId="11111111-1111-1111-1111-111111111111";isRegistered=$false}'
+. ([scriptblock]::Create($binding.Replace($call,$replacement)))
+function Get-AppxPackage { [pscustomobject]@{Name='Fixture';PackageFullName='fixture-baseline';Publisher='CN=Fixture'} }
+$r=@{identity='Fixture';fullName='fixture-baseline';publisher='CN=Fixture';base='https://localhost:1';graph=@{root='releases/channel-builds/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee/fixture.msix'};manifestSha256=('a'*64);authorizedSid='fixture';session=1}
+$rows=@(@{key=$r.graph.root;nativeDigest=[Convert]::ToBase64String((,[byte]1*32))})
+Invoke-NativePackageUpdate @{request=$r;rows=$rows;directory=$Directory}
+if(!$script:CapturedOptions.ForceTargetAppShutdown){throw 'Production native update must opt into target-package shutdown'}
+if($script:CapturedOptions.ForceAppShutdown -or $script:CapturedOptions.ForceUpdateFromAnyVersion){throw 'Dependency shutdown or downgrade was enabled'}
+$null=Invoke-BoundNativePackageUri @('https://localhost:1/fixture.msix') @([Convert]::ToBase64String((,[byte]1*32))) 'https://localhost:1/fixture.msix' 1
+if($script:CapturedOptions.ForceTargetAppShutdown -or $script:CapturedOptions.ForceAppShutdown -or $script:CapturedOptions.ForceUpdateFromAnyVersion){throw 'Default SDK caller gained shutdown or downgrade authority'}
+'SDK_OPTIONS_ONLY_PASS_NO_DEPLOYMENT'
+''',encoding='utf-8')
+    result=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-File',str(script),str(source),str(tmp_path)],capture_output=True,text=True,timeout=30,check=False)
+    assert result.returncode==0,result.stdout+result.stderr
+    assert 'SDK_OPTIONS_ONLY_PASS_NO_DEPLOYMENT' in result.stdout
