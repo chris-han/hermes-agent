@@ -17,7 +17,7 @@ def _project(tmp_path: Path) -> tuple[Path, str]:
     (source / "pyproject.toml").write_text('[project]\nname="fixture"\nversion="1.2.3"\n', encoding="utf-8")
     (source / "package.json").write_text('{"workspaces": ["apps/desktop"]}', encoding="utf-8")
     (source / "package-lock.json").write_text('{"packages": {}}', encoding="utf-8")
-    (source / ".gitignore").write_text(".build/\napps/desktop/resources/filex/\n", encoding="utf-8")
+    (source / ".gitignore").write_text(".build/\n", encoding="utf-8")
     (source / "pm").mkdir()
     (source / "pm/lock.json").write_text(json.dumps({"schema": 1, "packages": {
         name: {"version": "1.0.0", "artifacts": {current_target(): {"url": "https://example.test/tool", "sha256": "a" * 64}}}
@@ -308,9 +308,6 @@ def test_guarded_bundle_reuses_payload_python_for_icons(tmp_path, monkeypatch):
     request = SimpleNamespace(source=source, commit=commit, work=tmp_path / 'work', cache=tmp_path / 'cache',
                               variant='bundled', target='win32-x64', workspaces=list, validate_channel=lambda: None)
     request.work.mkdir()
-    filex = source / 'apps/desktop/resources/filex/filex.exe'
-    filex.parent.mkdir(parents=True)
-    filex.write_bytes(b'fixture-owned preparation output')
     monkeypatch.setattr(desktop_toolchain, 'prepare_tools', lambda *args: (Path(sys.executable), Path(sys.executable), {'HERMES_DESKTOP_NATIVE_TOOLCHAIN': 'fixture', 'UV_CACHE_DIR': str(request.cache)}))
     def observed(cache, env, diagnostic):
         diagnostic.update(complete=True)
@@ -329,3 +326,15 @@ def test_guarded_bundle_reuses_payload_python_for_icons(tmp_path, monkeypatch):
     monkeypatch.setattr(module.PreparedDesktop, 'record', classmethod(record))
     module.prepare_in_worker(request)
     assert captured['icon_python'] == venv_python(source / 'apps/desktop/build/agent-payload/venv')
+
+
+def test_filex_preparation_is_required_for_semantier_windows_only(monkeypatch):
+    from types import SimpleNamespace
+    from scripts.bundles.desktop_prepare import requires_filex
+    monkeypatch.delenv("SEMANTIER_DESKTOP_VERSION", raising=False)
+    request = SimpleNamespace(target="win32-x64", channel_request=None)
+    assert not requires_filex(request)
+    request.channel_request = {"semantierScope": "semantier-windows-x64/v1"}
+    assert requires_filex(request)
+    request.target = "darwin-x64"
+    assert not requires_filex(request)

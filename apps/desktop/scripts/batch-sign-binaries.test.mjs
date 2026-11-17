@@ -155,6 +155,9 @@ test('batchSignAppTree is a no-op (skipped=true) without the Azure env, and sign
   fs.mkdirSync(path.join(root, 'uv-cache', 'archive-v0', 'setuptools'), { recursive: true })
   fs.writeFileSync(path.join(root, 'uv-cache', 'archive-v0', 'setuptools', 'cli.exe'), 'x')
 
+  fs.mkdirSync(path.join(root, 'resources', 'filex'), { recursive: true })
+  fs.writeFileSync(path.join(root, 'resources', 'filex', 'filex.exe'), 'upstream pinned bytes stay unchanged')
+
   // Unsigned lane: loud no-op, nothing invoked.
   for (const env of [{}, { AZURE_SIGN_ENDPOINT: 'https://test.invalid' }, { AZURE_SIGN_ENDPOINT: 'https://test.invalid', AZURE_SIGN_ACCOUNT: 'account' }]) {
     assert.deepEqual(await batchSignAppTree(root, exe, { env }), { signed: 0, chunks: 0, skipped: true })

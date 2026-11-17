@@ -12,7 +12,8 @@
  */
 
 import { createRequire } from 'node:module'
-const { hash: filexHash, pins: filexPins } = createRequire(import.meta.url)('./filex-inputs.cjs')
+const { verifyFilexInputs } = createRequire(import.meta.url)('./filex-inputs.cjs')
+import { channelBuildRequest } from '../../../scripts/msix-shared.mjs'
 import path from 'node:path'
 import fs from 'node:fs'
 import { copyFile, mkdir, readdir } from 'node:fs/promises'
@@ -146,8 +147,8 @@ export default async function afterPack(context) {
     config: context.packager.config,
     resourcesDir: context.packager.buildResourcesDir,
   })
-  if (process.env.SEMANTIER_DESKTOP_VERSION && filexHash(fs.readFileSync(path.join(context.appOutDir, 'resources/filex/filex.exe'))) !== filexPins['win32-x64']) {
-    throw new Error('Packaged filex bytes changed during sanitizing/signing')
+  if (process.env.SEMANTIER_DESKTOP_VERSION || channelBuildRequest()?.semantierScope === 'semantier-windows-x64/v1') {
+    verifyFilexInputs(path.resolve(import.meta.dirname, '..'), 'win32', 'x64', path.join(context.appOutDir, 'resources', 'filex'))
   }
   rehashPayloadDigests(payload)
   // Keep every offline wheel, but collapse the loose cache only AFTER all PE

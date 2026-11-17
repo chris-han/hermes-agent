@@ -61,6 +61,14 @@ def require_output_roots(source: Path) -> None:
             raise ValueError(f"desktop output root must not be a symlink or junction: {path}")
 
 
+def requires_filex(request: BuildRequest) -> bool:
+    channel = getattr(request, "channel_request", None) or {}
+    return request.target == "win32-x64" and bool(
+        os.environ.get("SEMANTIER_DESKTOP_VERSION")
+        or channel.get("semantierScope") == "semantier-windows-x64/v1"
+    )
+
+
 def selected_tool_inputs(request: BuildRequest) -> list[Path]:
     from pm.build_operations import verified_tools
     from pm.lock import Lockfile
@@ -220,7 +228,7 @@ class PreparedDesktop:
     def record(cls, request: BuildRequest, *, python: Path, node: Path, icon_python: Path,
                native: Path, packager: Path, payload: Path | None, native_toolchain: str) -> PreparedDesktop:
         files = [python, node, icon_python.parent.parent, native, packager]
-        if request.target == "win32-x64":
+        if requires_filex(request):
             files.append(request.source / "apps/desktop/resources/filex")
         if payload is not None:
             files.append(payload)
@@ -261,7 +269,7 @@ class PreparedDesktop:
         if self.request.target != current_target():
             raise ValueError("preparation target differs from this host")
         paths = [self.python, self.node, self.icon_python.parent.parent, self.native, self.packager]
-        if self.request.target == "win32-x64":
+        if requires_filex(self.request):
             paths.append(self.request.source / "apps/desktop/resources/filex")
         paths.extend(selected_tool_inputs(self.request))
         if self.payload is not None:
@@ -374,7 +382,7 @@ def prepare_in_worker(request: BuildRequest) -> Path:
     with measure(request.cache, "tools.bootstrap"):
         python, node, env = prepare_tools(request.source, request.work, request.cache, os.environ)
     env = identity_environment(request, request.variant, env)
-    if request.target == "win32-x64":
+    if requires_filex(request):
         cached_filex = request.cache / "filex-v0.61.1/filex.exe"
         run([str(node), "apps/desktop/scripts/prepare-filex.mjs",
              *([str(cached_filex)] if cached_filex.is_file() else [])], cwd=request.source, env=env)
