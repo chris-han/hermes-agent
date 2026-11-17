@@ -181,6 +181,7 @@ it('does not recreate a missing pair or launch when the selected drive is absent
   await fs.rename(folder, path.join(root, 'unmounted'))
   await expect(supervisor.enable('https://cloud.example', folder)).rejects.toThrow()
   expect(adds).toBe(0)
+  expect(supervisor.status()).toMatchObject({ state: 'Error', folder })
 })
 it('can pause and retry after an unavailable helper without poisoning the lifecycle', async () => {
   const { folder, supervisor } = await setup()
@@ -198,8 +199,16 @@ it('rejects residual files with no local owner before obtaining credentials or r
   let bindingCalls = 0
   let engineCalls = 0
   const binding = supervisor.options.binding
-  supervisor.options.binding = async origin => { bindingCalls++; return binding(origin) }
-  supervisor.options.run = async () => { engineCalls++; return { code: 0, stdout: '[]' } }
+  supervisor.options.binding = async origin => {
+    bindingCalls++
+
+    return binding(origin)
+  }
+  supervisor.options.run = async () => {
+    engineCalls++
+
+    return { code: 0, stdout: '[]' }
+  }
   await expect(supervisor.enable('https://cloud.example', folder)).rejects.toThrow(/empty folder/)
   expect(bindingCalls).toBe(0)
   expect(engineCalls).toBe(0)

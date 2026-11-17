@@ -249,7 +249,7 @@ export class FileSyncSupervisor {
       return this.status()
     } catch (error) {
       if (this.generation === generation) {
-        this.view = { state: 'Error', message: error instanceof Error ? error.message : 'File Sync unavailable' }
+        this.view = { state: 'Error', folder: path.resolve(folder), message: error instanceof Error ? error.message : 'File Sync unavailable' }
       }
 
       throw error
