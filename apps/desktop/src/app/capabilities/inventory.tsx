@@ -138,7 +138,7 @@ export function InventoryRow({ description, ...props }: ComponentProps<typeof Ca
       >
         <span className="block break-words text-sm font-medium">{props.title}</span>
         {description && (
-          <span className="mt-1 block line-clamp-2 break-words text-xs text-(--ui-text-tertiary)">{description}</span>
+          <span className="mt-1 line-clamp-2 break-words text-xs text-(--ui-text-tertiary)">{description}</span>
         )}
         {cardSubtitle != null && (
           <span className="mt-1 flex min-w-0 flex-wrap gap-1 text-xs text-(--ui-text-tertiary)">{cardSubtitle}</span>
