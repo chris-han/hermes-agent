@@ -1253,6 +1253,17 @@ const fd=fs.openSync(path,'r');fs.closeSync(fd);console.log('Prebuilt cache read
     prebuiltArchive=$archive;prebuiltSha256=(Hash $archive)}
   Report-Status 'Build preflight PASS: Windows tools, VS/SDK, Rust, native prebuilt and verified Electron caches ready.'
 }
+function Install-LocalPilotPackage([string]$SignedPackage,$Volume) {
+  $current=@(Get-AppxPackage -Name $identity)
+  if($current.Count -ne 1 -or $current[0].Publisher -cne $publisher){
+    throw 'Local pilot requires one existing package with the verified publisher.'
+  }
+  if([Version]$Version -le [Version]$current[0].Version){
+    throw 'Local pilot requires a newer version; downgrade and same-version replacement are forbidden.'
+  }
+  # In-place Windows deployment preserves registration and package data on failure.
+  Add-AppxPackage -Path $SignedPackage -Volume $Volume -ForceTargetApplicationShutdown
+}
 function Remove-ExistingAcceptancePackage {
   # Removing the bundle unregisters its main/resource packages for this user.
   # Do not remove other products, other users' installations, or profile files.
@@ -1858,10 +1869,14 @@ try {
     } else {$installVolume=@($volumes | Where-Object {$_.IsSystemVolume})}
     if($installVolume.Count -ne 1 -or $installVolume[0].IsOffline){throw 'Existing/system AppX installation volume is unavailable.'}
     if($BuildMode -eq 'Prod' -and (Test-Path -LiteralPath $backup)){Preserve-Databases 'verify'}
-    Remove-ExistingAcceptancePackage
-    Complete-Checkpoint 'uninstalled'
     Report-Status ('Installing on explicit AppX volume: '+$installVolume[0].PackageStorePath)
-    Add-AppxPackage -Path $signed -Volume $installVolume[0] -ForceApplicationShutdown -ForceUpdateFromAnyVersion
+    if($LocalOnly){
+      Install-LocalPilotPackage $signed $installVolume[0]
+    } else {
+      Remove-ExistingAcceptancePackage
+      Complete-Checkpoint 'uninstalled'
+      Add-AppxPackage -Path $signed -Volume $installVolume[0] -ForceApplicationShutdown -ForceUpdateFromAnyVersion
+    }
   }
   if($BuildMode -eq 'Prod'){
   $registered=@(Get-AppxPackage -Name $identity)
