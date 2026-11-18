@@ -664,3 +664,24 @@ def test_explicit_retirement_fails_closed_before_changes(tmp_path,blocker):
         kwargs['assert_inactive']=live
     with pytest.raises(ValueError):channel1.retire_package(root,apply=True,**kwargs)
     assert old.exists() and (recovery/'0').exists() and (recovery/'recovery.json').exists()
+
+
+@pytest.mark.parametrize('actor',[0,1001])
+def test_retirement_root_can_maintain_service_owned_directory(tmp_path,monkeypatch,actor):
+    root,old,_=retirement_fixture(tmp_path)
+    original=Path.stat
+    def observed(path,*args,**kwargs):
+        value=original(path,*args,**kwargs)
+        if path==root:
+            fields={name:getattr(value,name) for name in dir(value) if name.startswith('st_')}
+            fields.update(st_uid=912,st_mode=0o40755)
+            return types.SimpleNamespace(**fields)
+        return value
+    monkeypatch.setattr(Path,'stat',observed)
+    monkeypatch.setattr(channel1.os,'geteuid',lambda:actor,raising=False)
+    kwargs=dict(build_id=f'{121:032x}',package_sha256=channel1.sha(old),
+                expected_previous_sha256=channel1.sha(root/channel1.POINTER),assert_inactive=lambda paths:None)
+    if actor==0:
+        assert channel1.retire_package(root,**kwargs)['result']=='RETIREMENT_PLAN'
+    else:
+        with pytest.raises(ValueError,match='actor'):channel1.retire_package(root,apply=True,**kwargs)

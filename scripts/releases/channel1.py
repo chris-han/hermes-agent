@@ -755,8 +755,14 @@ def retire_package(root, *, build_id, package_sha256, expected_previous_sha256,
         info = package.stat()
         if package.samefile(stable) or info.st_size != rows[0]['artifact']['size'] or sha(package) != package_sha256:
             raise ValueError('Retired/current package integrity mismatch')
-        if hasattr(os, 'geteuid') and (info.st_uid != os.geteuid() or root.stat().st_uid != os.geteuid()):
-            raise ValueError('Retirement actor does not own package/root')
+        actor = os.geteuid() if hasattr(os, 'geteuid') else None
+        root_owner = root.stat()
+        active_owner = stable.stat().st_uid
+        if actor is not None:
+            own_files = info.st_uid == actor and root_owner.st_uid == actor
+            root_maintenance = actor == 0 and info.st_uid == active_owner and not (root_owner.st_mode & 0o022)
+            if not (own_files or root_maintenance):
+                raise ValueError('Retirement actor does not own package/root')
         with zipfile.ZipFile(package) as archive:
             identity = ET.fromstring(archive.read('AppxManifest.xml')).find('{*}Identity').attrib
             if (identity['Name'] != 'Semantier.Agent.Acceptance'
@@ -803,6 +809,7 @@ def retire_package(root, *, build_id, package_sha256, expected_previous_sha256,
             recoveries.append(recovery)
         (assert_inactive or _assert_package_inactive)(aliases)
         report = {'result': 'RETIREMENT_PLAN', 'buildId': build_id, 'sha256': package_sha256,
+                  'actor': {'uid': actor, 'directoryUid': root_owner.st_uid, 'packageUid': info.st_uid, 'activePackageUid': active_owner},
                   'version': body['request']['windowsVersion'], 'aliases': [str(p) for p in aliases],
                   'retiredRecoveryManifests': [str(p) for p in recoveries], 'reclaimedBytes': 0}
         if not apply:
