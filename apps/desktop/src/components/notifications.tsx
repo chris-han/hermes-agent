@@ -356,11 +356,11 @@ function NotificationDetail({ detail }: { detail: string }) {
   const copy = t.notifications
 
   return (
-    <details className="mt-2 text-xs text-muted-foreground">
+    <details className="mt-2 min-w-0 max-w-full text-xs text-muted-foreground">
       <summary className="select-none font-medium text-muted-foreground hover:text-foreground">{copy.details}</summary>
-      <div className="mt-1 rounded-md bg-background/65 p-2">
+      <div className="mt-1 min-w-0 max-w-full overflow-hidden rounded-md bg-background/65 p-2">
         <pre
-          className="max-h-32 whitespace-pre-wrap wrap-break-word font-mono text-[0.6875rem] leading-relaxed"
+          className="max-h-32 max-w-full overflow-x-auto overflow-y-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-[0.6875rem] leading-relaxed"
           data-selectable-text="true"
         >
           {detail}
