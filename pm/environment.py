@@ -59,6 +59,17 @@ _UNDATED_FILE = ("is missing an upload date", "was filtered by `exclude-newer")
 UNDATED_INDEX_HINT = ("the package index did not report upload times, which locking Hermes's "
                       "dependencies needs for its 3-day release-age check. Use https://pypi.org/simple "
                       "or a mirror that serves upload times (pip.conf index-url / UV_INDEX_URL), then retry.")
+# A missing *core build tool* is not proof of incompatible plugin requirements.
+# uv may say "No solution found" when a custom registry/offline cache lacks
+# setuptools/wheel; classifying that as ResolutionConflict misleads users.
+_MISSING_BUILD_TOOL = ("setuptools was not found in the package registry",
+                       "wheel was not found in the package registry",
+                       "setuptools was not found in the cache",
+                       "wheel was not found in the cache")
+MISSING_BUILD_TOOL_HINT = ("the configured package index or offline cache lacks a pinned Hermes build tool. "
+                           "Check UV_INDEX_URL, PIP_INDEX_URL and UV_NO_INDEX on the target machine, "
+                           "verify the index contains the required setuptools/wheel version, and retry. "
+                           "Do not change Hermes's dependency pins to work around a missing package.")
 
 # uv's own English diagnostic. A localized Windows tail (os error 1224) rides
 # along, but the marker that means "packages may be installed, only the
@@ -103,6 +114,8 @@ def classify_uv_failure(stage: str, returncode: int, output: str) -> InstallErro
     lowered = output.lower()
     if _UNDATED_PIN in lowered or all(marker in lowered for marker in _UNDATED_FILE):
         return InstallError("venv", cause, UNDATED_INDEX_HINT)
+    if any(marker in lowered for marker in _MISSING_BUILD_TOOL):
+        return InstallError("venv", cause, MISSING_BUILD_TOOL_HINT)
     if any(marker in lowered for marker in _RESOLVER_MARKERS):
         return ResolutionConflict("venv", cause)
     if any(marker in lowered for marker in _BUILD_MARKERS):
