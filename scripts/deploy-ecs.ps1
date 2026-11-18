@@ -1774,9 +1774,11 @@ foreach ($tool in $tools) {
   if (!(Test-Path -LiteralPath $tool -PathType Leaf)) { throw "Required existing tool unavailable: $tool" }
 }
 if($BuildMode -eq 'Prod'){
+  if(!$NativePublishOnly){
   if(!$AcceptanceNodeModules){throw 'Prod acceptance requires -AcceptanceNodeModules pointing to existing Windows dependencies, or a -Commit build worktree.'}
   $null=Assert-LocalWindowsPath $AcceptanceNodeModules
   if(!(Test-Path -LiteralPath (Join-Path $AcceptanceNodeModules '@playwright\test'))){throw 'Existing Windows Playwright dependencies unavailable; no npm installation attempted.'}
+  }
   & $BuildPython -B -c 'import curl_cffi'
   if($LASTEXITCODE -ne 0){throw 'Prod public checks need an existing Windows Python with curl_cffi; select it with -BuildPython. No dependencies installed.'}
 }
