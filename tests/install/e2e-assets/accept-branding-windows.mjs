@@ -7,7 +7,7 @@ import path from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { _electron, expect } from '@playwright/test'
-const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../apps/desktop')
 const require = createRequire(path.join(desktop, 'package.json'))
 const output = process.argv[2] ?? fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-branding-ui-'))
 fs.mkdirSync(output,{recursive:true})

@@ -17,6 +17,60 @@ const fixture = (name) => {
   return dir
 }
 
+test('desktop freshness tracks delivered code rather than tests, documentation and acceptance tools', async () => {
+  const { buildInputs, recordProduct, productCurrent } = await import('../scripts/build/freshness.mjs')
+  const source = fixture('desktop-freshness-')
+  const out = mkdtempSync(path.join(tmpdir(), 'desktop-freshness-out-'))
+  const put = (name, text) => {
+    mkdirSync(path.dirname(path.join(source, name)), { recursive: true })
+    writeFileSync(path.join(source, name), text)
+  }
+  const inert = [
+    'apps/desktop/electron/updater/native.test.ts',
+    'apps/desktop/scripts/native-package-update.windows.test.ps1',
+    'apps/desktop/scripts/semantier-native-package.test.cjs',
+    'apps/desktop/src/__tests__/fixture.ts',
+    'apps/desktop/e2e/update.e2e.mts',
+    'apps/desktop/scripts/perf/probe-model-picker.mjs',
+    'apps/desktop/ENGINEERING.md',
+    'apps/desktop/docs/qualification.md',
+    'scripts/build/desktop.test.mjs',
+    'tests/install/e2e-assets/accept-desktop-profile-windows.mjs',
+    'scripts/deploy-ecs.ps1',
+  ]
+  const delivered = [
+    'apps/desktop/src/main.tsx',
+    'apps/desktop/electron/main.ts',
+    'apps/desktop/scripts/native-package-update.ps1',
+    'apps/desktop/scripts/native-package-digest.ps1',
+    'apps/desktop/scripts/update-relaunch-waiter.ps1',
+    'apps/desktop/scripts/before-pack.mjs',
+    'apps/desktop/electron-builder.config.cjs',
+    'apps/desktop/public/third-party/README.md',
+    'scripts/build/desktop.mjs',
+  ]
+  try {
+    for (const name of [...inert, ...delivered]) put(name, 'original')
+    const inputs = buildInputs(source, 'desktop')
+    recordProduct({ source, product: 'desktop', out, inputs })
+    for (const name of inert) {
+      put(name, 'diagnostic or test change')
+      expect(productCurrent({ source, product: 'desktop', out }), name).toBe(true)
+    }
+    put('apps/desktop/electron/new-regression.test.ts', 'new test')
+    expect(productCurrent({ source, product: 'desktop', out })).toBe(true)
+    for (const name of delivered) {
+      put(name, 'production change')
+      expect(productCurrent({ source, product: 'desktop', out }), name).toBe(false)
+      put(name, 'original')
+      expect(productCurrent({ source, product: 'desktop', out }), name).toBe(true)
+    }
+  } finally {
+    rmSync(source, { recursive: true, force: true })
+    rmSync(out, { recursive: true, force: true })
+  }
+})
+
 test('OS file-manager metadata landing in hashed trees never invalidates a recorded product', async () => {
   const { buildInputs, recordProduct, productCurrent } = await import('../scripts/build/freshness.mjs')
   const source = fixture('freshness-metadata-')
