@@ -613,7 +613,7 @@ function Get-ExpiredEcsUploadCleanup([string]$Root, [string]$CurrentStage) {
   # Only unpublished, inactive uploads older than 24h. Live MSIX/Setup/catalog
   # retirement remains under the existing verified-Landing cleanup below.
   $command=@'
-python3 - '__ROOT__' '__CURRENT__' <<'PY'
+flock -n '__ROOT__/.channel1-publication.lock' python3 - '__ROOT__' '__CURRENT__' <<'PY'
 import json,os,re,stat,sys,time
 from pathlib import Path
 root,current=map(Path,sys.argv[1:])
@@ -1951,6 +1951,22 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output);let app;const err
   $msixSize=(Get-Item -LiteralPath $signed).Length
   # Compute the POSIX parent in PowerShell without Windows Split-Path (which uses backslashes).
   $minimumFree=$msixSize+67108864
+  # Expired owned uploads can prevent us reaching post-publication cleanup.
+  # Reclaim only when needed, under channel1.py's publication lock.
+  # Actual disk free bytes, not logical file sizes, decide whether to proceed.
+  $freeProbe=@'
+df -PB1 '__ROOT__' | awk 'NR==2 {print $4}'
+'@
+  $freeProbe=$freeProbe.Replace('__ROOT__',$RemoteRoot)
+  $freeBefore=[long](Ssh $freeProbe)
+  if($freeBefore -lt $minimumFree -and !$SkipOldCleanup) {
+    Report-Status 'ECS capacity below staging requirement; retiring qualified expired upload stages.'
+    $reclaimed=Ssh (Get-ExpiredEcsUploadCleanup -Root $posixParent -CurrentStage $stage)
+    $freeAfter=[long](Ssh $freeProbe)
+    $receipt.prepublishSpace=@{freeBeforeBytes=$freeBefore;freeAfterBytes=$freeAfter;
+      requiredBytes=$minimumFree;expiredUploads=$reclaimed;otherCleanup='NOT_RUN_UNQUALIFIED'}
+    Save-Json $receipt (Join-Path $Output 'result.json')
+  }
   $prepare=@'
 set -eu
 root='__ROOT__'
