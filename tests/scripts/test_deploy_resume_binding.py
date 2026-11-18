@@ -69,3 +69,85 @@ if((Read-CommitBuild $args[1]).commit -cne 'latest'){throw 'Wrong build record'}
                             capture_output=True, text=True, timeout=30, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "CHECKPOINT_READERS_PASS" in result.stdout
+
+
+@pytest.mark.platforms("windows")
+def test_signed_resume_allows_cleanup_additions_but_rejects_critical_changes(tmp_path):
+    import sys
+    root = tmp_path/'repo'; root.mkdir()
+    files = {'scripts/deploy-ecs.ps1': 'function Sign-Copy { "signed" }\n',
+             'scripts/deploy-ecs-channel1.ps1': 'function Publish-Channel1Artifacts { "pointer-last" }\n',
+             'scripts/releases/channel1.py': 'CONTRACT=1\ndef publish(): return "pointer-last"\n',
+             'hermes_cli/release_channels.py': 'CONTRACT=1\n'}
+    for name, body in files.items():
+        path = root/name; path.parent.mkdir(parents=True,exist_ok=True); path.write_bytes(body.encode())
+    for argv in (['init'], ['add','.'], ['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','fixture']):
+        subprocess.run(['git.exe','-C',str(root),*argv],check=True,capture_output=True)
+    old = subprocess.check_output(['git.exe','-C',str(root),'rev-parse','HEAD'],text=True).strip()
+    source = Path(__file__).resolve().parents[2]/'scripts/deploy-ecs.ps1'
+    script = tmp_path/'contract.ps1'
+    script.write_bytes(br'''param($Operator,$Repository,$BuildPython,$Old)
+$ErrorActionPreference='Stop'
+$e=$null;$t=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile($Operator,[ref]$t,[ref]$e)
+$f=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Assert-SignedResumeContract'},$true)
+. ([scriptblock]::Create($f.Extent.Text))
+$SourceCommit='a'*40
+Assert-SignedResumeContract ([pscustomobject]@{receipt=[pscustomobject]@{tooling=[pscustomobject]@{toolingCommit=$Old;applicationCommit=$SourceCommit}}})
+''')
+    command = ['pwsh.exe','-NoProfile','-File',str(script),str(source),str(root),sys.executable,old]
+    # Cleanup-only function additions do not invalidate the retained signed build.
+    (root/'scripts/deploy-ecs.ps1').write_bytes((files['scripts/deploy-ecs.ps1']+'function Recover-Space { "bounded" }\n').encode())
+    (root/'scripts/releases/channel1.py').write_bytes((files['scripts/releases/channel1.py']+'def recover_space(): return "bounded"\n').encode())
+    result = subprocess.run(command,capture_output=True,text=True,timeout=30,check=False)
+    assert result.returncode == 0, result.stdout+result.stderr
+    for name in files:
+        original = (root/name).read_bytes()
+        (root/name).write_bytes(original.replace(b'pointer-last',b'pointer-first') if b'pointer-last' in original else original.replace(b'CONTRACT=1',b'CONTRACT=2').replace(b'"signed"',b'"unsigned"'))
+        result = subprocess.run(command,capture_output=True,text=True,timeout=30,check=False)
+        assert result.returncode != 0, name
+        (root/name).write_bytes(original)
+
+
+@pytest.mark.platforms("windows")
+def test_signed_restore_is_read_only_idempotent_and_keeps_original_binding(tmp_path):
+    import json
+    source = Path(__file__).resolve().parents[2]/'scripts/deploy-ecs.ps1'
+    artifact = tmp_path/'SemantierAgent.msix'; artifact.write_bytes(b'retained-signed-fixture')
+    import hashlib
+    digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    binding = dict(mode='Prod',skipLocalInstall=True,nativePublishOnly=True,
+                   setupContract='verify-remote-expected-sha256-v2',channelContract='current-only-channel-metadata-v1',
+                   inputSha256='1'*64,source='a'*40,version='0.0.123.0',build='b'*32,signer='signer',
+                   target='user@host',root='/root/releases',origin='https://download.semantier.cn',profile='profile',
+                   nativeUpdateFrom='0.0.122.0',expectedVersion='0.0.123.0',expectedChannelSha256='c'*64,
+                   nativeUserData='userdata',recoveryMsix='recovery',profileSampleManifest='samples',criticalFileManifest='critical')
+    log = tmp_path/'checkpoints.jsonl'
+    log.write_text(json.dumps(dict(type='checkpoint',binding=json.dumps(binding,separators=(',',':')),
+                                  completed=dict(signed='done'),receipt=dict(sha256=digest)))+'\n')
+    before_names = {p.name for p in tmp_path.iterdir()}
+    before = {p.name:p.read_bytes() for p in tmp_path.iterdir() if p.is_file()}
+    script = tmp_path/'restore.ps1'
+    script.write_bytes(br'''param($Operator,$Output)
+$ErrorActionPreference='Stop';Set-StrictMode -Version Latest
+$e=$null;$t=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile($Operator,[ref]$t,[ref]$e)
+foreach($name in @('Read-RunCheckpoint','Restore-SignedRelease','Hash')){
+ $f=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true)
+ . ([scriptblock]::Create($f.Extent.Text))
+}
+function Assert-SignedResumeContract {}
+$BuildPython='fixture';$WhatIfPreference=$true
+foreach($i in 1..2){
+ Restore-SignedRelease
+ if($SourceCommit -cne ('a'*40) -or $Version -cne '0.0.123.0' -or $ExpectedInputSha256 -cne ('1'*64) -or !$SkipLocalInstall -or !$NativePublishOnly){throw 'Binding restoration changed release authority'}
+}
+$WhatIfPreference=$false
+[IO.File]::AppendAllText($Msix,'tampered')
+$stopped=$false;try{Restore-SignedRelease}catch{$stopped=$_.Exception.Message -like 'Retained signed MSIX changed*'}
+if(!$stopped){throw 'Changed complete artifact accepted'}
+''')
+    result = subprocess.run(['pwsh.exe','-NoProfile','-File',str(script),str(source),str(tmp_path)],capture_output=True,text=True,timeout=30,check=False)
+    assert result.returncode == 0, result.stdout+result.stderr
+    assert log.read_bytes() == before[log.name]
+    assert {p.name for p in tmp_path.iterdir()} == {*before_names,script.name}

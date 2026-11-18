@@ -473,3 +473,135 @@ if($script:CapturedOptions.ForceTargetAppShutdown -or $script:CapturedOptions.Fo
     result=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-File',str(script),str(source),str(tmp_path)],capture_output=True,text=True,timeout=30,check=False)
     assert result.returncode==0,result.stdout+result.stderr
     assert 'SDK_OPTIONS_ONLY_PASS_NO_DEPLOYMENT' in result.stdout
+
+
+def test_capacity_recovery_preserves_links_unknown_and_current(tmp_path):
+    root = tmp_path/'public'; root.mkdir()
+    publish(root, tmp_path/'old', 121)
+    old_manifest = root/protocol.build_prefix(f'{121:032x}')/'build.json'
+    old_metadata = old_manifest.read_bytes()
+    publish(root, tmp_path/'new', 122)
+    old_manifest.write_bytes(old_metadata)
+    pointer = root/channel1.POINTER
+    before = pointer.read_bytes()
+    old = root/protocol.build_prefix(f'{121:032x}')/'SemantierAgent.msix'
+    # Recovery snapshots share the inode: removing one name earns no capacity.
+    import os
+    os.link(old, tmp_path/'retained.msix')
+    unknown = root/'releases/channel-builds'/'unknown.msix'
+    unknown.write_bytes(b'unknown')
+    result = channel1.recover_space(root, expected_previous_sha256=channel1.sha(pointer),
+                                   required_bytes=100, free_bytes=lambda: 0)
+    assert result['result'] == 'BLOCKED_INSUFFICIENT_CAPACITY'
+    assert result['reclaimedBytes'] == 0
+    assert old.exists() and unknown.exists() and pointer.read_bytes() == before
+    assert any(row['reason'] == 'hardlinked' for row in result['retained'])
+
+
+def test_capacity_recovery_is_idempotent_and_skips_inventory_when_ready(tmp_path):
+    root = tmp_path/'public'; root.mkdir()
+    publish(root, tmp_path/'new', 122)
+    for _ in range(2):
+        result = channel1.recover_space(root, expected_previous_sha256=channel1.sha(root/channel1.POINTER),
+                                       required_bytes=100, free_bytes=lambda: 100)
+        assert result['result'] == 'CAPACITY_READY'
+        assert result['inventory'] == 'SKIPPED_CAPACITY_SUFFICIENT'
+        assert result['reclaimedBytes'] == 0
+
+
+def test_capacity_recovery_checks_pointer_before_cleanup(tmp_path):
+    root = tmp_path/'public'; root.mkdir()
+    publish(root, tmp_path/'new', 122)
+    with pytest.raises(ValueError, match='Concurrent'):
+        channel1.recover_space(root, expected_previous_sha256='0'*64,
+                              required_bytes=100, free_bytes=lambda: 0)
+
+
+def test_capacity_recovery_deletes_only_verified_obsolete_single_link(tmp_path):
+    root = tmp_path/'public'; root.mkdir()
+    publish(root, tmp_path/'old', 120)
+    old_manifest = root/protocol.build_prefix(f'{120:032x}')/'build.json'
+    old_metadata = old_manifest.read_bytes()
+    publish(root, tmp_path/'new', 122)
+    old_manifest.write_bytes(old_metadata)
+    old = root/protocol.build_prefix(f'{120:032x}')/'SemantierAgent.msix'
+    detached = old.with_suffix('.fixture')
+    detached.write_bytes(old.read_bytes()); detached.replace(old)
+    size = old.stat().st_size
+    result = channel1.recover_space(root, expected_previous_sha256=channel1.sha(root/channel1.POINTER),
+                                   required_bytes=100, free_bytes=lambda: 0 if old.exists() else 100)
+    assert result['result'] == 'CAPACITY_READY'
+    assert result['reclaimedBytes'] == 100
+    assert result['removed'][0]['logicalBytes'] == size
+    assert not old.exists()
+    again = channel1.recover_space(root, expected_previous_sha256=channel1.sha(root/channel1.POINTER),
+                                  required_bytes=100, free_bytes=lambda: 100)
+    assert again['removed'] == []
+
+
+def test_capacity_keeps_rollback_snapshot_and_current_upload(tmp_path):
+    root = tmp_path/'public'; root.mkdir()
+    publish(root, tmp_path/'old', 121)
+    old_pointer = (root/channel1.POINTER).read_bytes()
+    old_manifest = root/protocol.build_prefix(f'{121:032x}')/'build.json'
+    old_metadata = old_manifest.read_bytes()
+    publish(root, tmp_path/'new', 122)
+    old_manifest.write_bytes(old_metadata)
+    old = old_manifest.with_name('SemantierAgent.msix')
+    detached = old.with_suffix('.fixture'); detached.write_bytes(old.read_bytes()); detached.replace(old)
+    recovery = tmp_path/('.channel1-recovery-'+'a'*32); recovery.mkdir()
+    (recovery/'2').write_bytes(old_pointer)
+    (recovery/'recovery.json').write_text(json.dumps({'files':[{'key':channel1.POINTER,'saved':'2','sha256':hashlib.sha256(old_pointer).hexdigest()}]}))
+    stage = tmp_path/('.semantier-stage-'+'b'*32); stage.mkdir()
+    (stage/'SemantierAgent.msix').write_bytes(b'partial')
+    called = []
+    result = channel1.recover_space(root,expected_previous_sha256=channel1.sha(root/channel1.POINTER),
+                                   required_bytes=100,free_bytes=lambda:0,protected_stage=stage,
+                                   retire_images=lambda:called.append(True) or {'removed':[]})
+    assert result['result'] == 'BLOCKED_INSUFFICIENT_CAPACITY'
+    assert old.exists() and (stage/'SemantierAgent.msix').read_bytes() == b'partial'
+    assert old.relative_to(root).as_posix() in result['protectedReferences']
+    assert called == [True]
+
+
+def test_capacity_keeps_publicly_referenced_package(tmp_path):
+    root = tmp_path/'public'; root.mkdir()
+    publish(root, tmp_path/'old', 120)
+    manifest = root/protocol.build_prefix(f'{120:032x}')/'build.json'; metadata = manifest.read_bytes()
+    publish(root, tmp_path/'new', 122); manifest.write_bytes(metadata)
+    old = manifest.with_name('SemantierAgent.msix')
+    detached = old.with_suffix('.fixture'); detached.write_bytes(old.read_bytes()); detached.replace(old)
+    landing = tmp_path/'landing'; landing.mkdir()
+    (landing/'index.html').write_text('https://download.semantier.cn/'+old.relative_to(root).as_posix())
+    result = channel1.recover_space(root,expected_previous_sha256=channel1.sha(root/channel1.POINTER),
+                                   required_bytes=100,free_bytes=lambda:0,reference_roots=[landing])
+    assert result['removed'] == [] and old.exists()
+    assert any(row['reason']=='release-reference' for row in result['retained'])
+
+
+@pytest.mark.parametrize('hardlink,live', [(False,False),(True,False),(False,True)])
+def test_expired_stage_requires_single_links_and_no_writer(tmp_path,monkeypatch,hardlink,live):
+    import stat
+    root = tmp_path/'public'; root.mkdir(); publish(root,tmp_path/'new',122)
+    stage = tmp_path/('.semantier-stage-'+'c'*32); stage.mkdir()
+    payload = stage/'SemantierAgent.msix'; payload.write_bytes(b'expired')
+    original_stat, original_glob, original_dir = Path.lstat, Path.glob, Path.is_dir
+    def observed_stat(path,*args,**kwargs):
+        actual = original_stat(path,*args,**kwargs)
+        if path in (stage,payload):
+            return types.SimpleNamespace(st_mode=(stat.S_IFDIR|0o700) if path==stage else (stat.S_IFREG|0o600),
+                                         st_uid=0,st_mtime=0,st_nlink=2 if hardlink else 1,st_size=actual.st_size)
+        return actual
+    monkeypatch.setattr(Path,'lstat',observed_stat)
+    monkeypatch.setattr(Path,'is_dir',lambda p: True if p==Path('/proc') else original_dir(p))
+    monkeypatch.setattr(Path,'glob',lambda p,pattern,**kwargs: [] if p==Path('/proc') else original_glob(p,pattern,**kwargs))
+    monkeypatch.setattr(channel1.os,'getuid',lambda:0,raising=False)
+    # The selected active stage is retained independently of age and process scans.
+    result = channel1.recover_space(root,expected_previous_sha256=channel1.sha(root/channel1.POINTER),
+                                   required_bytes=100,free_bytes=lambda:0 if payload.exists() else 100,
+                                   protected_stage=stage if live else None,now=100000)
+    if hardlink or live:
+        assert payload.exists() and result['removed']==[]
+    else:
+        assert not stage.exists() and result['result']=='CAPACITY_READY'
+        assert result['removed'][0]['kind']=='expired-upload'

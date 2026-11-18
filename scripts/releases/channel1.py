@@ -491,6 +491,185 @@ def publish(root, stage, *, metadata_sha256, package_sha256, protocol,
             'manifestSha256': record['nativeHead']['sha256'], 'alreadyPublished': record == previous}
 
 
+def recover_space(root, *, expected_previous_sha256, required_bytes, free_bytes=None,
+                  retire_images=None, now=None, protected_stage=None, reference_roots=()):
+    """Bounded prepublication recovery under the existing channel lock.
+
+    Unknown metadata, links, live uploads and recovery references are retained.
+    Free bytes are measured, never inferred from logical sizes or Docker totals.
+    """
+    import stat
+    import time
+    root = Path(root)
+    if root.is_symlink() or not root.is_dir() or required_bytes < 0:
+        raise ValueError('Invalid capacity root/budget')
+    free_bytes = free_bytes or (lambda: shutil.disk_usage(root).free)
+    now = time.time() if now is None else now
+    report = {'result': 'BLOCKED_INSUFFICIENT_CAPACITY', 'requiredBytes': required_bytes,
+              'removed': [], 'retained': [], 'docker': {'result': 'NOT_NEEDED'}}
+    with _lock(root):
+        pointer = _safe(root, POINTER)
+        if sha(pointer) != expected_previous_sha256:
+            raise ValueError('Concurrent channel change before capacity recovery')
+        before = free_bytes()
+        report['freeBeforeBytes'] = before
+        def finish():
+            after = free_bytes()
+            report.update(freeAfterBytes=after, reclaimedBytes=max(0, after-before),
+                          deficitBytes=max(0, required_bytes-after))
+            if after >= required_bytes:
+                report['result'] = 'CAPACITY_READY'
+            return report
+        if before >= required_bytes:
+            report['inventory'] = 'SKIPPED_CAPACITY_SUFFICIENT'
+            return finish()
+        report['inventory'] = 'BOUNDED_RECOVERY'
+        # Any unreadable/oversized protection evidence stops recovery, before deletion.
+        protected = set()
+        sequences = []
+        def references(value):
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    if key in ('key', 'manifestKey') and isinstance(item, str):
+                        protected.add(item)
+                    references(item)
+            elif isinstance(value, list):
+                for item in value: references(item)
+        record = json.loads(pointer.read_bytes())
+        references(record)
+        for head in (record.get('head'), record.get('nativeHead')):
+            if head:
+                manifest = _safe(root, head['manifestKey'])
+                if sha(manifest) != head['sha256']:
+                    raise ValueError('Active manifest hash mismatch')
+                value = json.loads(manifest.read_bytes()); references(value)
+                sequences.append(value['request']['sequence'])
+        evidence = sorted(root.parent.glob('.channel1-recovery-*/**/*.json'))
+        evidence += sorted(root.parent.glob('.msix-rollback-*/**/*.json'))
+        if len(evidence) > 4096:
+            raise ValueError('Recovery inventory bound exceeded')
+        for path in evidence:
+            if path.is_symlink() or path.stat().st_size > 4*1024*1024:
+                raise ValueError('Ambiguous recovery evidence')
+            value = json.loads(path.read_bytes()); references(value)
+            if path.name == 'recovery.json':
+                for row in value['files']:
+                    saved = _safe(path.parent, row['saved'])
+                    if sha(saved) != row['sha256']:
+                        raise ValueError('Recovery byte binding mismatch')
+                    if row['key'] == POINTER:
+                        references(json.loads(saved.read_bytes()))
+        # Protect both heads AND their artifact closures, including rollback pointers.
+        for key in list(protected):
+            if key.endswith('/build.json'):
+                path = _safe(root, key)
+                if path.exists():
+                    value = json.loads(path.read_bytes()); references(value)
+                    sequences.append(value['request']['sequence'])
+        report['protectedReferences'] = sorted(protected)
+        manifests = sorted((root/'releases/channel-builds').glob('*/build.json'))
+        if not sequences or len(manifests) > 4096:
+            raise ValueError('Ambiguous/beyond-bound release inventory')
+        # Legacy Setup/appinstaller users are independent public references.
+        descriptors = sorted(root.rglob('*.appinstaller'))
+        if len(descriptors) > 4096:
+            raise ValueError('Descriptor inventory bound exceeded')
+        for directory in reference_roots:
+            directory = Path(directory)
+            if directory.is_symlink() or not directory.is_dir():
+                raise ValueError('Public reference owner unavailable')
+            paths = sorted(directory.rglob('*'))
+            if len(paths) > 8192: raise ValueError('Public reference inventory bound exceeded')
+            descriptors += [p for p in paths if p.is_file() and p.suffix in ('.html','.json','.js','.css')]
+        descriptor_text = []
+        for path in descriptors:
+            if path.is_symlink() or path.stat().st_size > 1024*1024:
+                raise ValueError('Ambiguous descriptor')
+            descriptor_text.append(path.read_text())
+        def retain(path, reason):
+            report['retained'].append({'path': str(path), 'reason': reason})
+        # A closed, old, owner-private upload is the only disposable stage shape.
+        stages = sorted(root.parent.glob('.semantier-stage-*'))
+        if len(stages) > 256:
+            raise ValueError('Upload inventory bound exceeded')
+        for stage in stages:
+            if free_bytes() >= required_bytes: break
+            if protected_stage is not None and stage == Path(protected_stage):
+                retain(stage, 'current-upload'); continue
+            info = stage.lstat()
+            if (not re.fullmatch(r'\.semantier-stage-[0-9a-f]{32}', stage.name)
+                    or stage.is_symlink() or not stat.S_ISDIR(info.st_mode)
+                    or now-info.st_mtime < 86400 or stat.S_IMODE(info.st_mode) != 0o700
+                    or (hasattr(os, 'getuid') and info.st_uid != os.getuid())):
+                retain(stage, 'unknown-or-active-stage'); continue
+            files = list(stage.iterdir())
+            allowed = {'SemantierAgent.msix', 'SemantierAgent.msix.sha256'}
+            if not files or not {p.name for p in files}.issubset(allowed):
+                retain(stage, 'unknown-stage-contents'); continue
+            # /proc is required for live-writer exclusion; non-Linux fixtures retain.
+            if not Path('/proc').is_dir():
+                retain(stage, 'writer-evidence-unavailable'); continue
+            stats = {p: p.lstat() for p in files}
+            if any(not stat.S_ISREG(i.st_mode) or i.st_nlink != 1 or now-i.st_mtime < 86400
+                   or i.st_uid != info.st_uid for i in stats.values()):
+                retain(stage, 'hardlinked-or-active-stage'); continue
+            open_paths = set()
+            for proc in Path('/proc').glob('[0-9]*'):
+                try:
+                    if str(stage).encode() in (proc/'cmdline').read_bytes():
+                        open_paths.add(stage)
+                    for fd in (proc/'fd').iterdir():
+                        try: open_paths.add(Path(os.readlink(fd)))
+                        except FileNotFoundError: pass
+                except FileNotFoundError: pass
+                except PermissionError:
+                    raise ValueError('Cannot exclude active upload owner')
+            if stage in open_paths or any(p in open_paths for p in files):
+                retain(stage, 'live-upload'); continue
+            if any(p.lstat() != i for p, i in stats.items()):
+                raise ValueError('Upload changed during recovery')
+            for path in files: path.unlink()
+            stage.rmdir()
+            report['removed'].append({'path': str(stage), 'kind': 'expired-upload',
+                                      'logicalBytes': sum(i.st_size for i in stats.values())})
+        for manifest in manifests:
+            if free_bytes() >= required_bytes: break
+            try:
+                value = json.loads(manifest.read_bytes())
+                request = value['request']
+                if request['sequence'] >= min(sequences):
+                    retain(manifest, 'active-rollback-or-newer-release'); continue
+                for row in value['packages']:
+                    key = row['artifact']['key']; path = _safe(root, key)
+                    if not path.exists(): continue
+                    if key in protected or any(key.startswith(p.removesuffix('build.json')) for p in protected if p.endswith('/build.json')) or any(key in text for text in descriptor_text):
+                        retain(path, 'release-reference'); continue
+                    info = path.lstat()
+                    if info.st_nlink != 1:
+                        retain(path, 'hardlinked'); continue
+                    if (not stat.S_ISREG(info.st_mode) or manifest.is_symlink()
+                            or not key.endswith('/SemantierAgent.msix')
+                            or key != manifest.relative_to(root).as_posix().removesuffix('build.json')+'SemantierAgent.msix'
+                            or row['identity'] != 'Semantier.Agent.Acceptance'
+                            or row['publisher'] != 'CN=Semantier Technology, O=Semantier Technology'
+                            or (hasattr(os, 'getuid') and info.st_uid != os.getuid())
+                            or row['artifact']['size'] != info.st_size
+                            or sha(path) != row['artifact']['sha256']):
+                        retain(path, 'unknown-provenance'); continue
+                    with zipfile.ZipFile(path) as archive:
+                        identity = ET.fromstring(archive.read('AppxManifest.xml')).find('{*}Identity').attrib
+                        if any(identity[k] != row[v] for k,v in [('Name','identity'),('Publisher','publisher'),('Version','version')]):
+                            raise ValueError('Package identity mismatch')
+                    if path.lstat() != info: raise ValueError('Package changed during recovery')
+                    path.unlink()
+                    report['removed'].append({'path': str(path), 'kind': 'obsolete-msix', 'logicalBytes': info.st_size})
+            except (KeyError, ValueError, zipfile.BadZipFile, ET.ParseError):
+                retain(manifest, 'unknown-provenance')
+        if free_bytes() < required_bytes and retire_images is not None:
+            report['docker'] = retire_images()
+        return finish()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)

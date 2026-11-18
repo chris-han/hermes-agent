@@ -77,6 +77,7 @@ param(
   [string]$BuildSource = '',
   [switch]$SkipOldCleanup,
   [switch]$NewRun,
+  [switch]$ResumeSigned,
   [switch]$SetupOnly,
   [switch]$LocalSetup,
   [switch]$UpdateSetup,
@@ -604,6 +605,111 @@ function Read-RunCheckpoint([string]$Path) {
     if($entry.PSObject.Properties['type'] -and $entry.type -eq 'checkpoint') {$last=$entry}
   }
   return $last
+}
+function Assert-SignedResumeContract($Saved) {
+  $old=[string]$Saved.receipt.tooling.toolingCommit
+  if($old -cnotmatch '^[a-f0-9]{40}$' -or $Saved.receipt.tooling.applicationCommit -cne $SourceCommit){throw 'Signed checkpoint source/tooling authority missing.'}
+  foreach($relative in @('scripts/deploy-ecs.ps1','scripts/deploy-ecs-channel1.ps1')){
+    $baseline=(& git.exe -C $Repository show "${old}:$relative") -join "`n"
+    if($LASTEXITCODE -ne 0){throw 'Original publishing source unavailable.'}
+    $current=[IO.File]::ReadAllText((Join-Path $Repository $relative)).Replace("`r`n","`n").TrimEnd()
+    if($relative -like '*channel1.ps1'){
+      if($baseline.TrimEnd() -cne $current){throw 'Critical Channel 1 publishing contract changed; signed resume STOP.'}
+    } else {
+      $errors=$null;$tokens=$null
+      $a=[Management.Automation.Language.Parser]::ParseInput($baseline,[ref]$tokens,[ref]$errors)
+      if($errors){throw 'Original operator parse failed.'}
+      $b=[Management.Automation.Language.Parser]::ParseInput($current,[ref]$tokens,[ref]$errors)
+      if($errors){throw 'Current operator parse failed.'}
+      $new=@{};foreach($f in $b.FindAll({param($x) $x -is [Management.Automation.Language.FunctionDefinitionAst]},$true)){$new[$f.Name]=$f.Extent.Text}
+      foreach($f in $a.FindAll({param($x) $x -is [Management.Automation.Language.FunctionDefinitionAst]},$true)){
+        if(!$new.ContainsKey($f.Name) -or $new[$f.Name] -cne $f.Extent.Text){throw "Critical operator function changed: $($f.Name); signed resume STOP."}
+      }
+    }
+  }
+  $check=@'
+import ast, pathlib, subprocess, sys
+root, old = sys.argv[1:]
+for relative in ('scripts/releases/channel1.py', 'hermes_cli/release_channels.py'):
+    before=subprocess.check_output(['git.exe','-C',root,'show',old+':'+relative]).decode().replace('\r\n','\n')
+    after=(pathlib.Path(root)/relative).read_text()
+    if relative.startswith('hermes_cli'):
+        if before != after: raise ValueError('Critical channel protocol changed')
+    else:
+        def globals(body):
+            return [ast.dump(n, include_attributes=False) for n in ast.parse(body).body if not isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)) and not (isinstance(n,ast.If) and ast.unparse(n.test) == "__name__ == '__main__'")]
+        if globals(before) != globals(after): raise ValueError('Critical publisher constants/imports changed')
+        def functions(body):
+            return {n.name: ast.dump(n, include_attributes=False) for n in ast.parse(body).body if isinstance(n,(ast.FunctionDef, ast.AsyncFunctionDef)) and n.name != 'main'}
+        current=functions(after)
+        if any(current.get(k)!=v for k,v in functions(before).items()):
+            raise ValueError('Critical immutable publisher changed')
+print('SIGNED_RESUME_CONTRACT_PASS')
+'@
+  $answer=$check | & $BuildPython - $Repository $old
+  if($LASTEXITCODE -ne 0 -or $answer -cne 'SIGNED_RESUME_CONTRACT_PASS'){throw 'Critical signed-resume publishing contract mismatch.'}
+}
+function Restore-SignedRelease {
+  if(!$BuildPython){
+    $lock=Get-Content -LiteralPath (Join-Path $Repository 'pm/lock.json') -Raw | ConvertFrom-Json
+    $script:BuildPython=Join-Path $BuildCache ('tools\python-'+$lock.packages.python.version+'-win32-x64\python.exe')
+  }
+  $saved=Read-RunCheckpoint (Join-Path $Output 'checkpoints.jsonl')
+  if(!$saved -or !$saved.completed.PSObject.Properties['signed']){throw 'No retained signed checkpoint; resume STOP, never rebuild.'}
+  $binding=$saved.binding | ConvertFrom-Json
+  if($binding.mode -cne 'Prod' -or !$binding.skipLocalInstall -or !$binding.nativePublishOnly -or
+     $binding.setupContract -cne 'verify-remote-expected-sha256-v2' -or $binding.channelContract -cne 'current-only-channel-metadata-v1'){
+    throw 'Unsupported signed checkpoint publication contract.'
+  }
+  $map=@{ExpectedInputSha256='inputSha256';SourceCommit='source';Version='version';BuildId='build';Thumbprint='signer';
+    SshTarget='target';RemoteRoot='root';PublicBase='origin';UserProfile='profile';NativeUpdateFrom='nativeUpdateFrom';
+    ExpectedVersion='expectedVersion';ExpectedChannelSha256='expectedChannelSha256';NativeUserData='nativeUserData';
+    RecoveryMsix='recoveryMsix';ProfileSampleManifest='profileSampleManifest';CriticalFileManifest='criticalFileManifest'}
+  foreach($key in $map.Keys){Set-Variable -Scope Script -Name $key -Value $binding.($map[$key]) -WhatIf:$false}
+  $script:SkipLocalInstall=$true;$script:NativePublishOnly=$true
+  $script:Msix=Join-Path $Output 'SemantierAgent.msix'
+  if((Hash $script:Msix) -cne $saved.receipt.sha256){throw 'Retained signed MSIX changed; resume STOP.'}
+  $script:resumeInputSha256=$saved.receipt.sha256
+  Assert-SignedResumeContract $saved
+}
+function Get-EcsCapacityRecovery([string]$Stage,[long]$Size) {
+  $cloud=Join-Path (Split-Path -Parent $Repository) 'deploy/ecs-cloud/operations.py'
+  if(!(Test-Path -LiteralPath $cloud)){throw 'Maintained ECS cleanup owner missing from selected Runtime.'}
+  $publisher=[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'releases/channel1.py')))
+  $operations=[Convert]::ToBase64String([IO.File]::ReadAllBytes($cloud))
+  $argsJson=@{root=$RemoteRoot;stage=$Stage;size=$Size;expected=$ExpectedChannelSha256} | ConvertTo-Json -Compress
+  $args64=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($argsJson))
+  $body=@'
+import base64,json,os,pathlib,stat,types
+c=types.ModuleType('channel1');exec(base64.b64decode('__PUBLISHER__'),c.__dict__)
+o=types.ModuleType('operations');exec(base64.b64decode('__OPERATIONS__'),o.__dict__)
+a=json.loads(base64.b64decode('__ARGS__'));root=pathlib.Path(a['root']);stage=pathlib.Path(a['stage'])
+if stage.parent!=root.parent or stage.is_symlink(): raise ValueError('Invalid upload owner')
+remaining=a['size']
+if stage.exists():
+    info=stage.stat()
+    if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode)!=0o700 or info.st_uid!=os.getuid():
+        raise ValueError('Ambiguous upload directory owner')
+    package=stage/'SemantierAgent.msix'
+    if package.exists():
+        p=package.lstat()
+        if not stat.S_ISREG(p.st_mode) or p.st_nlink!=1 or p.st_uid!=os.getuid() or p.st_size>a['size']:
+            raise ValueError('Ambiguous partial upload')
+        remaining-=p.st_size
+report=c.recover_space(root,expected_previous_sha256=a['expected'],required_bytes=remaining+67108864,protected_stage=stage,
+                      reference_roots=['/opt/semantier-cloud-live-v1/landing-cn'],
+                      retire_images=lambda:o.retire_release_images('/opt/semantier-cloud-live-v1'))
+if report['result']=='CAPACITY_READY': stage.mkdir(mode=0o700,exist_ok=True)
+print(json.dumps(report))
+'@
+  $body=$body.Replace('__PUBLISHER__',$publisher).Replace('__OPERATIONS__',$operations).Replace('__ARGS__',$args64)
+  $stream=[IO.MemoryStream]::new()
+  $gzip=[IO.Compression.GZipStream]::new($stream,[IO.Compression.CompressionMode]::Compress,$true)
+  $gzip.Write([Text.Encoding]::UTF8.GetBytes($body));$gzip.Dispose()
+  $encoded=[Convert]::ToBase64String($stream.ToArray());$stream.Dispose()
+  if($encoded.Length -gt 24000){throw 'Capacity payload exceeds bounded native SSH command size.'}
+  $json=Ssh "python3 -c 'import base64,gzip;exec(gzip.decompress(base64.b64decode(`"$encoded`")))'"
+  return ($json | ConvertFrom-Json -AsHashtable)
 }
 function Get-ExpiredEcsUploadCleanup([string]$Root, [string]$CurrentStage) {
   if($Root -cnotmatch '^/[A-Za-z0-9_./-]+$' -or $Root.Contains('/../') -or
@@ -1559,6 +1665,13 @@ function Publish-IndependentSetup {
   }
 }
 try {
+if($ResumeSigned){
+  if(!$PSBoundParameters.ContainsKey('Output') -or $BuildMode -cne 'Prod' -or $Latest -or $Commit -or $NewRun -or $SetupOnly -or $UpdateSetup -or $LocalOnly -or $BuildOnly){throw 'Use -ResumeSigned -Output <retained-run> -BuildMode Prod; no build, sync or install modes.'}
+  $allowed=@('ResumeSigned','Output','BuildMode','Repository','BuildPython','AcceptanceNodeModules','SignTool','Node','IdentityFile','CredentialsEnv','WhatIf','Confirm')
+  foreach($key in $PSBoundParameters.Keys){if($key -notin $allowed){throw "Signed resume cannot override bound release input: $key"}}
+  if(!$Repository){$Repository=Split-Path -Parent $PSScriptRoot}
+  Restore-SignedRelease
+}
 if($NativeUpdateFrom){Assert-NativeReleaseOptions}
 if($NativePublishOnly -and !$NativeUpdateFrom){throw '-NativePublishOnly requires the bound native release preflight.'}
 if($Latest){
@@ -1652,10 +1765,10 @@ $plan = [ordered]@{input=$Msix;version=$Version;sourceCommit=$SourceCommit;ssh=$
     'verify live Landing before old-package cleanup')}
 if($BuildMode -eq 'Beta'){$plan.stages=@('build/reuse without release verification','sign MSIX','back up profile','install MSIX','SFTP upload','atomic ECS activation; UNVERIFIED')}
 if($SkipLocalInstall){$plan.stages=@($plan.stages | Where-Object {$_ -notin @('back up profile','install MSIX','install and observe Electron/real PTY')});$plan.localAcceptance='SKIPPED_USER_REQUEST_NO_LOCAL_INSTALL'}
-if ($WhatIfPreference) { $plan | ConvertTo-Json -Depth 5; return }
+if ($WhatIfPreference) { if($ResumeSigned){$plan.stages=@('verify retained signed MSIX and critical contract','reuse signed checkpoint; no dependency/build/sign/install work','read current references and recover bounded capacity if necessary','resume upload; verify immutable closure; activate pointer last','verify H2 Range and H3; user update remains pending')}; $plan | ConvertTo-Json -Depth 5; return }
 Report-Status 'Validating existing MSIX hash, source, identity and node-pty inputs; no dependency rebuild.'
 Assert-MsixWithoutUvCache $Msix
-if ($BuildMode -eq 'Prod' -and (!(Test-Path -LiteralPath $Msix -PathType Leaf) -or (Hash $Msix) -cne $ExpectedInputSha256)) { throw 'Existing MSIX integrity check failed; no rebuild attempted.' }
+if ($BuildMode -eq 'Prod' -and (!(Test-Path -LiteralPath $Msix -PathType Leaf) -or (Hash $Msix) -cne $(if($ResumeSigned){$script:resumeInputSha256}else{$ExpectedInputSha256}))) { throw 'Existing MSIX integrity check failed; no rebuild attempted.' }
 $tools=@($SignTool,$Node)
 foreach ($tool in $tools) {
   if (!(Test-Path -LiteralPath $tool -PathType Leaf)) { throw "Required existing tool unavailable: $tool" }
@@ -1752,6 +1865,7 @@ if($saved -and $saved.binding -cne $script:runBinding){
   $saved=$null;$rebound=$true
 }
 if($saved) {
+  if(!$ResumeSigned -and $saved.completed.PSObject.Properties['signed'] -and $saved.receipt.tooling.toolingCommit -cne $script:SourceBinding.toolingHermesHead){Assert-SignedResumeContract $saved}
   foreach($property in $saved.completed.PSObject.Properties){$script:checkpoints[$property.Name]=$property.Value}
   $previous=$saved.receipt
   foreach($property in $previous.PSObject.Properties){$receipt[$property.Name]=$property.Value}
@@ -1768,7 +1882,7 @@ if($saved) {
 }
 if($NativeUpdateFrom){
   $receipt.nativePreflight=$script:nativePreflight
-  if($invocationTooling){$receipt.tooling=$invocationTooling}
+  if($invocationTooling){$receipt.invocationTooling=$invocationTooling}
 }
 $receipt.result='IN_PROGRESS'
 Write-RunEvent @{type='checkpoint';stage='resume-ready';binding=$script:runBinding;completed=$script:checkpoints;receipt=$receipt}
@@ -1950,22 +2064,13 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output);let app;const err
   } else {
   $msixSize=(Get-Item -LiteralPath $signed).Length
   # Compute the POSIX parent in PowerShell without Windows Split-Path (which uses backslashes).
-  $minimumFree=$msixSize+67108864
-  $prepare=@'
-set -eu
-root='__ROOT__'
-stage='__STAGE__'
-minimum='__MIN_FREE__'
-test -d "$root/releases" && test ! -L "$root"
-if test -d "$stage" && test ! -L "$stage"; then exit 0; fi
-test ! -e "$stage"
-free=$(df -PB1 "$root" | awk 'NR==2 {print $4}')
-test "$free" -ge "$minimum" || { printf 'Insufficient ECS staging space: available=%s required=%s deficit=%s bytes\n' "$free" "$minimum" "$((minimum-free))" >&2; exit 9; }
-mkdir -m 700 "$stage"
-'@
-  $prepare=$prepare.Replace('__ROOT__',$RemoteRoot).Replace('__STAGE__',$stage).Replace('__MIN_FREE__',[string]$minimumFree)
-  Report-Status 'Checking ECS staging capacity and preparing the upload directory.'
-  $null=Ssh $prepare
+  Report-Status 'Checking retained references and bounded ECS capacity recovery.'
+  $receipt.capacityRecovery=Get-EcsCapacityRecovery -Stage $stage -Size $msixSize
+  Save-Json $receipt (Join-Path $Output 'result.json')
+  if($receipt.capacityRecovery.result -cne 'CAPACITY_READY'){
+    $receipt.result='BLOCKED_WITH_EXACT_CAUSE'
+    throw ('Insufficient safe ECS capacity after bounded recovery: '+($receipt.capacityRecovery | ConvertTo-Json -Compress -Depth 8))
+  }
   $receipt.remoteStage=$stage
   Complete-Checkpoint 'upload-prepared'
   Report-Status 'Publishing verified immutable bytes and committing current channel metadata atomically.'
@@ -1983,7 +2088,7 @@ mkdir -m 700 "$stage"
     Save-Json $receipt (Join-Path $Output 'result.json')
     $metadata=Get-Content -LiteralPath (Join-Path $Output 'channel1-metadata.json') -Raw | ConvertFrom-Json
     $receipt.nativePublicAfterPointer=Test-NativePublic $metadata.manifest $signed -Active
-    if((Hash $Msix) -cne $ExpectedInputSha256 -or (Hash $signed) -cne $hash){throw 'Local package changed during publication.'}
+    if((Hash $Msix) -cne $(if($ResumeSigned){$script:resumeInputSha256}else{$ExpectedInputSha256}) -or (Hash $signed) -cne $hash){throw 'Local package changed during publication.'}
     $receipt.publicationVerification='PASS'
     $receipt.h3='PUBLIC_H3_RANGE_PASS'
     $receipt.publicReadback='H2/H3 Range bytes match signed package; complete ECS stable/immutable disk SHA256 verified; no full public download'
@@ -2075,14 +2180,14 @@ const fs=require('node:fs');
   } elseif ($SkipOldCleanup) {
     $receipt.cleanup='SKIPPED_BY_REQUEST'
   }
-  if ((Hash $Msix) -cne $ExpectedInputSha256 -or (Hash $signed) -cne $hash) {
+  if ((Hash $Msix) -cne $(if($ResumeSigned){$script:resumeInputSha256}else{$ExpectedInputSha256}) -or (Hash $signed) -cne $hash) {
     throw 'Local package changed during publication.'
   }
   $receipt.result=if ($landingReady) { 'MSIX_PUBLISHED_VERIFIED_LANDING_CUTOVER_PASS' } else { 'MSIX_PUBLISHED_VERIFIED_CLEANUP_DEFERRED' }
   if($SkipLocalInstall){$receipt.result='MSIX_PUBLISHED_VERIFIED_NO_LOCAL_INSTALL'}
   if($landingReady -and !$SkipOldCleanup){Complete-Checkpoint 'finished'}
 } catch {
-  $receipt.result='FAIL';$receipt.error=$_.Exception.Message
+  if($receipt.result -cne 'BLOCKED_WITH_EXACT_CAUSE'){$receipt.result='FAIL'};$receipt.error=$_.Exception.Message
   if($NativeUpdateFrom -and $receipt.Contains('nativeRecovery')){
     try {
       $receipt.pointerRollback=Ssh "python3 -B '$($receipt.nativeRecovery)/channel1.py' rollback --root '$RemoteRoot' --recovery '$($receipt.nativeRecovery)'"
@@ -2102,6 +2207,7 @@ const fs=require('node:fs');
   [IO.File]::WriteAllText((Join-Path $Output 'release-note.md'),
     "Result: $($receipt.result)`nVersion: $Version`nSource: $SourceCommit`nSigned MSIX: $($receipt.signedMsix)`nSHA-256: $($receipt.sha256)`nFixed public MSIX: $PublicBase/releases/SemantierAgent.msix`nFixed Setup: $PublicBase/releases/installers/semantier-setup-ch1.exe`nLocal acceptance: $($receipt.localAcceptance)`nPublication: $($receipt.publication)`nH3: $($receipt.h3)`nPublic readback: $($receipt.publicReadback)`nLanding cutover: $($receipt.landingCutover)`nCleanup: $($receipt.cleanup)`nCH2: unchanged`n",$utf8)
   Write-Host "Result and evidence: $Output"
+  $receipt | ConvertTo-Json -Depth 20 -Compress
 }
 
 } catch {
@@ -2113,7 +2219,7 @@ const fs=require('node:fs');
     } else {
       $failure=[pscustomobject]@{commit=$Commit;binding=$script:SourceBinding;signing='NOT_RUN';installation='NOT_RUN';publication='NOT_RUN'}
     }
-    $failure | Add-Member -NotePropertyName result -NotePropertyValue $(if($NativeUpdateFrom){'STOP'}else{'FAIL'}) -Force
+    $failure | Add-Member -NotePropertyName result -NotePropertyValue $(if($failure.PSObject.Properties['capacityRecovery'] -and $failure.capacityRecovery.result -ceq 'BLOCKED_INSUFFICIENT_CAPACITY'){'BLOCKED_WITH_EXACT_CAUSE'}elseif($NativeUpdateFrom){'STOP'}else{'FAIL'}) -Force
     $failure | Add-Member -NotePropertyName error -NotePropertyValue $_.Exception.Message -Force
     if($script:nativePreflight){$failure | Add-Member -NotePropertyName nativePreflight -NotePropertyValue $script:nativePreflight -Force}
     Save-Json $failure $failurePath
