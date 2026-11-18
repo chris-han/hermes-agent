@@ -18,6 +18,18 @@ describe('toast titles', () => {
     clearNotifications()
   })
 
+  it('keeps long resolver diagnostics inside a scrollable toast detail region', () => {
+    const detail = 'Resolver: D:/repo/deliverables/work/very-long-build-root/'.repeat(25)
+    notify({ id: 'resolver-error', kind: 'error', title: 'Cannot enable disk-cleanup', message: 'Check package index', detail, durationMs: 0 })
+    render(<NotificationStack />)
+    fireEvent.click(screen.getByText('Details'))
+    const log = screen.getByText(detail)
+    expect(log.tagName).toBe('PRE')
+    expect(log.className).toContain('overflow-y-auto')
+    expect(log.className).toContain('overflow-x-auto')
+    expect(log.className).toContain('[overflow-wrap:anywhere]')
+  })
+
   it.each(['default', 'bottom-right'] as const)(
     'caps the %s toast stack at one back edge and keeps older notifications reachable',
     async placement => {
@@ -25,9 +37,10 @@ describe('toast titles', () => {
         notify({ id: `notice-${index}`, message: `Notice ${index}`, placement, durationMs: 0 })
       }
 
-      render(<NotificationStack />)
+      const view = render(<NotificationStack />)
+
       expect(screen.getAllByRole('status')).toHaveLength(1)
-      expect(document.querySelectorAll('[data-slot="card-stack-edge"]')).toHaveLength(1)
+      expect(view.baseElement.querySelectorAll('[data-slot="card-stack-edge"]')).toHaveLength(1)
       fireEvent.click(screen.getByRole('button', { name: /Show.*6/ }))
       expect(screen.getByText('Notice 0')).toBeTruthy()
       expect(screen.getAllByRole('status')).toHaveLength(7)
