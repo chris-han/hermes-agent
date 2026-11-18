@@ -1,6 +1,7 @@
 import { renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { BillingRequestGateway } from './api'
 import type { BillingChargeResponse, BillingStateResponse } from './types'
 
 const requestGatewayMock = vi.hoisted(() => vi.fn())
@@ -244,7 +245,7 @@ it('waits for a slow genuine Billing read instead of inventing an unavailable st
       setTimeout(() => { clearTimeout(deadline); resolve({ ok: true, data: { schema_version: 'semantier.billing.v2' } }) }, 1500)
     }))
 
-    const result = createBillingApi(request).fetchBillingState()
+    const result = createBillingApi(request as BillingRequestGateway).fetchBillingState()
     await vi.advanceTimersByTimeAsync(1501)
     expect((await result).ok).toBe(true)
     expect(request).toHaveBeenCalledTimes(1)

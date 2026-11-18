@@ -103,7 +103,7 @@ function Test-NativeCompletedRelease {
   $path=Join-Path $Output 'result.json'
   if(!(Test-Path -LiteralPath $path)){return $false}
   $saved=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
-  if($NativePublishOnly -and $saved.result -ceq 'PUBLISHED_122_CLIENT_NOT_YET_VERIFIED'){
+  if($NativePublishOnly -and $saved.result -cin @('PUBLISHED_READY_FOR_USER_UPDATE','PUBLISHED_122_CLIENT_NOT_YET_VERIFIED')){
     $applicationCommit=if($Commit){$Commit}else{$SourceCommit}
     if($saved.plan.sourceCommit -cne $applicationCommit -or $saved.plan.version -cne $ExpectedVersion -or
       $saved.signedMsix -ine (Join-Path $Output 'SemantierAgent.msix') -or (Hash $saved.signedMsix) -cne $saved.sha256){throw 'Completed publication binding changed'}
@@ -191,7 +191,7 @@ function Publish-Channel1Artifacts([string]$Signed, [string]$Root, [string]$Stag
     $null=Ssh "python3 -B '$Stage/channel1.py' stage-native $arguments $guard --caddy-sha256 '$($script:nativePreflight.remote.caddySha256)'"
     $candidate=Get-Content -LiteralPath $Metadata -Raw | ConvertFrom-Json
     $receipt.nativePublicBeforePointer=Test-NativePublic $candidate.manifest $Signed
-    $receipt.result='BUILT_SIGNED_122';Save-Json $receipt (Join-Path $Output 'result.json')
+    $receipt.result='BUILT_SIGNED_PACKAGE';Save-Json $receipt (Join-Path $Output 'result.json')
     $arguments+=$guard
   }
   return Ssh "python3 -B '$Stage/channel1.py' publish $arguments"

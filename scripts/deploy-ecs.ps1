@@ -1978,7 +1978,7 @@ mkdir -m 700 "$stage"
   }
   $null=Ssh $remoteProof
   if($NativeUpdateFrom){
-    $receipt.result='PUBLISHED_122_CLIENT_NOT_YET_VERIFIED'
+    $receipt.result='PUBLISHED_READY_FOR_USER_UPDATE'
     $receipt.localAcceptance='NOT_RUN_BEFORE_PUBLICATION'
     Save-Json $receipt (Join-Path $Output 'result.json')
     $metadata=Get-Content -LiteralPath (Join-Path $Output 'channel1-metadata.json') -Raw | ConvertFrom-Json

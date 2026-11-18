@@ -74,7 +74,7 @@ try {
  function Complete-Checkpoint {param($Stage);$script:completedStages+=@($Stage)}
  function Invoke-NativeUpdateAcceptance {throw 'Publish-only invoked the native client updater'}
  & ([scriptblock]::Create($branch.Extent.Text))
- if($receipt.result -cne 'PUBLISHED_122_CLIENT_NOT_YET_VERIFIED' -or $receipt.nativeAcceptance -cne 'NOT_RUN_OWNER_MANUAL' -or
+ if($receipt.result -cne 'PUBLISHED_READY_FOR_USER_UPDATE' -or $receipt.nativeAcceptance -cne 'NOT_RUN_OWNER_MANUAL' -or
    'native-verified' -in $script:completedStages -or 'finished' -notin $script:completedStages){throw 'False native acceptance or missing publish-only completion'}
  'NATIVE_PUBLISH_ONLY_NO_INSTALL_PASS'
 }finally{Remove-Item -LiteralPath (Join-Path $Output 'channel1-metadata.json');Remove-Item -LiteralPath $Output}
@@ -85,7 +85,7 @@ $Output=Join-Path ([IO.Path]::GetTempPath()) ('native-replay-test-'+[Guid]::NewG
 [IO.Directory]::CreateDirectory($Output)|Out-Null
 try {
  $Commit='';$SourceCommit='a'*40;$ExpectedVersion='0.0.122.0';$NativePublishOnly=$true;$RemoteRoot='/fixture'
- $saved=@{result='PUBLISHED_122_CLIENT_NOT_YET_VERIFIED';plan=@{sourceCommit=$SourceCommit;version=$ExpectedVersion;buildId='b'*32};signedMsix=(Join-Path $Output 'SemantierAgent.msix');sha256='a'*64}
+ $saved=@{result='PUBLISHED_READY_FOR_USER_UPDATE';plan=@{sourceCommit=$SourceCommit;version=$ExpectedVersion;buildId='b'*32};signedMsix=(Join-Path $Output 'SemantierAgent.msix');sha256='a'*64}
  [IO.File]::WriteAllText((Join-Path $Output 'result.json'),($saved|ConvertTo-Json))
  [IO.File]::WriteAllText((Join-Path $Output 'channel1-metadata.json'),'{"manifest":{}}')
  $script:fixtureHash='a'*64
@@ -100,6 +100,9 @@ try {
  if(!(Test-NativeCompletedRelease)){throw 'Completed publication did not revalidate'}
  $verified=Get-Content (Join-Path $Output 'result.json') -Raw|ConvertFrom-Json
  if($verified.publicationVerification -cne 'PASS' -or $verified.nativeAcceptance -cne 'NOT_RUN_OWNER_MANUAL'){throw 'Replay false native PASS'}
+ $saved.result='PUBLISHED_122_CLIENT_NOT_YET_VERIFIED'
+ [IO.File]::WriteAllText((Join-Path $Output 'result.json'),($saved|ConvertTo-Json))
+ if(!(Test-NativeCompletedRelease)){throw 'Legacy122 publication replay lost compatibility'}
  $script:fixtureHash='c'*64;$failed=$false
  try{$null=Test-NativeCompletedRelease}catch{$failed=$true}
  if(!$failed){throw 'Changed signed artifact accepted by replay'}
