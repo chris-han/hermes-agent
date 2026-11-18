@@ -15,7 +15,7 @@ import { openPluginInstallRequest, type PluginInstallRequest } from './plugin-in
 export function openCatalogPluginInstall(
   entry: PluginCatalogEntry,
   profile: null | string,
-  options: Pick<PluginInstallRequest, 'stayAfterInstall' | 'title'> = {}
+  options: Pick<PluginInstallRequest, 'stayAfterInstall' | 'title' | 'connectionId'> = {}
 ): void {
   const existing = $agentPlugins.get().find(row => row.catalog_name === entry.name || row.name === entry.name)
 

@@ -89,3 +89,26 @@ describe('installHubSkill failure surfacing', () => {
     expect($hubInstalledOverride.get()['ok']).toBe(true)
   })
 })
+
+it('deduplicates a scoped install and keeps same-named profiles on different connections independent', async () => {
+  let resolve!: (value: { name: string }) => void
+  installSkillFromHub.mockReset()
+  installSkillFromHub
+    .mockImplementationOnce(
+      () =>
+        new Promise(r => {
+          resolve = r
+        })
+    )
+    .mockResolvedValue({ name: 'remote-action' })
+  getActionStatus.mockResolvedValue({ running: false, exit_code: 0, lines: [] })
+  const first = installHubSkill('same', { connectionId: 'local', profile: 'worker' })
+  const duplicate = installHubSkill('same', { connectionId: 'local', profile: 'worker' })
+  expect(installSkillFromHub).toHaveBeenCalledTimes(1)
+  const remote = installHubSkill('same', { connectionId: 'remote', profile: 'worker' })
+  expect(installSkillFromHub).toHaveBeenCalledTimes(2)
+  resolve({ name: 'local-action' })
+  await Promise.all([first, duplicate, remote])
+  expect($hubInstalledOverride.get()['local::worker::same']).toBe(true)
+  expect($hubInstalledOverride.get()['remote::worker::same']).toBe(true)
+})

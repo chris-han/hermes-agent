@@ -56,3 +56,16 @@ def test_the_lookup_reads_the_backend_catalog_not_the_docs_redirect(monkeypatch,
     monkeypatch.setattr(pc, "fetch_live_catalog", lambda force=False: None)
     first = pc.load_catalog()[0]
     assert _lookup(first.name)["entry"]["sha"] == first.sha
+
+
+def test_native_listing_uses_install_owner_and_excludes_removed(catalog):
+    response = server.handle_request({"id": "list", "method": "plugins.catalog.list", "params": {}})
+    assert "error" not in response, response
+    assert response["result"]["available"] is True
+    assert [row["name"] for row in response["result"]["entries"]] == ["weather", "aihubmix"]
+
+
+def test_native_listing_reports_unavailable_without_inventing_entries(monkeypatch):
+    monkeypatch.setattr(pc, "load_catalog_live", list)
+    response = server.handle_request({"id": "list", "method": "plugins.catalog.list", "params": {}})
+    assert response["result"] == {"available": False, "entries": []}

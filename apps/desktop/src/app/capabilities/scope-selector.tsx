@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'react-router'
 
+import { $apiRequestScope } from '@/api/client'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { DesktopRosterAgent } from '@/global'
 import { getProfiles, type ProfileScope, profileScopeKey } from '@/hermes'
@@ -55,6 +56,7 @@ export function useCapabilityScope({
   fixedProfile?: string
 }): CapabilityScope {
   const activeProfile = useStore($activeGatewayProfile)
+  const ambientConnection = useStore($apiRequestScope).connectionId
   const { key: locationKey, search } = useLocation()
 
   // A link from a chat names the chat's own profile (and connection), so the page opens on that scope.
@@ -72,15 +74,19 @@ export function useCapabilityScope({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationKey])
 
-  const scopeProfile: ProfileScope = useMemo(
-    () =>
-      fixedProfile
-        ? fixedConnection
-          ? { connectionId: fixedConnection, profile: fixedProfile }
-          : fixedProfile
-        : (scopeOverride ?? activeProfile ?? null),
-    [activeProfile, fixedConnection, fixedProfile, scopeOverride]
-  )
+  const scopeProfile: ProfileScope = useMemo(() => {
+    const selected = fixedProfile
+      ? fixedConnection
+        ? { connectionId: fixedConnection, profile: fixedProfile }
+        : fixedProfile
+      : (scopeOverride ?? activeProfile ?? null)
+
+    // Capture the active registry source as part of every read/write owner,
+    // including two connections that both call their profile "default".
+    return ambientConnection && (selected === null || typeof selected === 'string')
+      ? { connectionId: ambientConnection, profile: selected }
+      : selected
+  }, [activeProfile, ambientConnection, fixedConnection, fixedProfile, scopeOverride])
 
   const scopeKey = profileScopeKey(scopeProfile)
 
@@ -90,7 +96,7 @@ export function useCapabilityScope({
     scopeProfile && typeof scopeProfile === 'object' ? (scopeProfile.connectionId ?? '').trim() || 'local' : null
 
   const { data: profilesData } = useQuery({
-    queryKey: ['capabilities-profiles'],
+    queryKey: ['capabilities-profiles', ambientConnection],
     queryFn: () => getProfiles(),
     staleTime: 60_000,
     // Pinned scope never shows the selector, so don't fetch the roster for it.
@@ -154,6 +160,10 @@ export function useCapabilityScope({
   // profile, which lives at `activeConnectionId::profile`.
   const value = useMemo(() => {
     if (scopeProfile && typeof scopeProfile === 'object') {
+      if (!multiConnection && scopeProfile.connectionId === ambientConnection) {
+        return scopeProfile.profile ?? ''
+      }
+
       return `${(scopeProfile.connectionId ?? '').trim() || 'local'}::${scopeProfile.profile ?? ''}`
     }
 
@@ -162,7 +172,7 @@ export function useCapabilityScope({
     }
 
     return scopeProfile ?? ''
-  }, [multiConnection, rosterData, scopeProfile])
+  }, [ambientConnection, multiConnection, rosterData, scopeProfile])
 
   // Selector option values are `connectionId::profile` on multi-connection
   // desktops (the roster path) and bare profile names otherwise, so one

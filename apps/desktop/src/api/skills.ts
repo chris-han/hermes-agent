@@ -106,9 +106,9 @@ export function getOfficialSkills(profile?: ProfileScope): Promise<{ skills: Off
   })
 }
 
-export function getSkillHubSources(profile?: null | string): Promise<SkillHubSourcesResponse> {
-  return hermesApi<SkillHubSourcesResponse>({
-    ...profileScoped(profile),
+export function getSkillHubSources(profile?: ProfileScope): Promise<SkillHubSourcesResponse> {
+  return window.hermesDesktop.api<SkillHubSourcesResponse>({
+    ...capabilityScoped(profile),
     path: '/api/skills/hub/sources',
     timeoutMs: HUB_REQUEST_TIMEOUT_MS
   })
@@ -118,12 +118,12 @@ export function searchSkillsHub(
   query: string,
   source = 'all',
   limit = 20,
-  profile?: null | string
+  profile?: ProfileScope
 ): Promise<SkillHubSearchResponse> {
   const params = new URLSearchParams({ q: query, source, limit: String(limit) })
 
-  return hermesApi<SkillHubSearchResponse>({
-    ...profileScoped(profile),
+  return window.hermesDesktop.api<SkillHubSearchResponse>({
+    ...capabilityScoped(profile),
     path: `/api/skills/hub/search?${params.toString()}`,
     timeoutMs: HUB_REQUEST_TIMEOUT_MS
   })

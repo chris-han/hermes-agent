@@ -4620,6 +4620,17 @@ export interface PluginCatalogLookupEntry {
   sha: string
   subdir: string
 }
+export interface PluginCatalogListResult {
+  available: boolean
+  entries: PluginCatalogListEntry[]
+}
+export interface PluginCatalogListEntry {
+  name: string
+  repo: string
+  sha: string
+  subdir: string
+  description: string
+}
 export interface CanonicalShellExecParams {
   session_id: string
   command: string
@@ -6261,6 +6272,8 @@ export interface RpcMethods {
   'pet.thumb': { params: PetThumbParams; result: PetThumbResult }
   /** Cheapest liveness probe; answered on the WS reader thread even while every agent is mid-turn. */
   ping: { params: PingParams; result: PingResult }
+  /** Native read-only discovery using the install catalog and removal policy. */
+  'plugins.catalog.list': { params: ProfileParams; result: PluginCatalogListResult }
   /** One curated plugin-catalog entry by name, from the backend's live catalog (cached, with the in-tree fallback and kill list); backs hermes://plugin/install?catalog= deep links. */
   'plugins.catalog.lookup': { params: PluginCatalogLookupParams; result: PluginCatalogLookupResult }
   /** Loaded plugin manager entries (legacy flat view); the Plugins Hub uses plugins.manage list. */
@@ -6644,6 +6657,7 @@ export const RPC_METHODS = [
   'pet.select',
   'pet.thumb',
   'ping',
+  'plugins.catalog.list',
   'plugins.catalog.lookup',
   'plugins.list',
   'plugins.manage',

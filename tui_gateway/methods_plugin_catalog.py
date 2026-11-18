@@ -41,5 +41,20 @@ def _(rid, params: dict) -> dict:
                                                   "subdir": entry.subdir}})
 
 
+@method("plugins.catalog.list")
+@_profile_scoped
+def list_catalog(rid, params: dict) -> dict:
+    """Native discovery uses the same catalog and removal policy as installation."""
+    from hermes_cli.plugin_catalog import load_catalog_live, match_removed, resolved_removed_entries
+
+    entries = load_catalog_live()
+    removed = resolved_removed_entries()
+    return _ok(rid, {"available": bool(entries), "entries": [
+        {"name": e.name, "repo": e.repo, "sha": e.sha, "subdir": e.subdir,
+         "description": e.description}
+        for e in entries if not match_removed(e.name, removed) and not match_removed(e.repo, removed)
+    ]})
+
+
 def register(server) -> None:
     bind_module(globals(), server, skip=("_",))

@@ -4133,3 +4133,10 @@ html[data-hud-window] [data-slot='popover-content'] {
   ) {
   font-family: var(--dt-font-sans);
 }
+
+/* Capability selection remains reachable as one primary pane on compact windows. */
+@media (max-width: 720px) {
+  [data-capability-inventory] [data-master-detail-grid] { grid-template-columns: minmax(0, 1fr); }
+  [data-capability-inventory][data-detail-open="false"] [data-master-detail-grid] > :nth-child(2) { display: none; }
+  [data-capability-inventory][data-detail-open="true"] [data-master-detail-grid] > :first-child { display: none; }
+}

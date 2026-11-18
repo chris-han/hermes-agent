@@ -1,5 +1,6 @@
 import { atom, map } from 'nanostores'
 
+import { profileScopeKey } from '@/api/client'
 // The Capabilities Skills-list query key, imported rather than re-spelled so a
 // hub (un)install updates the Skills tab, not just the hub.
 import { SKILLS_QUERY_KEY } from '@/app/capabilities/skills/skills-data'
@@ -79,14 +80,15 @@ $activeGatewayProfile.subscribe(value => {
 // `profile` is the Capabilities profile-scope override — the action (and its
 // status polling) runs against THAT profile's backend; undefined keeps the
 // app-wide active profile (unchanged behavior).
-async function runHubAction(
+async function executeHubAction(
   key: string,
   kind: HubActionKind,
   spawn: () => Promise<{ name: string }>,
   profile?: ProfileScope
 ): Promise<void> {
+  key = hubActionKey(key, profile)
   const epoch = _hubEpoch
-  const switched = () => _hubEpoch !== epoch
+  const switched = () => profile === undefined && _hubEpoch !== epoch
 
   $hubActions.setKey(key, { kind, running: true, lines: [] })
   $hubActiveLog.set(key)
@@ -167,6 +169,31 @@ async function runHubAction(
       $hubActions.setKey(key, { ...current, running: false })
     }
   }
+}
+
+export function hubActionKey(identifier: string, profile?: ProfileScope): string {
+  return profile === undefined ? identifier : `${profileScopeKey(profile)}::${identifier}`
+}
+
+const pendingActions = new Map<string, Promise<void>>()
+
+function runHubAction(
+  key: string,
+  kind: HubActionKind,
+  spawn: () => Promise<{ name: string }>,
+  profile?: ProfileScope
+): Promise<void> {
+  const ownerKey = hubActionKey(key, profile)
+  const existing = pendingActions.get(ownerKey)
+
+  if (existing) {
+    return existing
+  }
+
+  const running = executeHubAction(key, kind, spawn, profile).finally(() => pendingActions.delete(ownerKey))
+  pendingActions.set(ownerKey, running)
+
+  return running
 }
 
 export function installHubSkill(identifier: string, profile?: ProfileScope): Promise<void> {

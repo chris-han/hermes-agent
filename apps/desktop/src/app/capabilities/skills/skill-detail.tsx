@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { CountSkeleton } from '@/components/ui/skeleton'
 import { getSkillContent, type ProfileScope, profileScopeKey } from '@/hermes'
 import { useI18n } from '@/i18n'
+import { useInventoryCopy } from '@/i18n/capability-inventory'
 import type { SkillInfo } from '@/types/hermes'
 
 import { PanelPill } from '../../overlays/panel'
@@ -27,6 +28,7 @@ export function SkillDetail({
   skill: SkillInfo
 }) {
   const { t } = useI18n()
+  const c = useInventoryCopy()
   // Origin only, never mutability: external mounts stay editable in place —
   // see ./skill-provenance (commit 8c8fc6c1ec).
   const editable = isEditableProvenance(skill.provenance)
@@ -54,7 +56,7 @@ export function SkillDetail({
             <PanelPill>{prettyName(categoryFor(skill))}</PanelPill>
             {(skill.provenance === 'agent' || skill.provenance === 'hub') && (
               <PanelPill tone={skill.provenance === 'agent' ? 'good' : 'muted'}>
-                {t.skills.provenance[skill.provenance]}
+                {skill.provenance === 'agent' ? c.learnedItem : t.skills.provenance[skill.provenance]}
               </PanelPill>
             )}
           </>
@@ -79,6 +81,14 @@ export function SkillDetail({
               <span className="min-w-0 whitespace-pre-wrap break-words text-(--ui-text-secondary)">{value}</span>
             </div>
           ))}
+        </div>
+      )}
+      {contentQuery.isError && (
+        <div className="text-xs" role="alert">
+          {t.skills.skillsLoadFailed}{' '}
+          <Button onClick={() => void contentQuery.refetch()} size="xs">
+            {c.retry}
+          </Button>
         </div>
       )}
       {contentQuery.isLoading ? (

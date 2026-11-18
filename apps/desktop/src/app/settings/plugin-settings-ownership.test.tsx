@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPluginContext } from '@/contrib/plugin'
 import { $pluginRecords, dropPlugin, publishPlugin } from '@/contrib/plugins-store'
 import { pluginSettingsHref } from '@/contrib/settings-pages'
-import { $agentPlugins, $agentPluginsStatus, type AgentPluginRow } from '@/store/agent-plugins'
+import { $agentPlugins, $agentPluginsOwner, $agentPluginsStatus, type AgentPluginRow } from '@/store/agent-plugins'
 import { $activeGatewayProfile, $profiles } from '@/store/profile'
 import { $settingsScopeOverride } from '@/store/settings-scope'
 import type { ProfileInfo } from '@/types/hermes'
@@ -135,6 +135,7 @@ const settingsCalls = () =>
 /** Click a Capabilities ▸ Plugins gear and return the deep link it produced. */
 function gearHref(props: Parameters<typeof PluginsTab>[0], label: string): string {
   window.location.hash = ''
+  $agentPluginsOwner.set(`::${props.profile ?? ''}`)
   const view = render(<PluginsTab {...props} />)
 
   fireEvent.click(screen.getByRole('button', { name: label }))
