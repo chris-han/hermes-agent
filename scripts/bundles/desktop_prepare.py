@@ -45,7 +45,8 @@ def fingerprint(path: Path) -> str:
 def require_owned(request: BuildRequest, paths: list[Path]) -> None:
     require_output_roots(request.source)
     roots = (request.work.resolve(), request.cache.resolve(),
-             (request.source / "apps/desktop/build").resolve())
+             (request.source / "apps/desktop/build").resolve(),
+             (request.source / "apps/desktop/resources/filex").resolve())
     for path in paths:
         if not path.is_absolute() or not any(path.resolve().is_relative_to(root) for root in roots):
             raise ValueError(f"preparation input is outside owned roots: {path}")
@@ -54,10 +55,18 @@ def require_owned(request: BuildRequest, paths: list[Path]) -> None:
 def require_output_roots(source: Path) -> None:
     from pm.filesystem import is_junction
 
-    for relative in (".build", "apps", "apps/desktop", "apps/desktop/build", "apps/desktop/dist", "apps/desktop/release"):
+    for relative in (".build", "apps", "apps/desktop", "apps/desktop/build", "apps/desktop/dist", "apps/desktop/release", "apps/desktop/resources", "apps/desktop/resources/filex"):
         path = source / relative
         if path.is_symlink() or (path.exists() and is_junction(path)):
             raise ValueError(f"desktop output root must not be a symlink or junction: {path}")
+
+
+def requires_filex(request: BuildRequest) -> bool:
+    channel = getattr(request, "channel_request", None) or {}
+    return request.target == "win32-x64" and bool(
+        os.environ.get("SEMANTIER_DESKTOP_VERSION")
+        or channel.get("semantierScope") == "semantier-windows-x64/v1"
+    )
 
 
 def selected_tool_inputs(request: BuildRequest) -> list[Path]:
@@ -219,6 +228,8 @@ class PreparedDesktop:
     def record(cls, request: BuildRequest, *, python: Path, node: Path, icon_python: Path,
                native: Path, packager: Path, payload: Path | None, native_toolchain: str) -> PreparedDesktop:
         files = [python, node, icon_python.parent.parent, native, packager]
+        if requires_filex(request):
+            files.append(request.source / "apps/desktop/resources/filex")
         if payload is not None:
             files.append(payload)
         require_owned(request, files)
@@ -258,6 +269,8 @@ class PreparedDesktop:
         if self.request.target != current_target():
             raise ValueError("preparation target differs from this host")
         paths = [self.python, self.node, self.icon_python.parent.parent, self.native, self.packager]
+        if requires_filex(self.request):
+            paths.append(self.request.source / "apps/desktop/resources/filex")
         paths.extend(selected_tool_inputs(self.request))
         if self.payload is not None:
             paths.append(self.payload)
@@ -369,6 +382,12 @@ def prepare_in_worker(request: BuildRequest) -> Path:
     with measure(request.cache, "tools.bootstrap"):
         python, node, env = prepare_tools(request.source, request.work, request.cache, os.environ)
     env = identity_environment(request, request.variant, env)
+    if requires_filex(request):
+        cached_filex = request.cache / "filex-v0.61.1/filex.exe"
+        run([str(node), "apps/desktop/scripts/prepare-filex.mjs",
+             *([str(cached_filex)] if cached_filex.is_file() else [])], cwd=request.source, env=env)
+        cached_filex.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(request.source / "apps/desktop/resources/filex/filex.exe", cached_filex)
     native_toolchain = env["HERMES_DESKTOP_NATIVE_TOOLCHAIN"]
     run([str(node), "scripts/build/node-deps.mjs", "--source", str(request.source), "--reuse",
          "--native-toolchain", native_toolchain,

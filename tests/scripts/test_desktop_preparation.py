@@ -306,7 +306,7 @@ def test_guarded_bundle_reuses_payload_python_for_icons(tmp_path, monkeypatch):
     from pm.environments import venv_python
     source, commit = _project(tmp_path)
     request = SimpleNamespace(source=source, commit=commit, work=tmp_path / 'work', cache=tmp_path / 'cache',
-                              variant='bundled', target='win32-x64', workspaces=lambda: [], validate_channel=lambda: None)
+                              variant='bundled', target='win32-x64', workspaces=list, validate_channel=lambda: None)
     request.work.mkdir()
     monkeypatch.setattr(desktop_toolchain, 'prepare_tools', lambda *args: (Path(sys.executable), Path(sys.executable), {'HERMES_DESKTOP_NATIVE_TOOLCHAIN': 'fixture', 'UV_CACHE_DIR': str(request.cache)}))
     def observed(cache, env, diagnostic):
@@ -326,3 +326,15 @@ def test_guarded_bundle_reuses_payload_python_for_icons(tmp_path, monkeypatch):
     monkeypatch.setattr(module.PreparedDesktop, 'record', classmethod(record))
     module.prepare_in_worker(request)
     assert captured['icon_python'] == venv_python(source / 'apps/desktop/build/agent-payload/venv')
+
+
+def test_filex_preparation_is_required_for_semantier_windows_only(monkeypatch):
+    from types import SimpleNamespace
+    from scripts.bundles.desktop_prepare import requires_filex
+    monkeypatch.delenv("SEMANTIER_DESKTOP_VERSION", raising=False)
+    request = SimpleNamespace(target="win32-x64", channel_request=None)
+    assert not requires_filex(request)
+    request.channel_request = {"semantierScope": "semantier-windows-x64/v1"}
+    assert requires_filex(request)
+    request.target = "darwin-x64"
+    assert not requires_filex(request)

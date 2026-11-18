@@ -35,6 +35,50 @@ $NativePublishOnly=$true;$Commit='a'*40
 $channel=Join-Path $PSScriptRoot '../deploy-ecs-channel1.ps1'
 $ast=[Management.Automation.Language.Parser]::ParseFile($channel,[ref]$null,[ref]$errors)
 if($errors){throw ($errors | Out-String)}
+foreach($name in @('Test-NativeChannelRecovery','Get-NativeWindow')){
+ $definition=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true)
+ if(!$definition){throw ('Missing independent baseline verifier: '+$name)}
+ . ([scriptblock]::Create($definition.Extent.Text))
+}
+$recoveryFixture=Join-Path ([IO.Path]::GetTempPath()) ('native-channel-recovery-'+[Guid]::NewGuid().ToString('N'))
+$null=[IO.Directory]::CreateDirectory($recoveryFixture)
+try{
+ Add-Type -AssemblyName System.IO.Compression.FileSystem
+ $fixtureManifest=Join-Path $recoveryFixture 'AppxManifest.xml'
+ [IO.File]::WriteAllText($fixtureManifest,'<Package><Identity Name="Semantier.Agent.Acceptance" Publisher="CN=Fixture" Version="0.0.123.0" ProcessorArchitecture="x64"/></Package>')
+ $recoveryPackage=Join-Path $recoveryFixture 'published123.msix'
+ $zip=[IO.Compression.ZipFile]::Open($recoveryPackage,'Create')
+ try{$null=[IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip,$fixtureManifest,'AppxManifest.xml')}finally{$zip.Dispose()}
+ function Hash {param($Path);return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()}
+ function Require-Signature {param($Path);if($script:foreignChannelSigner){throw 'foreign signer'}}
+ function Read-ZipText {param($Archive,$Name);$reader=[IO.StreamReader]::new($Archive.GetEntry($Name).Open());try{return $reader.ReadToEnd()}finally{$reader.Dispose()}}
+ $script:foreignChannelSigner=$false
+ $identity='Semantier.Agent.Acceptance';$publisher='CN=Fixture';$ExpectedVersion='0.0.126.0';$RecoveryMsix='installed125.msix'
+ $remote=@{packageSha256=(Hash $recoveryPackage);manifest=@{request=@{windowsVersion='0.0.123.0'}}}
+ $verified=Test-NativeChannelRecovery $remote $recoveryPackage
+ if($verified.version -cne '0.0.123.0' -or $verified.path -cne $recoveryPackage){throw 'Published baseline was replaced by installed baseline'}
+ foreach($case in @('hash','version','identity','signer','target')){
+  $remote.packageSha256=Hash $recoveryPackage;$remote.manifest.request.windowsVersion='0.0.123.0';$identity='Semantier.Agent.Acceptance';$script:foreignChannelSigner=$false;$ExpectedVersion='0.0.126.0'
+  switch($case){hash{$remote.packageSha256='f'*64}version{$remote.manifest.request.windowsVersion='0.0.125.0'}identity{$identity='foreign'}signer{$script:foreignChannelSigner=$true}target{$ExpectedVersion='0.0.123.0'}}
+  $failed=$false;try{$null=Test-NativeChannelRecovery $remote $recoveryPackage}catch{$failed=$true}
+  if(!$failed){throw ('Unsafe published baseline accepted: '+$case)}
+ }
+ $script:fixtureWindows=@()
+ function Get-Process {param($Id);return $script:fixtureWindows}
+ $windowPackage=@{InstallLocation='C:\fixture-package'}
+ if($null -ne (Get-NativeWindow $windowPackage -AllowStopped)){throw 'Missing window invented'}
+ $failed=$false;try{$null=Get-NativeWindow $windowPackage}catch{$failed=$true};if(!$failed){throw 'Interactive acceptance permitted without a window'}
+ $script:fixtureWindows=@([pscustomobject]@{Path='C:\fixture-package\app\Semantier Agent.exe';MainWindowHandle=1})
+ if(!(Get-NativeWindow $windowPackage -AllowStopped)){throw 'Real window lost'}
+ $script:fixtureWindows+=$script:fixtureWindows[0]
+ $failed=$false;try{$null=Get-NativeWindow $windowPackage -AllowStopped}catch{$failed=$true};if(!$failed){throw 'Ambiguous windows accepted'}
+ Remove-Item Function:Get-Process
+ 'INDEPENDENT_INSTALLED_PUBLISHED_BASELINES_AND_OPTIONAL_VISIBLE_WINDOW_PASS'
+}finally{
+ if(![IO.Path]::GetFullPath($recoveryFixture).StartsWith([IO.Path]::GetTempPath(),[StringComparison]::OrdinalIgnoreCase)){throw 'Recovery fixture cleanup escaped temp'}
+ Remove-Item -LiteralPath $recoveryFixture -Recurse -Force
+}
+$NativeUpdateFrom='0.0.121.0';$ExpectedVersion='0.0.122.0'
 $fn=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Test-NativeGateway'},$true)
 . ([scriptblock]::Create($fn.Extent.Text))
 $nativeSampleHome=Join-Path ([IO.Path]::GetTempPath()) ('native-release-test-'+[Guid]::NewGuid().ToString('N'))

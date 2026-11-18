@@ -1,6 +1,7 @@
 param([string]$Operator=(Join-Path $PSScriptRoot '../deploy-ecs.ps1'),[string]$OuterOperator='')
 $ErrorActionPreference='Stop'
 $ResumeSigned=$false
+$RetireRollbackBuild='';$RetireRollbackSha256='';$ChannelRecoveryMsix=''
 Set-StrictMode -Version Latest
 $errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($Operator,[ref]$null,[ref]$errors)

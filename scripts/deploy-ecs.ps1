@@ -34,6 +34,7 @@
   split packages, bundles, ZIPs, or CH2/R2 operations.
   -BuildOnly with -Commit stops after the unsigned package build: no signing, install or publication.
   -SkipLocalInstall signs and publishes without touching the installed app/profile; local acceptance is explicitly skipped.
+  -ChannelRecoveryMsix binds the signed ECS predecessor separately when a local pilot is newer than the published channel.
   -BuildSource must equal <selected Output>\source; detached worktrees share Hermes objects.
   -Latest commits Runtime changes, merges/pushes GitHub main and syncs pinned Hermes before building.
   Dirty Hermes changes are committed and pushed, then require separate qualification before the gitlink advances. Git conflicts stop without discarding work.
@@ -90,6 +91,7 @@ param(
   [string]$ExpectedVersion = '',
   [string]$ExpectedChannelSha256 = '',
   [string]$RecoveryMsix = '',
+  [string]$ChannelRecoveryMsix = '',
   [string]$NativeUserData = '',
   [string]$ProfileSampleManifest = '',
   [string]$CriticalFileManifest = '',
@@ -117,7 +119,7 @@ $script:sourceRecreated = $false
 $script:nativePreflight=$null
 $script:SourceBinding=$null
 function Assert-NativeReleaseOptions {
-  if(!$NativeUpdateFrom){return}
+  if(!$NativeUpdateFrom){if($ChannelRecoveryMsix){throw 'ChannelRecoveryMsix requires native publish-only mode'};return}
   if(!$NativePublishOnly -or $BuildMode -cne 'Prod' -or !$SkipLocalInstall -or $Latest -or $BuildOnly -or $LocalOnly -or
      $DesktopOnly -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly){
     throw 'Native release requires NativePublishOnly, explicit Prod, SkipLocalInstall and exact source; incompatible release modes are forbidden.'
@@ -264,6 +266,7 @@ function Initialize-ReleasePaths {
   }
   if($AcceptanceNodeModules){$script:AcceptanceNodeModules=Assert-LocalWindowsPath $AcceptanceNodeModules}
   if($CredentialsEnv){$script:CredentialsEnv=(Resolve-Path -LiteralPath $CredentialsEnv -ErrorAction Stop).ProviderPath;$null=Get-EcsSshPassword $CredentialsEnv}
+  if($ChannelRecoveryMsix){$script:ChannelRecoveryMsix=Assert-LocalWindowsPath $ChannelRecoveryMsix}
   $git=(Get-Command git.exe -CommandType Application -ErrorAction Stop).Source
   Set-ReleaseEnvironment 'PATH' ((Split-Path -Parent $git)+';'+$env:PATH)
   $trust=@($Repository.Replace('\','/'))
@@ -668,6 +671,7 @@ function Restore-SignedRelease {
     ExpectedVersion='expectedVersion';ExpectedChannelSha256='expectedChannelSha256';NativeUserData='nativeUserData';
     RecoveryMsix='recoveryMsix';ProfileSampleManifest='profileSampleManifest';CriticalFileManifest='criticalFileManifest'}
   foreach($key in $map.Keys){Set-Variable -Scope Script -Name $key -Value $binding.($map[$key]) -WhatIf:$false}
+  if($binding.PSObject.Properties['channelRecoveryMsix']){$script:ChannelRecoveryMsix=[string]$binding.channelRecoveryMsix}
   $script:SkipLocalInstall=$true;$script:NativePublishOnly=$true
   $script:Msix=Join-Path $Output 'SemantierAgent.msix'
   if((Hash $script:Msix) -cne $saved.receipt.sha256){throw 'Retained signed MSIX changed; resume STOP.'}
@@ -1414,6 +1418,17 @@ const fd=fs.openSync(path,'r');fs.closeSync(fd);console.log('Prebuilt cache read
     prebuiltArchive=$archive;prebuiltSha256=(Hash $archive)}
   Report-Status 'Build preflight PASS: Windows tools, VS/SDK, Rust, native prebuilt and verified Electron caches ready.'
 }
+function Install-LocalPilotPackage([string]$SignedPackage,$Volume) {
+  $current=@(Get-AppxPackage -Name $identity)
+  if($current.Count -ne 1 -or $current[0].Publisher -cne $publisher){
+    throw 'Local pilot requires one existing package with the verified publisher.'
+  }
+  if([Version]$Version -le [Version]$current[0].Version){
+    throw 'Local pilot requires a newer version; downgrade and same-version replacement are forbidden.'
+  }
+  # In-place Windows deployment preserves registration and package data on failure.
+  Add-AppxPackage -Path $SignedPackage -Volume $Volume -ForceTargetApplicationShutdown
+}
 function Remove-ExistingAcceptancePackage {
   # Removing the bundle unregisters its main/resource packages for this user.
   # Do not remove other products, other users' installations, or profile files.
@@ -1875,12 +1890,14 @@ if (!$LocalOnly) {
   Write-Host 'Checking native SSH access (enter the ECS password if prompted).'
   $null=Ssh "set -eu; test -d '$RemoteRoot/releases'; test ! -L '$RemoteRoot'; command -v sha256sum"
 }
-$script:runBinding=([ordered]@{mode=$BuildMode;skipLocalInstall=[bool]$SkipLocalInstall;inputSha256=$ExpectedInputSha256;source=$SourceCommit;version=$Version;build=$BuildId;
+$bindingFields=[ordered]@{mode=$BuildMode;skipLocalInstall=[bool]$SkipLocalInstall;inputSha256=$ExpectedInputSha256;source=$SourceCommit;version=$Version;build=$BuildId;
   nativeUpdateFrom=$NativeUpdateFrom;expectedVersion=$ExpectedVersion;expectedChannelSha256=$ExpectedChannelSha256;
   nativePublishOnly=[bool]$NativePublishOnly;
   nativeUserData=$NativeUserData;recoveryMsix=$RecoveryMsix;profileSampleManifest=$ProfileSampleManifest;criticalFileManifest=$CriticalFileManifest;
   signer=$Thumbprint;target=$SshTarget;root=$RemoteRoot;origin=$PublicBase;profile=$UserProfile;
-  setupContract='verify-remote-expected-sha256-v2';channelContract='current-only-channel-metadata-v1'} | ConvertTo-Json -Compress)
+  setupContract='verify-remote-expected-sha256-v2';channelContract='current-only-channel-metadata-v1'}
+if($ChannelRecoveryMsix){$bindingFields.channelRecoveryMsix=$ChannelRecoveryMsix}
+$script:runBinding=$bindingFields | ConvertTo-Json -Compress
 if (!$Commit -and !$NewRun -and !$PSBoundParameters.ContainsKey('Output')) {
   $candidates=Get-ChildItem -LiteralPath (Split-Path -Parent $Output) -Directory -Filter 'ecs-deploy-*' |
     Sort-Object LastWriteTime -Descending
@@ -2036,10 +2053,14 @@ try {
     } else {$installVolume=@($volumes | Where-Object {$_.IsSystemVolume})}
     if($installVolume.Count -ne 1 -or $installVolume[0].IsOffline){throw 'Existing/system AppX installation volume is unavailable.'}
     if($BuildMode -eq 'Prod' -and (Test-Path -LiteralPath $backup)){Preserve-Databases 'verify'}
-    Remove-ExistingAcceptancePackage
-    Complete-Checkpoint 'uninstalled'
     Report-Status ('Installing on explicit AppX volume: '+$installVolume[0].PackageStorePath)
-    Add-AppxPackage -Path $signed -Volume $installVolume[0] -ForceApplicationShutdown -ForceUpdateFromAnyVersion
+    if($LocalOnly){
+      Install-LocalPilotPackage $signed $installVolume[0]
+    } else {
+      Remove-ExistingAcceptancePackage
+      Complete-Checkpoint 'uninstalled'
+      Add-AppxPackage -Path $signed -Volume $installVolume[0] -ForceApplicationShutdown -ForceUpdateFromAnyVersion
+    }
   }
   if($BuildMode -eq 'Prod'){
   $registered=@(Get-AppxPackage -Name $identity)
