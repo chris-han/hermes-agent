@@ -8,6 +8,7 @@ const original = window.hermesDesktop
 const connection = $connection.get()
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   window.hermesDesktop = original
   $connection.set(connection)
 })
@@ -54,5 +55,51 @@ it('ignores a completed folder operation from the previous account', async () =>
   act(() => connect('b'))
   await act(async () => finish({ state: 'Synced', folder: 'A-private-folder' }))
   await waitFor(() => expect(screen.getByText('No folder selected')).toBeTruthy())
+  expect(screen.queryByText('A-private-folder')).toBeNull()
+})
+
+it('clears a failed status poll after recovery and retains current engine errors', async () => {
+  vi.useFakeTimers()
+
+  const status = vi.fn()
+    .mockRejectedValueOnce(new Error('identity timeout'))
+    .mockResolvedValueOnce({ state: 'Synced', folder: 'pilot' })
+    .mockResolvedValue({ state: 'Error', folder: 'pilot', message: 'Engine unavailable' })
+
+  window.hermesDesktop = {
+    ...original,
+    fileSync: { status, choose: vi.fn(), pause: vi.fn(), resume: vi.fn() }
+  }
+  connect('a')
+  render(<FileSyncSettings />)
+  await act(async () => {})
+  expect(screen.getByRole('alert').textContent).toContain('Reconnect your Workspace')
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+  expect(screen.getByText('Synced')).toBeTruthy()
+  expect(screen.queryByRole('alert')).toBeNull()
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+  expect(screen.getByText('Error')).toBeTruthy()
+  expect(screen.getByRole('alert').textContent).toBe('Engine unavailable')
+})
+
+it('does not let a previous account poll clear the current account error', async () => {
+  vi.useFakeTimers()
+
+  let finish: (value: any) => void = () => {}
+
+  const status = vi.fn()
+    .mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    .mockRejectedValue(new Error('current owner offline'))
+
+  window.hermesDesktop = {
+    ...original,
+    fileSync: { status, choose: vi.fn(), pause: vi.fn(), resume: vi.fn() }
+  }
+  connect('a')
+  render(<FileSyncSettings />)
+  await act(async () => { connect('b') })
+  expect(screen.getByRole('alert').textContent).toContain('Reconnect your Workspace')
+  await act(async () => { finish({ state: 'Synced', folder: 'A-private-folder' }) })
+  expect(screen.getByRole('alert').textContent).toContain('Reconnect your Workspace')
   expect(screen.queryByText('A-private-folder')).toBeNull()
 })

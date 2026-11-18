@@ -32,7 +32,10 @@ export function FileSyncSettings() {
         {void api
           .status()
           .then(s => {
-            if (live) {setStatus(s)}
+            if (live) {
+              setStatus(s)
+              setError('')
+            }
           })
           .catch(() => {
             if (live) {setError(zh ? '请重新连接工作区。' : 'Reconnect your Workspace to see File Sync status.')}
