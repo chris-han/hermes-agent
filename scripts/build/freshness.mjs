@@ -63,6 +63,15 @@ export function sourceHash(source, product) {
     const parts = name.split('/')
     return (!name.startsWith('scripts/') && parts.some(part => generated.has(part)))
       || (product === 'tui' && (parts.includes('__tests__') || /\.(test|spec)(-d)?\.[cm]?[jt]sx?$/.test(name)))
+      // Desktop tests and operator-only tools do not contribute compiled or
+      // packaged bytes. Keep production scripts (including the native updater)
+      // and public/assets documentation in the input identity.
+      || (product === 'desktop' && (
+        parts.includes('__tests__')
+        || /\.(test|spec)(-d)?\.(?:[cm]?[jt]sx?|ps1)$/.test(name)
+        || /^apps\/desktop\/(?:e2e|docs|scripts\/perf)(?:\/|$)/.test(name)
+        || /^apps\/desktop\/[^/]+\.md$/.test(name)
+      ))
       || parts.some(part => part.startsWith('.dist-') || part.startsWith('.staging-') || part === '__pycache__')
       || name.endsWith('.tsbuildinfo') || name.endsWith('.pyc')
   })

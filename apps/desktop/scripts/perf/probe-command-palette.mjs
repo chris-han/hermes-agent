@@ -1,13 +1,13 @@
 // ⌘K open latency, measured in-page (no CDP round-trip in the number).
 //
-//   node scripts/probe-command-palette.mjs [--port 9222] [--rounds 8]
+//   node scripts/perf/probe-command-palette.mjs [--port 9222] [--rounds 8]
 //
 // Reports, per round, the time from the keydown the app actually receives to:
 //   frame_ms  — the dialog frame + input in the DOM and painted (what "instant"
 //               means: the overlay owes you a frame immediately)
 //   rows_ms   — the row list painted (may lag frame_ms; rows are deferred)
 // plus any long tasks in the window, so a slow open is attributable.
-import { CDP, sleep } from './perf/lib/cdp.mjs'
+import { CDP, sleep } from './lib/cdp.mjs'
 
 const args = process.argv.slice(2)
 const flag = name => {
