@@ -11,6 +11,9 @@
  *   - packager.appInfo.productFilename: the exe basename (e.g. 'Hermes')
  */
 
+import { createRequire } from 'node:module'
+const { verifyFilexInputs } = createRequire(import.meta.url)('./filex-inputs.cjs')
+import { channelBuildRequest } from '../../../scripts/msix-shared.mjs'
 import path from 'node:path'
 import fs from 'node:fs'
 import { copyFile, mkdir, readdir } from 'node:fs/promises'
@@ -144,6 +147,9 @@ export default async function afterPack(context) {
     config: context.packager.config,
     resourcesDir: context.packager.buildResourcesDir,
   })
+  if (process.env.SEMANTIER_DESKTOP_VERSION || channelBuildRequest()?.semantierScope === 'semantier-windows-x64/v1') {
+    verifyFilexInputs(path.resolve(import.meta.dirname, '..'), 'win32', 'x64', path.join(context.appOutDir, 'resources', 'filex'))
+  }
   rehashPayloadDigests(payload)
   // Keep every offline wheel, but collapse the loose cache only AFTER all PE
   // members have passed the sanitizer and optional binary signer above.

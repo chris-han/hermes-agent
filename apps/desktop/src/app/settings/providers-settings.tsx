@@ -171,10 +171,11 @@ function OAuthPicker({
   // names it (Nous · free tier) and offers the sign-in that keeps its connectors.
   const isConnected = (p: OAuthProvider) => Boolean(p.status?.logged_in) && p.status?.free_tier !== true
 
-  const featured =
-    ordered.find(p => p.id === FEATURED_ID && !isConnected(p)) ??
-    ordered.find(p => p.id === 'nous' && !isConnected(p)) ??
-    null
+  const cloud = ordered.find(p => p.id === FEATURED_ID)
+  // A connected primary stays in Connected; it must not promote another account.
+  const featured = cloud
+    ? isConnected(cloud) ? null : cloud
+    : ordered.find(p => p.id === 'nous' && !isConnected(p)) ?? null
 
   const rest = featured ? ordered.filter(p => p.id !== featured.id) : ordered
   // Keep connected accounts grouped and always visible; only the unconnected
@@ -200,7 +201,9 @@ function OAuthPicker({
       <p className="-mt-2 mb-1 text-[length:var(--conversation-caption-font-size)] leading-(--conversation-caption-line-height) text-(--ui-text-tertiary)">
         {p.intro}
       </p>
-      {featured && <FeaturedProviderRow onSelect={select} provider={featured} />}
+      {featured && (featured.id === FEATURED_ID
+        ? <FeaturedProviderRow onSelect={select} provider={featured} />
+        : <ProviderRow onSelect={select} provider={featured} />)}
 
       {connected.length > 0 && (
         <>

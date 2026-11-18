@@ -51,6 +51,9 @@ export interface NativeUpdateHandoff {
   applicationId: string
   executable: string
   userDataDirectory: string
+  backendHome: string
+  activeProfile: string
+  credentialScope: string
   journalDirectory: string
 }
 

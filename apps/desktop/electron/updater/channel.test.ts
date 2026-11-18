@@ -1013,6 +1013,7 @@ test('native graph resolution reads only metadata and preserves the legacy head 
             app: { getPath: () => directory },
             resourcesPath: directory,
             log: () => {},
+            continuity: () => ({ backendHome: path.join(directory, 'original-home'), activeProfile: 'work' }),
             inspect: async () => ({
               identity: target.package.identity,
               signer: target.package.publisher!,
@@ -1032,6 +1033,10 @@ test('native graph resolution reads only metadata and preserves the legacy head 
               expect(handoff?.manifestSha256).toBe(target.manifestSha256)
               expect(handoff?.targetCommit).toBe(next.commit)
               expect(handoff?.base).toBe(f.build.publicBase)
+              expect(handoff?.backendHome).toBe(path.join(directory, 'original-home'))
+              expect(handoff?.activeProfile).toBe('work')
+              expect(handoff?.credentialScope).toBe(path.join(directory, 'original-home', 'profiles', 'work'))
+              expect(handoff?.userDataDirectory).toBe(directory)
               calls.push('native-owner-ready')
 
               return {

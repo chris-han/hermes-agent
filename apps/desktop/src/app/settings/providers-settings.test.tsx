@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useRouteEnumParam } from '@/app/hooks/use-route-enum-param'
 import { ConfirmHost } from '@/components/confirm-host'
+import { I18nProvider, TRANSLATIONS } from '@/i18n'
+import { modelServiceCopy } from '@/i18n/model-service'
 import * as externalLinks from '@/lib/external-link'
 import { $confirmRequest } from '@/store/confirm'
 import type { EnvVarInfo, OAuthProvider } from '@/types/hermes'
@@ -564,6 +566,51 @@ describe('ProvidersSettings', () => {
     expect(startManualProviderOAuth).toHaveBeenCalledWith('nous', expect.anything())
     expect(open).not.toHaveBeenCalled()
     expect(screen.queryByText('Semantier Model Provider')).toBeNull()
+    expect(screen.queryByText(/One subscription, 300\+|recommended way to run/i)).toBeNull()
+  })
+
+  it('keeps connected Cloud in Connected without featuring unconnected Nous', async () => {
+    listOAuthProviders.mockResolvedValue({
+      providers: [provider('semantier-cloud', true), provider('nous', false)]
+    })
+    render(<ProvidersSettings onClose={vi.fn()} onViewChange={vi.fn()} view="accounts" />)
+    expect(await screen.findByText('Semantier Model Provider')).toBeTruthy()
+    expect(screen.getAllByText('Connected').length).toBeGreaterThan(0)
+    expect(screen.queryByText('Recommended')).toBeNull()
+    expect(screen.queryByText('Nous Portal')).toBeNull()
+    fireEvent.click(screen.getByText('Other providers'))
+    const nous = screen.getByRole('button', { name: /Nous Portal/ })
+    expect(nous.textContent).not.toMatch(/Semantier Model Provider|recommended|subscription/i)
+    fireEvent.click(nous)
+    expect(startManualProviderOAuth).toHaveBeenLastCalledWith('nous', expect.anything())
+  })
+
+  it('keeps alternative providers available when neither Cloud nor Nous exists', async () => {
+    listOAuthProviders.mockResolvedValue({ providers: [provider('minimax-oauth', false)] })
+    render(<ProvidersSettings onClose={vi.fn()} onViewChange={vi.fn()} view="accounts" />)
+    expect(await screen.findByText('Other providers')).toBeTruthy()
+    expect(screen.queryByText('Recommended')).toBeNull()
+    fireEvent.click(screen.getByText('Other providers'))
+    fireEvent.click(screen.getByText('MiniMax'))
+    expect(startManualProviderOAuth).toHaveBeenLastCalledWith('minimax-oauth', expect.anything())
+  })
+
+  it.each(['en', 'zh'] as const)('renders truthful Accounts recommendations in %s', async locale => {
+    const copy = TRANSLATIONS[locale]
+    listOAuthProviders.mockResolvedValue({
+      providers: [provider('semantier-cloud', true), provider('nous', false)]
+    })
+    render(
+      <I18nProvider configClient={null} initialLocale={locale}>
+        <ProvidersSettings onClose={vi.fn()} onViewChange={vi.fn()} view="accounts" />
+      </I18nProvider>
+    )
+    expect(await screen.findByText(modelServiceCopy[locale].providerName)).toBeTruthy()
+    expect(screen.getAllByText(copy.settings.providers.connected).length).toBeGreaterThan(0)
+    expect(screen.queryByText(copy.onboarding.recommended)).toBeNull()
+    expect(screen.queryByText(copy.onboarding.featuredPitch)).toBeNull()
+    fireEvent.click(screen.getByText(copy.onboarding.otherProviders))
+    expect(screen.getByRole('button', { name: /Nous Portal/ }).textContent).not.toContain(modelServiceCopy[locale].signIn)
   })
 
   it('offers a Local / custom endpoint entry in the API-keys tab that opens the custom-endpoint flow', async () => {

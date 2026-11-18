@@ -35,6 +35,50 @@ $NativePublishOnly=$true;$Commit='a'*40
 $channel=Join-Path $PSScriptRoot '../deploy-ecs-channel1.ps1'
 $ast=[Management.Automation.Language.Parser]::ParseFile($channel,[ref]$null,[ref]$errors)
 if($errors){throw ($errors | Out-String)}
+foreach($name in @('Test-NativeChannelRecovery','Get-NativeWindow')){
+ $definition=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true)
+ if(!$definition){throw ('Missing independent baseline verifier: '+$name)}
+ . ([scriptblock]::Create($definition.Extent.Text))
+}
+$recoveryFixture=Join-Path ([IO.Path]::GetTempPath()) ('native-channel-recovery-'+[Guid]::NewGuid().ToString('N'))
+$null=[IO.Directory]::CreateDirectory($recoveryFixture)
+try{
+ Add-Type -AssemblyName System.IO.Compression.FileSystem
+ $fixtureManifest=Join-Path $recoveryFixture 'AppxManifest.xml'
+ [IO.File]::WriteAllText($fixtureManifest,'<Package><Identity Name="Semantier.Agent.Acceptance" Publisher="CN=Fixture" Version="0.0.123.0" ProcessorArchitecture="x64"/></Package>')
+ $recoveryPackage=Join-Path $recoveryFixture 'published123.msix'
+ $zip=[IO.Compression.ZipFile]::Open($recoveryPackage,'Create')
+ try{$null=[IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip,$fixtureManifest,'AppxManifest.xml')}finally{$zip.Dispose()}
+ function Hash {param($Path);return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()}
+ function Require-Signature {param($Path);if($script:foreignChannelSigner){throw 'foreign signer'}}
+ function Read-ZipText {param($Archive,$Name);$reader=[IO.StreamReader]::new($Archive.GetEntry($Name).Open());try{return $reader.ReadToEnd()}finally{$reader.Dispose()}}
+ $script:foreignChannelSigner=$false
+ $identity='Semantier.Agent.Acceptance';$publisher='CN=Fixture';$ExpectedVersion='0.0.126.0';$RecoveryMsix='installed125.msix'
+ $remote=@{packageSha256=(Hash $recoveryPackage);manifest=@{request=@{windowsVersion='0.0.123.0'}}}
+ $verified=Test-NativeChannelRecovery $remote $recoveryPackage
+ if($verified.version -cne '0.0.123.0' -or $verified.path -cne $recoveryPackage){throw 'Published baseline was replaced by installed baseline'}
+ foreach($case in @('hash','version','identity','signer','target')){
+  $remote.packageSha256=Hash $recoveryPackage;$remote.manifest.request.windowsVersion='0.0.123.0';$identity='Semantier.Agent.Acceptance';$script:foreignChannelSigner=$false;$ExpectedVersion='0.0.126.0'
+  switch($case){hash{$remote.packageSha256='f'*64}version{$remote.manifest.request.windowsVersion='0.0.125.0'}identity{$identity='foreign'}signer{$script:foreignChannelSigner=$true}target{$ExpectedVersion='0.0.123.0'}}
+  $failed=$false;try{$null=Test-NativeChannelRecovery $remote $recoveryPackage}catch{$failed=$true}
+  if(!$failed){throw ('Unsafe published baseline accepted: '+$case)}
+ }
+ $script:fixtureWindows=@()
+ function Get-Process {param($Id);return $script:fixtureWindows}
+ $windowPackage=@{InstallLocation='C:\fixture-package'}
+ if($null -ne (Get-NativeWindow $windowPackage -AllowStopped)){throw 'Missing window invented'}
+ $failed=$false;try{$null=Get-NativeWindow $windowPackage}catch{$failed=$true};if(!$failed){throw 'Interactive acceptance permitted without a window'}
+ $script:fixtureWindows=@([pscustomobject]@{Path='C:\fixture-package\app\Semantier Agent.exe';MainWindowHandle=1})
+ if(!(Get-NativeWindow $windowPackage -AllowStopped)){throw 'Real window lost'}
+ $script:fixtureWindows+=$script:fixtureWindows[0]
+ $failed=$false;try{$null=Get-NativeWindow $windowPackage -AllowStopped}catch{$failed=$true};if(!$failed){throw 'Ambiguous windows accepted'}
+ Remove-Item Function:Get-Process
+ 'INDEPENDENT_INSTALLED_PUBLISHED_BASELINES_AND_OPTIONAL_VISIBLE_WINDOW_PASS'
+}finally{
+ if(![IO.Path]::GetFullPath($recoveryFixture).StartsWith([IO.Path]::GetTempPath(),[StringComparison]::OrdinalIgnoreCase)){throw 'Recovery fixture cleanup escaped temp'}
+ Remove-Item -LiteralPath $recoveryFixture -Recurse -Force
+}
+$NativeUpdateFrom='0.0.121.0';$ExpectedVersion='0.0.122.0'
 $fn=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Test-NativeGateway'},$true)
 . ([scriptblock]::Create($fn.Extent.Text))
 $nativeSampleHome=Join-Path ([IO.Path]::GetTempPath()) ('native-release-test-'+[Guid]::NewGuid().ToString('N'))
@@ -74,7 +118,7 @@ try {
  function Complete-Checkpoint {param($Stage);$script:completedStages+=@($Stage)}
  function Invoke-NativeUpdateAcceptance {throw 'Publish-only invoked the native client updater'}
  & ([scriptblock]::Create($branch.Extent.Text))
- if($receipt.result -cne 'PUBLISHED_122_CLIENT_NOT_YET_VERIFIED' -or $receipt.nativeAcceptance -cne 'NOT_RUN_OWNER_MANUAL' -or
+ if($receipt.result -cne 'PUBLISHED_READY_FOR_USER_UPDATE' -or $receipt.nativeAcceptance -cne 'NOT_RUN_OWNER_MANUAL' -or
    'native-verified' -in $script:completedStages -or 'finished' -notin $script:completedStages){throw 'False native acceptance or missing publish-only completion'}
  'NATIVE_PUBLISH_ONLY_NO_INSTALL_PASS'
 }finally{Remove-Item -LiteralPath (Join-Path $Output 'channel1-metadata.json');Remove-Item -LiteralPath $Output}
@@ -85,7 +129,7 @@ $Output=Join-Path ([IO.Path]::GetTempPath()) ('native-replay-test-'+[Guid]::NewG
 [IO.Directory]::CreateDirectory($Output)|Out-Null
 try {
  $Commit='';$SourceCommit='a'*40;$ExpectedVersion='0.0.122.0';$NativePublishOnly=$true;$RemoteRoot='/fixture'
- $saved=@{result='PUBLISHED_122_CLIENT_NOT_YET_VERIFIED';plan=@{sourceCommit=$SourceCommit;version=$ExpectedVersion;buildId='b'*32};signedMsix=(Join-Path $Output 'SemantierAgent.msix');sha256='a'*64}
+ $saved=@{result='PUBLISHED_READY_FOR_USER_UPDATE';plan=@{sourceCommit=$SourceCommit;version=$ExpectedVersion;buildId='b'*32};signedMsix=(Join-Path $Output 'SemantierAgent.msix');sha256='a'*64}
  [IO.File]::WriteAllText((Join-Path $Output 'result.json'),($saved|ConvertTo-Json))
  [IO.File]::WriteAllText((Join-Path $Output 'channel1-metadata.json'),'{"manifest":{}}')
  $script:fixtureHash='a'*64
@@ -100,6 +144,9 @@ try {
  if(!(Test-NativeCompletedRelease)){throw 'Completed publication did not revalidate'}
  $verified=Get-Content (Join-Path $Output 'result.json') -Raw|ConvertFrom-Json
  if($verified.publicationVerification -cne 'PASS' -or $verified.nativeAcceptance -cne 'NOT_RUN_OWNER_MANUAL'){throw 'Replay false native PASS'}
+ $saved.result='PUBLISHED_122_CLIENT_NOT_YET_VERIFIED'
+ [IO.File]::WriteAllText((Join-Path $Output 'result.json'),($saved|ConvertTo-Json))
+ if(!(Test-NativeCompletedRelease)){throw 'Legacy122 publication replay lost compatibility'}
  $script:fixtureHash='c'*64;$failed=$false
  try{$null=Test-NativeCompletedRelease}catch{$failed=$true}
  if(!$failed){throw 'Changed signed artifact accepted by replay'}

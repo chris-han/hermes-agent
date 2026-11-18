@@ -36,6 +36,19 @@ function Test-NativeGateway($Package,[string]$ProfileHome) {
   }
   return @{pid=$process.ProcessId;birth=$process.CreationDate.ToUniversalTime().ToString('o');home=$ProfileHome;executable=$process.ExecutablePath;sid=$sid;session=$process.SessionId}
 }
+function Test-NativeChannelRecovery($Remote,[string]$Path) {
+  if($Path -ine $RecoveryMsix){Require-Signature $Path}
+  if((Hash $Path) -cne $Remote.packageSha256){throw 'Signed channel recovery and ECS baseline package mismatch'}
+  $archive=[IO.Compression.ZipFile]::OpenRead($Path)
+  try{[xml]$manifest=Read-ZipText $archive 'AppxManifest.xml'}finally{$archive.Dispose()}
+  $native=$manifest.Package.Identity
+  $version=$Remote.manifest.request.windowsVersion
+  if($native.Name -cne $identity -or $native.Publisher -cne $publisher -or $native.Version -cne $version -or $native.ProcessorArchitecture -cne 'x64'){
+    throw 'Signed channel recovery identity/publisher/version mismatch'
+  }
+  if([Version]$ExpectedVersion -le [Version]$version){throw 'Native target must advance both installed and published baselines'}
+  return @{path=$Path;version=$version;sha256=$Remote.packageSha256}
+}
 function Test-NativeReleasePreflight {
   if($RemoteRoot -cnotmatch '^/opt/[A-Za-z0-9_/-]+/releases$' -or $RemoteRoot.Contains('/../') -or
     $SshTarget -cnotmatch '^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+$' -or $PublicBase -cne 'https://download.semantier.cn') {throw 'Invalid native release destination'}
@@ -58,7 +71,7 @@ function Test-NativeReleasePreflight {
   if($LASTEXITCODE -ne 0){throw 'Existing curl_cffi environment unavailable'}
   $samples=Get-NativeProfileSamples
   $gateway=Test-NativeGateway $package[0] $UserProfile
-  $null=Get-NativeWindow $package[0]
+  $window=Get-NativeWindow $package[0] -AllowStopped:$NativePublishOnly
   $dirty=& git.exe -C $Repository status --porcelain
   if($LASTEXITCODE -ne 0 -or $dirty){throw 'Native release source must be committed and clean'}
   $applicationCommit=if($Commit){$Commit}else{$SourceCommit}
@@ -75,12 +88,12 @@ function Test-NativeReleasePreflight {
   if((Get-PSDrive ([IO.Path]::GetPathRoot($Output).Substring(0,1))).Free -lt 12GB){throw 'Insufficient native build space'}
   $code=@'
 import hashlib,json,pathlib,sys
-root=pathlib.Path(sys.argv[1]);expected=sys.argv[2];version=sys.argv[3]
+root=pathlib.Path(sys.argv[1]);expected=sys.argv[2];identity=sys.argv[3]
 p=root/'releases/channels/semantier-acceptance.json'
 body=p.read_bytes();assert hashlib.sha256(body).hexdigest()==expected,'Concurrent channel pointer'
 r=json.loads(body);h=r['nativeHead'];m=root/h['manifestKey'];b=m.read_bytes()
 assert hashlib.sha256(b).hexdigest()==h['sha256'];manifest=json.loads(b)
-assert manifest['request']['windowsVersion']==version and r['state']=='active'
+assert manifest['request']['identity']['msixAppIdWithOrg']==identity and r['state']=='active'
 row=manifest['packages'][0];a=root/row['artifact']['key']
 with a.open('rb') as stream:assert hashlib.file_digest(stream,'sha256').hexdigest()==row['artifact']['sha256']
 assert a.samefile(root/'releases/SemantierAgent.msix')
@@ -90,20 +103,21 @@ print(json.dumps({'pointerSha256':expected,'record':r,'manifest':manifest,'packa
  'caddySha256':hashlib.sha256(pathlib.Path('/opt/semantier-cloud-live-v1/Caddyfile').read_bytes()).hexdigest()}))
 '@
   $encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($code))
-  $remote=Ssh "printf '%s' '$encoded' | base64 -d | python3 - '$RemoteRoot' '$ExpectedChannelSha256' '$NativeUpdateFrom'"
+  $remote=Ssh "printf '%s' '$encoded' | base64 -d | python3 - '$RemoteRoot' '$ExpectedChannelSha256' '$identity'"
   $remote=$remote | ConvertFrom-Json
-  if((Hash $RecoveryMsix) -cne $remote.packageSha256){throw 'Local recovery and ECS baseline package mismatch'}
-  $public=Test-NativePublic $remote.manifest $RecoveryMsix -Active
+  $channelRecovery=Test-NativeChannelRecovery $remote $(if($ChannelRecoveryMsix){$ChannelRecoveryMsix}else{$RecoveryMsix})
+  $public=Test-NativePublic $remote.manifest $channelRecovery.path -Active
   return @{result='PASS';stage='READ_ONLY_PREFLIGHT';producedAt=[DateTime]::UtcNow.ToString('o');source=$script:SourceBinding;
     journalReadiness=$journalReadiness;baseline=$NativeUpdateFrom;target=$ExpectedVersion;family=$package[0].PackageFamilyName;signature=$signature;
-    recoveryMsix=$RecoveryMsix;recoverySha256=$remote.packageSha256;remote=$remote;gateway=$gateway;files=$samples;
+    recoveryMsix=$RecoveryMsix;recoverySha256=(Hash $RecoveryMsix);channelRecovery=$channelRecovery;remote=$remote;gateway=$gateway;files=$samples;
+    visibleWindow=$(if($window){'PRESENT'}else{'NOT_OBSERVED_NO_UI_ACCEPTANCE'});
     public=$public;profileManifests=@{samples=(Hash $ProfileSampleManifest);critical=(Hash $CriticalFileManifest)};llmCalls=0}
 }
 function Test-NativeCompletedRelease {
   $path=Join-Path $Output 'result.json'
   if(!(Test-Path -LiteralPath $path)){return $false}
   $saved=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
-  if($NativePublishOnly -and $saved.result -ceq 'PUBLISHED_122_CLIENT_NOT_YET_VERIFIED'){
+  if($NativePublishOnly -and $saved.result -cin @('PUBLISHED_READY_FOR_USER_UPDATE','PUBLISHED_122_CLIENT_NOT_YET_VERIFIED')){
     $applicationCommit=if($Commit){$Commit}else{$SourceCommit}
     if($saved.plan.sourceCommit -cne $applicationCommit -or $saved.plan.version -cne $ExpectedVersion -or
       $saved.signedMsix -ine (Join-Path $Output 'SemantierAgent.msix') -or (Hash $saved.signedMsix) -cne $saved.sha256){throw 'Completed publication binding changed'}
@@ -164,8 +178,9 @@ print(json.dumps({'result':'H2_H3_RANGE_PASS','responses':rows}))
   if($LASTEXITCODE -ne 0){throw 'Native public H2/H3 Range or immutable metadata check failed'}
   return ($result | ConvertFrom-Json)
 }
-function Get-NativeWindow($Package) {
+function Get-NativeWindow($Package,[switch]$AllowStopped) {
   $windows=@(Get-Process | Where-Object {$_.Path -ieq (Join-Path $Package.InstallLocation 'app/Semantier Agent.exe') -and $_.MainWindowHandle -ne 0})
+  if($windows.Count -eq 0 -and $AllowStopped){return $null}
   if($windows.Count -ne 1){throw 'Expected exactly one real installed application window'}
   return $windows[0]
 }
@@ -191,7 +206,7 @@ function Publish-Channel1Artifacts([string]$Signed, [string]$Root, [string]$Stag
     $null=Ssh "python3 -B '$Stage/channel1.py' stage-native $arguments $guard --caddy-sha256 '$($script:nativePreflight.remote.caddySha256)'"
     $candidate=Get-Content -LiteralPath $Metadata -Raw | ConvertFrom-Json
     $receipt.nativePublicBeforePointer=Test-NativePublic $candidate.manifest $Signed
-    $receipt.result='BUILT_SIGNED_122';Save-Json $receipt (Join-Path $Output 'result.json')
+    $receipt.result='BUILT_SIGNED_PACKAGE';Save-Json $receipt (Join-Path $Output 'result.json')
     $arguments+=$guard
   }
   return Ssh "python3 -B '$Stage/channel1.py' publish $arguments"

@@ -58,6 +58,116 @@ function New-NativeUpdateJournalDirectory([string]$directory,[string]$sid) {
  foreach($principal in @($sid,'S-1-5-18','S-1-5-32-544')){$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($principal),'FullControl','ContainerInherit,ObjectInherit','None','Allow'))}
  [IO.Directory]::SetAccessControl($directory,$acl)
 }
+function Initialize-NativeUpdateFacts {
+ if(-not ('SemantierNativeUpdateFacts' -as [type])){Add-Type -TypeDefinition @'
+using System;using System.Runtime.InteropServices;using Microsoft.Win32.SafeHandles;
+public static class SemantierNativeUpdateFacts {
+ [StructLayout(LayoutKind.Sequential)] public struct Info {public uint attr;public System.Runtime.InteropServices.ComTypes.FILETIME created,accessed,written;public uint volume,high,low,links,indexHigh,indexLow;}
+ [DllImport("kernel32.dll",SetLastError=true)] public static extern bool GetFileInformationByHandle(SafeFileHandle h,out Info i);
+ [DllImport("wtsapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] public static extern bool WTSQuerySessionInformation(IntPtr s,int id,int info,out IntPtr b,out int n);
+ [DllImport("wtsapi32.dll")] public static extern void WTSFreeMemory(IntPtr p);
+}
+'@}
+}
+
+function Assert-NativeContinuityDirectory([string]$Directory,[string]$Sid) {
+ if(!$Directory -or ![IO.Path]::IsPathRooted($Directory) -or $Directory -match '["\x00\r\n]' -or $Directory.StartsWith('\\')){throw 'Native continuity requires an absolute local directory'}
+ $item=Get-Item -LiteralPath $Directory -Force -ErrorAction Stop
+ if(!$item.PSIsContainer -or $item.FullName.TrimEnd('\') -ine $Directory.TrimEnd('\')){throw 'Native continuity directory is not canonical'}
+ if((Get-Acl -LiteralPath $item.FullName).GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $Sid){throw 'Native continuity directory owner mismatch'}
+ $allowed=@($Sid,'S-1-5-18','S-1-5-32-544')
+ foreach($rule in (Get-Acl -LiteralPath $item.FullName).GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])){
+  if($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -cnotin $allowed -and ($rule.FileSystemRights -band 0xD0156)){throw 'Native continuity directory has a foreign writer'}
+ }
+ $cursor=$item
+ while($cursor){if($cursor.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Native continuity reparse path refused'};$cursor=$cursor.Parent}
+ return $item.FullName
+}
+
+function Read-NativeContinuityJson([string]$File,[string]$Sid) {
+ $item=Get-Item -LiteralPath $File -Force -ErrorAction Stop
+ if($item.PSIsContainer -or $item.Attributes -band [IO.FileAttributes]::ReparsePoint -or $item.Length -gt 4194304 -or
+    (Get-Acl -LiteralPath $File).GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $Sid){throw 'Native continuity metadata owner/path/size invalid'}
+ return (Get-Content -LiteralPath $File -Raw -Encoding UTF8|ConvertFrom-Json)
+}
+
+function Assert-NativeUpdateContinuity($Request,[string]$Sid) {
+ $backendRoot=Assert-NativeContinuityDirectory $Request.backendHome $Sid
+ $data=Assert-NativeContinuityDirectory $Request.userDataDirectory $Sid
+ if($Request.activeProfile -cnotmatch '^[a-z0-9][a-z0-9_-]{0,63}$'){throw 'Native continuity profile invalid'}
+ $scope=if($Request.activeProfile -ceq 'default'){$backendRoot}else{Join-Path $backendRoot ('profiles\'+$Request.activeProfile)}
+ if($Request.credentialScope -ine $scope){throw 'Native continuity credential scope mismatch'}
+ $null=Assert-NativeContinuityDirectory $scope $Sid
+ if([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Request.journalDirectory)) -ine (Join-Path $data 'updates')){throw 'Native continuity journal/userData mismatch'}
+ return $backendRoot
+}
+
+# Read-only target-side compatibility for the already-shipped waiter. Never run
+# a historical script, infer another user's home, or touch credential contents.
+function Get-NativeLegacyRelaunchHome([string]$UserData,$Build,[int]$ProcessId,[string]$RegistryHome) {
+ $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+ $data=Assert-NativeContinuityDirectory $UserData $sid
+ $updates=Join-Path $data 'updates'
+ if(!(Test-Path -LiteralPath $updates)){return $null}
+ $null=Assert-NativeContinuityDirectory $updates $sid
+ $matches=@()
+ $journals=@(Get-ChildItem -LiteralPath $updates -Directory -Filter 'native-*')
+ if($journals.Count -gt 64){throw 'Native continuity journal inventory exceeds limit'}
+ foreach($journal in $journals){
+  $intent=Join-Path $journal.FullName 'intent.json'
+  if(!(Test-Path -LiteralPath $intent)){continue}
+  $null=Assert-NativeContinuityDirectory $journal.FullName $sid
+  $r=Read-NativeContinuityJson $intent $sid
+  if($r.targetBuildId -cne $Build.buildId -or $r.targetCommit -cne $Build.commit -or $r.version -cne $Build.windowsVersion){continue}
+  $matches+=@{request=$r;directory=$journal.FullName}
+ }
+ if(!$matches.Count){return $null}
+ if($matches.Count -ne 1){throw 'Native continuity journal ambiguous; relaunch with original HERMES_HOME and --profile'}
+ $context=$matches[0];$r=$context.request
+ if($r.schema -ne 1 -or $r.authorizedSid -cne $sid -or $r.userDataDirectory -ine $data -or $r.journalDirectory -ine $context.directory -or
+    $r.identity -cne $Build.identity.msixAppIdWithOrg -or $r.manifestSha256 -cnotmatch '^[a-f0-9]{64}$' -or
+    [IO.Path]::GetFileName($context.directory) -cnotmatch ('^native-'+$r.manifestSha256+'-[a-f0-9]{32}$')){throw 'Native continuity journal binding mismatch'}
+ $context.rows=@(Read-NativeUpdateGraph $r)
+ $packages=@(Get-AppxPackage -Name $r.identity|Where-Object{$_.Name -ceq $r.identity})
+ if($packages.Count -ne 1 -or !(Test-NativeUpdateInstalled $context $packages[0]) -or $packages[0].SignatureKind.ToString() -cne 'Developer' -or $packages[0].IsDevelopmentMode){throw 'Native continuity target registration mismatch'}
+ $package=$packages[0]
+ $row=Get-CimInstance Win32_Process -Filter ('ProcessId='+$ProcessId)
+ if(!$row -or $row.SessionId -ne $r.session -or (Invoke-CimMethod -InputObject $row -MethodName GetOwnerSid).Sid -cne $sid){throw 'Native continuity successor actor/session mismatch'}
+ $launchPath=Join-Path $context.directory 'relaunch-intent.json'
+ $launch=Read-NativeContinuityJson $launchPath $sid
+ $manifest=Get-AppxPackageManifest -Package $package.PackageFullName
+ $apps=@($manifest.Package.Applications.Application|Where-Object{$_.Id -ceq $r.applicationId})
+ if($apps.Count -ne 1 -or $row.ExecutablePath -ine (Join-Path $package.InstallLocation $apps[0].Executable) -or
+    $launch.schema -ne 1 -or $launch.manifestSha256 -cne $r.manifestSha256 -or $launch.fullName -cne $package.PackageFullName -or $launch.applicationId -cne $r.applicationId){throw 'Native continuity successor executable/launch mismatch'}
+ Initialize-NativeUpdateFacts
+ $executable=[IO.File]::OpenRead($row.ExecutablePath)
+ try{if((Get-NativeUpdateFileId $executable) -cne $launch.exeId){throw 'Native continuity physical executable identity mismatch'}}finally{$executable.Dispose()}
+ $birth=[DateTimeOffset]$row.CreationDate
+ $started=ConvertTo-NativeWaiterBirth $launch.producedAt
+ if($birth -lt $started -or ($birth-$started).TotalSeconds -gt 30){throw 'Native continuity stale relaunch; relaunch with original HERMES_HOME and --profile'}
+ # Parent PID plus birth binds a still-running waiter. Once it exits, its
+ # append-only completed receipt must identify this exact successor incarnation.
+ $parent=Get-Process -Id $r.waiterPid -ErrorAction SilentlyContinue
+ $live=$parent -and $row.ParentProcessId -eq $r.waiterPid -and ([DateTimeOffset]$parent.StartTime).ToUniversalTime() -eq (ConvertTo-NativeWaiterBirth $r.waiterBirth).ToUniversalTime()
+ if(!$live){
+  $completed=Read-NativeContinuityJson (Join-Path $context.directory 'completed.json') $sid
+  if($completed.status -cne 'TARGET_GRAPH_REGISTERED_PROCESS_LAUNCHED' -or $completed.pid -ne $ProcessId -or
+     [Math]::Abs(((ConvertTo-NativeWaiterBirth $completed.birth).ToUniversalTime()-$birth.ToUniversalTime()).Ticks) -ge 10 -or $completed.sid -cne $sid -or
+     $completed.session -ne $row.SessionId -or $completed.fullName -cne $package.PackageFullName -or $completed.manifestSha256 -cne $r.manifestSha256){throw 'Native continuity successor incarnation unproved'}
+ }
+ if($r.PSObject.Properties.Name -contains 'backendHome'){
+  return (Assert-NativeUpdateContinuity $r $sid)
+ }
+ $suffix=[string]$Build.bundleEnv.HERMES_DATA_DIR_SUFFIX
+ if($suffix -cnotmatch '^(?:-[a-z0-9][a-z0-9_-]{0,63})?$' -or [string]$env:HERMES_DATA_DIR_SUFFIX -cne $suffix -or $Build.bundleEnv.HERMES_HOME){throw 'Native legacy bundle home unproved; relaunch with original HERMES_HOME and --profile'}
+ $expectedData=Join-Path ([Environment]::GetFolderPath('ApplicationData')) ($Build.identity.appNamePascal+$suffix)
+ if($data -ine $expectedData){throw 'Native legacy isolated/custom home unproved; relaunch with original HERMES_HOME and --profile'}
+ if($RegistryHome){return (Assert-NativeContinuityDirectory $RegistryHome $sid)}
+ $backendRoot=(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'hermes')+$suffix
+ if(!$suffix -and !(Test-Path -LiteralPath $backendRoot)){$backendRoot=Join-Path ([Environment]::GetFolderPath('UserProfile')) '.hermes'}
+ return (Assert-NativeContinuityDirectory $backendRoot $sid)
+}
+
 function Initialize-NativeUpdate($RequestPath, [int]$ParentId, [long]$ParentBirth, $Package) {
  $ErrorActionPreference='Stop'
  if((Get-Item -LiteralPath $RequestPath).Length -gt 4194304){throw 'Native request exceeds metadata limit'}
@@ -73,18 +183,11 @@ function Initialize-NativeUpdate($RequestPath, [int]$ParentId, [long]$ParentBirt
  $method=[Windows.Management.Deployment.PackageManager].GetMethod('AddPackageByUriAsync')
  if(!$method -or ![Windows.Foundation.Metadata.ApiInformation]::IsPropertyPresent('Windows.Management.Deployment.AddPackageOptions','ExpectedDigests')){throw 'Native API unavailable'}
  $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+ $null=Assert-NativeUpdateContinuity $request $sid
  $self=Get-Process -Id $PID
  $parent=Get-CimInstance Win32_Process -Filter ('ProcessId='+$ParentId)
  if(!$parent -or $parent.SessionId -le 0 -or $parent.SessionId -ne $self.SessionId -or (Invoke-CimMethod -InputObject $parent -MethodName GetOwnerSid).Sid -cne $sid -or [Math]::Abs(([DateTimeOffset]$parent.CreationDate).ToUnixTimeMilliseconds()-$ParentBirth) -gt 3000){throw 'Native parent actor/incarnation mismatch'}
- if(-not ('SemantierNativeUpdateFacts' -as [type])){Add-Type -TypeDefinition @'
-using System;using System.Runtime.InteropServices;using Microsoft.Win32.SafeHandles;
-public static class SemantierNativeUpdateFacts {
- [StructLayout(LayoutKind.Sequential)] public struct Info {public uint attr;public System.Runtime.InteropServices.ComTypes.FILETIME created,accessed,written;public uint volume,high,low,links,indexHigh,indexLow;}
- [DllImport("kernel32.dll",SetLastError=true)] public static extern bool GetFileInformationByHandle(SafeFileHandle h,out Info i);
- [DllImport("wtsapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] public static extern bool WTSQuerySessionInformation(IntPtr s,int id,int info,out IntPtr b,out int n);
- [DllImport("wtsapi32.dll")] public static extern void WTSFreeMemory(IntPtr p);
-}
-'@}
+ Initialize-NativeUpdateFacts
  $buffer=[IntPtr]::Zero;$length=0
  if(![SemantierNativeUpdateFacts]::WTSQuerySessionInformation([IntPtr]::Zero,$self.SessionId,8,[ref]$buffer,[ref]$length)){throw 'Native WTS state unavailable'}
  try{if($length -lt 4 -or [Runtime.InteropServices.Marshal]::ReadInt32($buffer) -ne 0){throw 'Native interactive session is not active'}}finally{[SemantierNativeUpdateFacts]::WTSFreeMemory($buffer)}
@@ -187,7 +290,7 @@ function Read-NativeUpdateGraph($request) {
   elseif($row.arch -cne 'neutral'){throw 'Native neutral architecture invalid'}
   if($row.kind -ceq 'main-bundle'){$bundle++}
   if($row.kind -ceq 'asset-package' -and ($row.resourceId -cnotmatch '^runtime[0-9]{4}$' -or ($row.allowExecution -isnot [bool] -or $row.allowExecution -ne $true) -or @($row.references).Count)){throw 'Native asset invalid'}
-  $id=$row.kind+'/'+$row.resourceId
+  $id=$row.kind+'/'+$(if($row.kind -ceq 'asset-package'){$row.resourceId}else{''})
   if($identities.ContainsKey($id)){throw 'Native identity ambiguous'}
   $identities[$id]=$true;$byKey[$row.key]=$row
  }
@@ -359,6 +462,9 @@ function Resolve-NativeSupersededFailure {
 
 function Start-NativeUpdateSuccessor($Context, $Package) {
  $r=$Context.request
+ $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+ if($r.authorizedSid -cne $sid -or $r.session -le 0 -or (Get-Process -Id $PID).SessionId -ne $r.session){throw 'Native successor actor/session changed before launch'}
+ if($Package.Name -cne $r.identity -or $Package.SignatureKind.ToString() -cne 'Developer' -or $Package.IsDevelopmentMode){throw 'Native successor package trust mismatch'}
  if(!(Test-NativeUpdateInstalled $Context $Package)){throw 'Native successor graph not established'}
  $manifest=Get-AppxPackageManifest -Package $Package.PackageFullName
  $application=@($manifest.Package.Applications.Application|Where-Object{$_.Id -ceq $r.applicationId})
@@ -374,9 +480,10 @@ function Start-NativeUpdateSuccessor($Context, $Package) {
   }
   if(![IO.Path]::IsPathRooted($r.userDataDirectory) -or $r.userDataDirectory -match '["\x00\r\n]'){throw 'Native userData binding invalid'}
   $env:HERMES_DESKTOP_USER_DATA_DIR=$r.userDataDirectory
+  $env:HERMES_HOME=Assert-NativeUpdateContinuity $r ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
   $started=[DateTimeOffset]::UtcNow
   Write-NativeUpdateReceipt $Context 'relaunch-intent.json' @{schema=1;producedAt=$started.ToString('o');manifestSha256=$r.manifestSha256;fullName=$Package.PackageFullName;applicationId=$r.applicationId;exeId=$expected}
-  $process=Start-Process -FilePath $exe -WorkingDirectory ([IO.Path]::GetTempPath()) -PassThru -ErrorAction Stop
+  $process=Start-Process -FilePath $exe -ArgumentList @('--profile',$r.activeProfile) -WorkingDirectory ([IO.Path]::GetTempPath()) -WindowStyle Hidden -PassThru -ErrorAction Stop
   try{
    $null=$process.Handle
    $row=Get-CimInstance Win32_Process -Filter ('ProcessId='+$process.Id)

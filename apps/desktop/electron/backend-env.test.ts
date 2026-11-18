@@ -29,6 +29,22 @@ test('backend env scrubs PYTHONPATH and PYTHONHOME', () => {
   assert.equal(env.PYTHONHOME, '')
 })
 
+test('native relaunch keeps the bound backend tool store ahead of the Electron isolated store', () => {
+  const original = 'C:\\Users\\test\\AppData\\Local\\hermes-acceptance'
+  const userData = 'C:\\Users\\test\\AppData\\Roaming\\Acceptance'
+
+  const env = buildDesktopBackendEnv({
+    platform: 'win32',
+    currentEnv: {
+      HERMES_HOME: original,
+      HERMES_DESKTOP_USER_DATA_DIR: userData,
+      Path: `${userData}\\hermes-home\\tools\\node;C:\\Windows;${original}\\tools\\node`
+    }
+  })
+
+  assert.equal(env.Path.split(';')[0], `${original}\\tools\\node`)
+})
+
 test('POSIX backend PATH keeps the inherited PATH first and appends missing sane entries', () => {
   const env = buildDesktopBackendEnv({
     currentEnv: { PATH: '/opt/homebrew/bin:/usr/bin:/bin' },

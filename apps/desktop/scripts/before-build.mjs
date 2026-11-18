@@ -15,7 +15,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
-import { appIdentity, nativeManifestTemplate, storeManifestTemplate } from '../../../scripts/msix-shared.mjs'
+import { appIdentity, nativeManifestTemplate, storeManifestTemplate, channelBuildRequest } from '../../../scripts/msix-shared.mjs'
 
 
 const require = createRequire(import.meta.url)
@@ -28,6 +28,7 @@ const {
 } = require('../product-identity.cjs')
 
 export default async function beforeBuild() {
+  if (process.env.SEMANTIER_DESKTOP_VERSION || channelBuildRequest()?.semantierScope === 'semantier-windows-x64/v1') require('./filex-inputs.cjs').verifyFilexInputs(path.join(import.meta.dirname, '..'))
   stageMsixAssets()
   writeMsixExtensions()
   if (store) stageStoreManifest(path.join(import.meta.dirname, '..'), process.env.HERMES_PAYLOAD_TAG)
