@@ -35,7 +35,14 @@ vi.mock('@/hermes', () => ({
 
 beforeEach(() => {
   getGlobalModelOptions.mockResolvedValue({
-    providers: [{ models: ['gemini-3.1-pro', 'gemini-2.5-flash'], eligible_models: ['gemini-3.1-pro', 'gemini-2.5-flash'], name: 'Google', slug: 'google' }]
+    providers: [
+      {
+        models: ['gemini-3.1-pro', 'gemini-2.5-flash'],
+        eligible_models: ['gemini-3.1-pro', 'gemini-2.5-flash'],
+        name: 'Google',
+        slug: 'google'
+      }
+    ]
   })
 })
 

@@ -140,9 +140,16 @@ describe('useModelControls', () => {
     const requestGateway = vi.fn(() => response.promise)
     const client = new QueryClient()
 
-    const { result, rerender } = renderHook(({ owner }) => useModelControls({
-      queryClient: client, requestGateway, cacheOwnerConnectionId: owner, cacheProfile: 'default'
-    }), { initialProps: { owner: 'source-a' } })
+    const { result, rerender } = renderHook(
+      ({ owner }) =>
+        useModelControls({
+          queryClient: client,
+          requestGateway,
+          cacheOwnerConnectionId: owner,
+          cacheProfile: 'default'
+        }),
+      { initialProps: { owner: 'source-a' } }
+    )
 
     const pending = result.current.selectModel({ model: 'new-a', provider: 'provider-a' })
     rerender({ owner: 'source-b' })

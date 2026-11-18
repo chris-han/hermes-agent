@@ -1042,9 +1042,10 @@ export function normalizeConnectionInput(input: ConnectionInput, registry: Conne
 
   if (kind === 'remote' || kind === 'cloud') {
     // normalizeRemoteBaseUrl throws its own user-facing message on bad input.
-    const url = input.transport === 'semantier-workspace-http'
-      ? normalizeSemantierWorkspaceOrigin(input.url || '')
-      : normalizeRemoteBaseUrl(input.url)
+    const url =
+      input.transport === 'semantier-workspace-http'
+        ? normalizeSemantierWorkspaceOrigin(input.url || '')
+        : normalizeRemoteBaseUrl(input.url)
 
     // Duplicate prevention: remote/cloud entries collide on the normalized URL
     // (trimmed, trailing slashes stripped, lowercased) regardless of kind — a
@@ -1327,7 +1328,9 @@ export function normalizeRegistry(raw: unknown): ConnectionRegistry {
         }
 
         if (entry.transport === 'semantier-workspace-http') {
-          try { clean.url = normalizeSemantierWorkspaceOrigin(url) } catch {
+          try {
+            clean.url = normalizeSemantierWorkspaceOrigin(url)
+          } catch {
             quarantine('entry-invalid-workspace-origin', item)
 
             continue

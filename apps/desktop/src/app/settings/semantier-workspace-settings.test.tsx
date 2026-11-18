@@ -10,14 +10,12 @@ afterEach(() => vi.restoreAllMocks())
 it('signs in and opens the existing server workspace without creating another connection', async () => {
   const identity = vi.fn().mockResolvedValue({ authenticated: false })
 
-  const login = vi
-    .fn()
-    .mockResolvedValue({
-      authenticated: true,
-      user: { user_id: 'a', name: 'Alice' },
-      workspace: { id: 'wa' },
-      organization_id: 'org'
-    })
+  const login = vi.fn().mockResolvedValue({
+    authenticated: true,
+    user: { user_id: 'a', name: 'Alice' },
+    workspace: { id: 'wa' },
+    organization_id: 'org'
+  })
 
   const save = vi.fn()
   Object.defineProperty(window, 'hermesDesktop', {

@@ -18,8 +18,9 @@ export function createFileSyncIpc(sourceForSender: (senderId: number) => string 
       !value.user?.user_id ||
       !value.workspace?.id ||
       value.user.workspace_id !== value.workspace.id
-    )
-      {throw new Error('Sign in to your personal Workspace first.')}
+    ) {
+      throw new Error('Sign in to your personal Workspace first.')
+    }
 
     return { userId: value.user.user_id, workspaceId: value.workspace.id }
   }
@@ -34,8 +35,9 @@ export function createFileSyncIpc(sourceForSender: (senderId: number) => string 
       if (
         !safeStorage.isEncryptionAvailable() ||
         (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text')
-      )
-        {throw new Error('OS credential protection is unavailable. Unlock your keychain and retry.')}
+      ) {
+        throw new Error('OS credential protection is unavailable. Unlock your keychain and retry.')
+      }
 
       return safeStorage.encryptString(token).toString('base64')
     },
@@ -45,7 +47,9 @@ export function createFileSyncIpc(sourceForSender: (senderId: number) => string 
   async function own(senderId: number) {
     const origin = sourceForSender(senderId)
 
-    if (!origin) {throw new Error('Connect this window to your Semantier Workspace first.')}
+    if (!origin) {
+      throw new Error('Connect this window to your Semantier Workspace first.')
+    }
 
     return { origin, identity: await identity(origin) }
   }
@@ -62,7 +66,9 @@ export function createFileSyncIpc(sourceForSender: (senderId: number) => string 
 
     const status = supervisor.status()
 
-    if (!record) {return { state: 'Paused' }}
+    if (!record) {
+      return { state: 'Paused' }
+    }
 
     return {
       ...(status.folder === record.canonicalLocalFolder ? status : { state: 'Paused' }),
@@ -77,15 +83,18 @@ export function createFileSyncIpc(sourceForSender: (senderId: number) => string 
       properties: ['openDirectory']
     })
 
-    if (result.canceled || result.filePaths.length !== 1) {return { state: 'Paused' }}
+    if (result.canceled || result.filePaths.length !== 1) {
+      return { state: 'Paused' }
+    }
     const current = await own(event.sender.id)
 
     if (
       current.origin !== owner.origin ||
       current.identity.userId !== owner.identity.userId ||
       current.identity.workspaceId !== owner.identity.workspaceId
-    )
-      {throw new Error('The account changed. Choose the folder again after reconnecting.')}
+    ) {
+      throw new Error('The account changed. Choose the folder again after reconnecting.')
+    }
 
     return supervisor.enable(owner.origin, result.filePaths[0])
   })
@@ -105,7 +114,9 @@ export function createFileSyncIpc(sourceForSender: (senderId: number) => string 
         x.workspaceId === owner.identity.workspaceId
     )
 
-    if (!record) {throw new Error('Choose a folder for this account first.')}
+    if (!record) {
+      throw new Error('Choose a folder for this account first.')
+    }
 
     return supervisor.enable(owner.origin, record.canonicalLocalFolder)
   })

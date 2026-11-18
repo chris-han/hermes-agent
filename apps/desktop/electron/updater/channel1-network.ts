@@ -3,27 +3,40 @@ import { nativeUpdateFetch } from './network'
 const authority = 'download.semantier.cn:443'
 
 /** Metadata keeps OS proxy policy; only Channel 1 package bytes use direct QUIC. */
-export function createDesktopUpdateFetches(platform: string, systemFetch: typeof fetch,
-  sessions: { fromPartition: (partition: string, options: { cache: boolean }) => DirectSession }, quicAvailable: boolean
+export function createDesktopUpdateFetches(
+  platform: string,
+  systemFetch: typeof fetch,
+  sessions: { fromPartition: (partition: string, options: { cache: boolean }) => DirectSession },
+  quicAvailable: boolean
 ): { metadata: typeof fetch; artifact: typeof fetch } {
   const metadata = nativeUpdateFetch(systemFetch)
 
-  const artifact = platform === 'win32' ? channel1ArtifactFetch(metadata, () => {
-    if (!quicAvailable) { throw new Error('Channel 1 package download requires QUIC') }
+  const artifact =
+    platform === 'win32'
+      ? channel1ArtifactFetch(metadata, () => {
+          if (!quicAvailable) {
+            throw new Error('Channel 1 package download requires QUIC')
+          }
 
-    return sessions.fromPartition('semantier-channel1-artifacts', { cache: false })
-  }) : metadata
+          return sessions.fromPartition('semantier-channel1-artifacts', { cache: false })
+        })
+      : metadata
 
   return { metadata, artifact }
 }
 
 /** Chromium must select QUIC before any session opens a connection to this host. */
-export function configureChannel1Quic(commandLine: {
-  appendSwitch: (name: string, value: string) => void
-  getSwitchValue: (name: string) => string
-  hasSwitch: (name: string) => boolean
-}, platform: string): boolean {
-  if (platform !== 'win32' || commandLine.hasSwitch('disable-quic')) { return false }
+export function configureChannel1Quic(
+  commandLine: {
+    appendSwitch: (name: string, value: string) => void
+    getSwitchValue: (name: string) => string
+    hasSwitch: (name: string) => boolean
+  },
+  platform: string
+): boolean {
+  if (platform !== 'win32' || commandLine.hasSwitch('disable-quic')) {
+    return false
+  }
   const existing = commandLine.getSwitchValue('origin-to-force-quic-on').split(',').filter(Boolean)
 
   if (!existing.includes(authority)) {
@@ -47,10 +60,17 @@ export function channel1ArtifactFetch(fallback: typeof fetch, create: () => Dire
   return async (input, init) => {
     const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url)
 
-    if (url.origin !== 'https://download.semantier.cn') { return fallback(input, init) }
+    if (url.origin !== 'https://download.semantier.cn') {
+      return fallback(input, init)
+    }
 
-    if (url.username || url.password || url.search || url.hash ||
-        !/^\/releases\/channel-builds\/[a-f0-9]{32}\/SemantierAgent\.msix$/.test(url.pathname)) {
+    if (
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      !/^\/releases\/channel-builds\/[a-f0-9]{32}\/SemantierAgent\.msix$/.test(url.pathname)
+    ) {
       throw new Error('Invalid Channel 1 pinned package URL')
     }
 
@@ -58,7 +78,9 @@ export function channel1ArtifactFetch(fallback: typeof fetch, create: () => Dire
       const session = create()
       await session.setProxy({ mode: 'direct' })
 
-      return nativeUpdateFetch((request, options) => session.fetch(request instanceof URL ? request.href : request, options))
+      return nativeUpdateFetch((request, options) =>
+        session.fetch(request instanceof URL ? request.href : request, options)
+      )
     })()
 
     return (await direct)(input, init)

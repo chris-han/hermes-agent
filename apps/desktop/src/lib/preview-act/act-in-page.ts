@@ -376,7 +376,8 @@ export function actInPageCore(
     if (ref) {
       if (holder.url !== here) {
         return {
-          code: 'STALE_TARGET', path: 'arguments.ref',
+          code: 'STALE_TARGET',
+          path: 'arguments.ref',
           error:
             'The page navigated since the last snapshot, so ' + ref + ' no longer points anywhere. Call elements again.'
         }
@@ -385,11 +386,19 @@ export function actInPageCore(
       const bound = (holder.book || []).filter(entry => entry.ref === ref)[0]
 
       if (!bound) {
-        return { code: 'INVALID_ELEMENT_REF', path: 'arguments.ref', error: 'Unknown element ' + ref + '. Call elements to get current refs.' }
+        return {
+          code: 'INVALID_ELEMENT_REF',
+          path: 'arguments.ref',
+          error: 'Unknown element ' + ref + '. Call elements to get current refs.'
+        }
       }
 
       if (!doc.contains(bound.el)) {
-        return { code: 'INVALID_ELEMENT_REF', path: 'arguments.ref', error: ref + ' has been removed from the page since the last snapshot. Call elements again.' }
+        return {
+          code: 'INVALID_ELEMENT_REF',
+          path: 'arguments.ref',
+          error: ref + ' has been removed from the page since the last snapshot. Call elements again.'
+        }
       }
 
       return { el: bound.el }
@@ -398,7 +407,11 @@ export function actInPageCore(
     const selector = (action.selector || '').trim()
 
     if (!selector) {
-      return { code: 'MISSING_REQUIRED_FIELD', path: 'arguments.ref', error: 'Pass a ref from elements, or a CSS selector.' }
+      return {
+        code: 'MISSING_REQUIRED_FIELD',
+        path: 'arguments.ref',
+        error: 'Pass a ref from elements, or a CSS selector.'
+      }
     }
 
     let el: Element | null = null
@@ -409,7 +422,9 @@ export function actInPageCore(
       return { code: 'INVALID_ARGUMENT', path: 'arguments.selector', error: 'Not a valid CSS selector: ' + selector }
     }
 
-    return el ? { el } : { code: 'INVALID_ELEMENT_REF', path: 'arguments.selector', error: 'No element matches ' + selector + '.' }
+    return el
+      ? { el }
+      : { code: 'INVALID_ELEMENT_REF', path: 'arguments.selector', error: 'No element matches ' + selector + '.' }
   }
 
   const describe = (el: Element) => {
@@ -447,7 +462,11 @@ export function actInPageCore(
     const target = action.ref || action.selector ? resolve() : {}
 
     if (target.error) {
-      return fail(target.error, { code: target.code, path: target.path, recovery: { same_context: true, next_action: 'refresh_elements' } })
+      return fail(target.error, {
+        code: target.code,
+        path: target.path,
+        recovery: { same_context: true, next_action: 'refresh_elements' }
+      })
     }
 
     const scroller = (target.el as HTMLElement | undefined) || null
@@ -466,7 +485,11 @@ export function actInPageCore(
   const target = resolve()
 
   if (target.error || !target.el) {
-    return fail(target.error || 'No target.', { code: target.code, path: target.path, recovery: { same_context: true, next_action: 'refresh_elements' } })
+    return fail(target.error || 'No target.', {
+      code: target.code,
+      path: target.path,
+      recovery: { same_context: true, next_action: 'refresh_elements' }
+    })
   }
 
   const el = target.el as HTMLElement

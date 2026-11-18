@@ -6,12 +6,17 @@ const requestGatewayForAgent = vi.fn()
 const activeGatewayConnectionId = vi.fn(() => 'source-b')
 const invalidateQueries = vi.fn()
 
-vi.mock('@/lib/model-options', () => ({ requestDiscoveredModelOptions: (...args: unknown[]) => requestDiscoveredModelOptions(...args), requestModelOptions: (...args: unknown[]) => requestModelOptions(...args) }))
+vi.mock('@/lib/model-options', () => ({
+  requestDiscoveredModelOptions: (...args: unknown[]) => requestDiscoveredModelOptions(...args),
+  requestModelOptions: (...args: unknown[]) => requestModelOptions(...args)
+}))
 vi.mock('@/store/gateway', () => ({
   activeGatewayConnectionId: () => activeGatewayConnectionId(),
   requestGatewayForAgent: (...args: unknown[]) => requestGatewayForAgent(...args)
 }))
-vi.mock('@/lib/query-client', () => ({ queryClient: { invalidateQueries: (...args: unknown[]) => invalidateQueries(...args) } }))
+vi.mock('@/lib/query-client', () => ({
+  queryClient: { invalidateQueries: (...args: unknown[]) => invalidateQueries(...args) }
+}))
 vi.mock('@/store/session', () => ({ $connection: { get: () => null } }))
 
 beforeEach(() => {
@@ -24,7 +29,12 @@ beforeEach(() => {
 describe('connection-ready model discovery', () => {
   it('refreshes each connection and profile only once without blocking readiness', async () => {
     let release!: (value: unknown) => void
-    requestModelOptions.mockImplementationOnce(() => new Promise(resolve => { release = resolve }))
+    requestModelOptions.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          release = resolve
+        })
+    )
     const { refreshModelsOnConnectionReady } = await import('./startup-model-discovery')
     const { $refreshingModelSources, modelDiscoveryRefreshKey } = await import('@/store/model-discovery')
     const first = refreshModelsOnConnectionReady('source-a', 'profile-a')
@@ -32,7 +42,12 @@ describe('connection-ready model discovery', () => {
     expect($refreshingModelSources.get().has(modelDiscoveryRefreshKey('source-a', 'profile-a'))).toBe(true)
     await refreshModelsOnConnectionReady('source-a', 'profile-a')
     expect(requestModelOptions).toHaveBeenCalledTimes(1)
-    expect(requestModelOptions.mock.calls[0][0]).toMatchObject({ queryOnly: true, queryScope: 'source-a', refresh: true, profile: 'profile-a' })
+    expect(requestModelOptions.mock.calls[0][0]).toMatchObject({
+      queryOnly: true,
+      queryScope: 'source-a',
+      refresh: true,
+      profile: 'profile-a'
+    })
     await refreshModelsOnConnectionReady('source-b', 'profile-a')
     await refreshModelsOnConnectionReady('source-a', 'profile-b')
     expect(requestModelOptions).toHaveBeenCalledTimes(3)
@@ -61,12 +76,20 @@ describe('connection-ready model discovery', () => {
   })
 })
 
- it('refreshes Cloud through Workspace once per captured account', async () => {
- const {refreshModelsOnConnectionReady}=await import('./startup-model-discovery')
- const c={baseUrl:'https://cloud.example',connectionId:'cloud',transport:'semantier-workspace-http' as const,workspaceScope:{userId:'a',workspaceId:'wa',organizationId:'org'}}
- await refreshModelsOnConnectionReady('cloud','default',c)
- await refreshModelsOnConnectionReady('cloud','default',c)
- await refreshModelsOnConnectionReady('cloud','default',{...c,workspaceScope:{...c.workspaceScope,userId:'b',workspaceId:'wb'}})
- expect(requestDiscoveredModelOptions).toHaveBeenCalledTimes(2)
- expect(requestModelOptions).not.toHaveBeenCalled()
- })
+it('refreshes Cloud through Workspace once per captured account', async () => {
+  const { refreshModelsOnConnectionReady } = await import('./startup-model-discovery')
+  const c = {
+    baseUrl: 'https://cloud.example',
+    connectionId: 'cloud',
+    transport: 'semantier-workspace-http' as const,
+    workspaceScope: { userId: 'a', workspaceId: 'wa', organizationId: 'org' }
+  }
+  await refreshModelsOnConnectionReady('cloud', 'default', c)
+  await refreshModelsOnConnectionReady('cloud', 'default', c)
+  await refreshModelsOnConnectionReady('cloud', 'default', {
+    ...c,
+    workspaceScope: { ...c.workspaceScope, userId: 'b', workspaceId: 'wb' }
+  })
+  expect(requestDiscoveredModelOptions).toHaveBeenCalledTimes(2)
+  expect(requestModelOptions).not.toHaveBeenCalled()
+})

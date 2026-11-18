@@ -66,14 +66,17 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
   },
   claimAmbientCue: key => ipcRenderer.invoke('hermes:ambient:claim', key),
   semantierFeedback: {
-    onOpen: callback => { const listener = () => callback(); ipcRenderer.on('semantier:feedback:open', listener);
+    onOpen: callback => {
+      const listener = () => callback()
+      ipcRenderer.on('semantier:feedback:open', listener)
 
- return () => ipcRenderer.removeListener('semantier:feedback:open', listener) },
+      return () => ipcRenderer.removeListener('semantier:feedback:open', listener)
+    },
     status: () => ipcRenderer.invoke('semantier:feedback', 'status', {}),
-    journeyConsent: enabled => ipcRenderer.invoke('semantier:feedback', 'journey-consent', {enabled}),
-    consent: (enabled, profile) => ipcRenderer.invoke('semantier:feedback', 'consent', {enabled, profile}),
-    drain: profile => ipcRenderer.invoke('semantier:feedback', 'drain', {profile}),
-    ack: (profile, ids) => ipcRenderer.invoke('semantier:feedback', 'ack', {profile, ids})
+    journeyConsent: enabled => ipcRenderer.invoke('semantier:feedback', 'journey-consent', { enabled }),
+    consent: (enabled, profile) => ipcRenderer.invoke('semantier:feedback', 'consent', { enabled, profile }),
+    drain: profile => ipcRenderer.invoke('semantier:feedback', 'drain', { profile }),
+    ack: (profile, ids) => ipcRenderer.invoke('semantier:feedback', 'ack', { profile, ids })
   },
   windowControls: {
     custom: customWindowControlsEnabled(),
@@ -326,26 +329,41 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     agentSignIn: dashboardUrl => ipcRenderer.invoke('hermes:cloud:agent-sign-in', dashboardUrl)
   },
   fileSync: {
-    status:()=>ipcRenderer.invoke('hermes:file-sync:status'),
-    choose:()=>ipcRenderer.invoke('hermes:file-sync:choose'),
-    pause:()=>ipcRenderer.invoke('hermes:file-sync:pause'),
-    resume:()=>ipcRenderer.invoke('hermes:file-sync:resume'),
+    status: () => ipcRenderer.invoke('hermes:file-sync:status'),
+    choose: () => ipcRenderer.invoke('hermes:file-sync:choose'),
+    pause: () => ipcRenderer.invoke('hermes:file-sync:pause'),
+    resume: () => ipcRenderer.invoke('hermes:file-sync:resume')
   },
   workspace: {
     identity: origin => ipcRenderer.invoke('hermes:workspace:identity', origin),
     login: origin => ipcRenderer.invoke('hermes:workspace:login', origin),
     logout: origin => ipcRenderer.invoke('hermes:workspace:logout', origin),
     ensureWinmanChat: (origin, scope) => ipcRenderer.invoke('hermes:workspace:ensure-winman-chat', origin, scope),
-    createSession: (origin, scope, label, requestIdentity) => ipcRenderer.invoke('hermes:workspace:create-session', origin, scope, label, requestIdentity),
+    createSession: (origin, scope, label, requestIdentity) =>
+      ipcRenderer.invoke('hermes:workspace:create-session', origin, scope, label, requestIdentity),
     sessions: (origin, scope) => ipcRenderer.invoke('hermes:workspace:sessions', origin, scope),
-    history: (origin, scope, sessionId, afterId) => ipcRenderer.invoke('hermes:workspace:history', origin, scope, sessionId, ...(afterId === undefined ? [] : [afterId])),
-    nativeContext: (origin, scope, sessionId) => ipcRenderer.invoke('hermes:workspace:native-context', origin, scope, sessionId),
-    bindNativeContext: (origin, scope, sessionId, originalSessionKey) => ipcRenderer.invoke('hermes:workspace:bind-native-context', origin, scope, sessionId, originalSessionKey),
-    sendNative: (origin, scope, sessionId, message, requestId, bindingId) => ipcRenderer.invoke('hermes:workspace:send-native', origin, scope, sessionId, message, requestId, bindingId),
-    cancelNative: (origin, scope, sessionId, admissionId) => ipcRenderer.invoke('hermes:workspace:cancel-native', origin, scope, sessionId, admissionId),
-    nativeHistory: (origin, scope, sessionId) => ipcRenderer.invoke('hermes:workspace:native-history', origin, scope, sessionId),
-    interrupt: (origin, scope, sessionId, requestId) => ipcRenderer.invoke('hermes:workspace:interrupt', origin, scope, sessionId, requestId),
-    send: (origin, scope, sessionId, message, requestIdentity) => ipcRenderer.invoke('hermes:workspace:send', origin, scope, sessionId, message, requestIdentity)
+    history: (origin, scope, sessionId, afterId) =>
+      ipcRenderer.invoke(
+        'hermes:workspace:history',
+        origin,
+        scope,
+        sessionId,
+        ...(afterId === undefined ? [] : [afterId])
+      ),
+    nativeContext: (origin, scope, sessionId) =>
+      ipcRenderer.invoke('hermes:workspace:native-context', origin, scope, sessionId),
+    bindNativeContext: (origin, scope, sessionId, originalSessionKey) =>
+      ipcRenderer.invoke('hermes:workspace:bind-native-context', origin, scope, sessionId, originalSessionKey),
+    sendNative: (origin, scope, sessionId, message, requestId, bindingId) =>
+      ipcRenderer.invoke('hermes:workspace:send-native', origin, scope, sessionId, message, requestId, bindingId),
+    cancelNative: (origin, scope, sessionId, admissionId) =>
+      ipcRenderer.invoke('hermes:workspace:cancel-native', origin, scope, sessionId, admissionId),
+    nativeHistory: (origin, scope, sessionId) =>
+      ipcRenderer.invoke('hermes:workspace:native-history', origin, scope, sessionId),
+    interrupt: (origin, scope, sessionId, requestId) =>
+      ipcRenderer.invoke('hermes:workspace:interrupt', origin, scope, sessionId, requestId),
+    send: (origin, scope, sessionId, message, requestIdentity) =>
+      ipcRenderer.invoke('hermes:workspace:send', origin, scope, sessionId, message, requestIdentity)
   },
   profile: {
     getDefault: () => ipcRenderer.invoke('hermes:profile:default:get'),

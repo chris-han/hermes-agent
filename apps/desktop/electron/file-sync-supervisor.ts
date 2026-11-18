@@ -153,7 +153,9 @@ export class FileSyncSupervisor {
     }
   }
   async enable(rawOrigin: string, folder: string) {
-    if(this.closing){throw new Error('File Sync is closing with the application.')}
+    if (this.closing) {
+      throw new Error('File Sync is closing with the application.')
+    }
 
     if (this.busy) {
       throw new Error('A File Sync operation is already in progress.')
@@ -249,7 +251,11 @@ export class FileSyncSupervisor {
       return this.status()
     } catch (error) {
       if (this.generation === generation) {
-        this.view = { state: 'Error', folder: path.resolve(folder), message: error instanceof Error ? error.message : 'File Sync unavailable' }
+        this.view = {
+          state: 'Error',
+          folder: path.resolve(folder),
+          message: error instanceof Error ? error.message : 'File Sync unavailable'
+        }
       }
 
       throw error
@@ -441,11 +447,13 @@ export class FileSyncSupervisor {
   }
 
   holdQuit(event: { preventDefault: () => void }, reenter: () => void, failed: () => void) {
-    if (this.quitReady) {return false}
+    if (this.quitReady) {
+      return false
+    }
     event.preventDefault()
 
-    if (!this.quitPending)
-      {this.quitPending = this.shutdown()
+    if (!this.quitPending) {
+      this.quitPending = this.shutdown()
         .then(() => {
           this.quitReady = true
           reenter()
@@ -453,7 +461,8 @@ export class FileSyncSupervisor {
         .catch(() => {
           this.quitPending = null
           failed()
-        })}
+        })
+    }
 
     return true
   }

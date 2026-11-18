@@ -46,7 +46,7 @@ describe('ModelPill pinned-override badge', () => {
     setCurrentModel('qwen3.8-max')
     setCurrentModelSource('manual')
     $activeSessionId.set(null)
-    render(<ModelPill disabled={false} model={modelState({model:'qwen3.8-max',provider:'semantier-cloud'})} />)
+    render(<ModelPill disabled={false} model={modelState({ model: 'qwen3.8-max', provider: 'semantier-cloud' })} />)
     expect(screen.queryByTestId('model-pinned-dot')).toBeNull()
   })
 

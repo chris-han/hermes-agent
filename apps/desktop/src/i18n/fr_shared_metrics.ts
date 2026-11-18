@@ -30,8 +30,7 @@ export const frSharedMetrics = {
     'Envoie les statistiques à Semantier une fois par jour avec un identifiant aléatoire pour ce profil. Hormis la note unique d’installation, les statistiques d’avant votre accord ne sont jamais envoyées. Nécessite la collecte activée.',
   unavailable: 'Mettez à jour le backend Hermes pour modifier ce réglage.',
   stripBody: 'Uniquement des comptages. Jamais vos messages ni vos fichiers.',
-  stripReaskBody:
-    'Veuillez choisir de nouveau : les statistiques sont désormais envoyées à Semantier, et non à Nous.',
+  stripReaskBody: 'Veuillez choisir de nouveau : les statistiques sont désormais envoyées à Semantier, et non à Nous.',
   stripChoices: { share: 'Partager avec Semantier', local: 'Garder sur cet ordinateur', off: 'Non merci' },
   stripDetails: 'Détails'
 }

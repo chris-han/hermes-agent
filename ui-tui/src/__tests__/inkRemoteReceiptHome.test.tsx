@@ -80,6 +80,7 @@ function mount(
     if (method === 'prompt.cancel') {
       return cancel()
     }
+
     throw new Error(`unexpected RPC: ${method}`)
   })
 

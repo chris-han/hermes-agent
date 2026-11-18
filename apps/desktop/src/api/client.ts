@@ -11,14 +11,29 @@ import { map, type MapStore } from 'nanostores'
 
 import type { HermesApiRequest } from '@/global'
 
-import { assertWorkspaceScope, WORKSPACE_USER_STOP_ERROR, type WorkspaceMainContext, workspaceTranscript } from '../../electron/semantier-workspace-client'
+import {
+  assertWorkspaceScope,
+  WORKSPACE_USER_STOP_ERROR,
+  type WorkspaceMainContext,
+  workspaceTranscript
+} from '../../electron/semantier-workspace-client'
 import type { WorkspaceScope } from '../../electron/semantier-workspace-ipc'
 
-import { CANONICAL_GATEWAY_PROTOCOL, CanonicalDesktopProtocol, canonicalProfile, canonicalSessionKey, recordCanonicalOwner, splitRewindSubmit } from './canonical-protocol'
+import {
+  CANONICAL_GATEWAY_PROTOCOL,
+  CanonicalDesktopProtocol,
+  canonicalProfile,
+  canonicalSessionKey,
+  recordCanonicalOwner,
+  splitRewindSubmit
+} from './canonical-protocol'
 
 /** A local user withdrew its retry intent; this is not a server completion receipt. */
 export class WorkspaceRequestStopped extends Error {
-  constructor(readonly requestId: string) { super('Workspace request stopped by user'); this.name = 'WorkspaceRequestStopped' }
+  constructor(readonly requestId: string) {
+    super('Workspace request stopped by user')
+    this.name = 'WorkspaceRequestStopped'
+  }
 }
 
 // Desktop startup fires a burst of read-only data calls (config, profiles,
@@ -51,9 +66,19 @@ export const GATEWAY_NOT_CONNECTED_MESSAGE = 'Hermes gateway is not connected'
 // answered through `approval.respond` / `clarify.respond`. The renderer only
 // knows server→client REQUESTS (#110521), so each prompt event is delivered to
 // the same `onRequest` registry as a request whose `respond` issues the RPC.
-const CANONICAL_PROMPT_EVENTS: Record<string, 'approval' | 'clarify'> = { 'approval.request': 'approval', 'clarify.request': 'clarify' }
+const CANONICAL_PROMPT_EVENTS: Record<string, 'approval' | 'clarify'> = {
+  'approval.request': 'approval',
+  'clarify.request': 'clarify'
+}
 
-const ATTACH_REQUIRED = new Set(['prompt.submit', 'approval.respond', 'clarify.respond', 'session.interrupt', 'prompt.cancel', 'session.rewind'])
+const ATTACH_REQUIRED = new Set([
+  'prompt.submit',
+  'approval.respond',
+  'clarify.respond',
+  'session.interrupt',
+  'prompt.cancel',
+  'session.rewind'
+])
 // A branch is a CAS mutation on the PARENT: an un-attached parent (right-click on a sidebar row
 // that was never opened) has no cached revision, so attach it first to learn one. Move to project
 // (`session_key`) is the same CAS mutation on a sidebar row.
@@ -73,7 +98,9 @@ const LEGACY_STRIP: Record<string, string[]> = {
 function legacyParams(method: string, params: Record<string, unknown>): Record<string, unknown> {
   const strip = LEGACY_STRIP[method]
 
-  if (!strip || !strip.some(key => key in params)) { return params }
+  if (!strip || !strip.some(key => key in params)) {
+    return params
+  }
 
   return Object.fromEntries(Object.entries(params).filter(([key]) => !strip.includes(key)))
 }
@@ -82,7 +109,9 @@ function remainingRequestBudget(deadline: number, signal?: AbortSignal): number 
   signal?.throwIfAborted()
   const remaining = deadline - Date.now()
 
-  if (remaining <= 0) { throw new Error('Hermes gateway request timed out') }
+  if (remaining <= 0) {
+    throw new Error('Hermes gateway request timed out')
+  }
 
   return remaining
 }
@@ -92,7 +121,12 @@ const workspaceReadScopes = new Map<string, { scope: WorkspaceScope; origin: str
 const workspacePendingRequests = new Map<string, { owner: object; requestId: string; stopRequested?: boolean }>()
 
 export class HermesGateway extends JsonRpcGatewayClient {
-  private workspaceConnection: { origin: string; scope: WorkspaceScope; connectionId?: string; profile?: string } | null = null
+  private workspaceConnection: {
+    origin: string
+    scope: WorkspaceScope
+    connectionId?: string
+    profile?: string
+  } | null = null
   private workspaceDial: Promise<void> | null = null
   private workspaceState: ConnectionState = 'idle'
   private readonly workspaceStates = new Set<(state: ConnectionState) => void>()
@@ -102,19 +136,28 @@ export class HermesGateway extends JsonRpcGatewayClient {
   private workspacePollGeneration: number | null = null
   private workspacePollDelay = 2_000
   private readonly workspaceOriginalContexts = new Map<string, WorkspaceMainContext>()
-  private readonly workspaceSnapshots = new Map<string, { profile: string; messages: string; cursor?: string; fullReadAt: number }>()
+  private readonly workspaceSnapshots = new Map<
+    string,
+    { profile: string; messages: string; cursor?: string; fullReadAt: number }
+  >()
   private readonly wakeWorkspacePoll = () => {
-    if (this.workspaceConnection) { this.scheduleWorkspacePoll(0) }
+    if (this.workspaceConnection) {
+      this.scheduleWorkspacePoll(0)
+    }
   }
 
   private stopWorkspacePoll(): void {
-    if (this.workspacePollTimer !== null) { clearTimeout(this.workspacePollTimer) }
+    if (this.workspacePollTimer !== null) {
+      clearTimeout(this.workspacePollTimer)
+    }
     this.workspacePollTimer = null
     this.workspaceSnapshots.clear()
     this.workspaceOriginalContexts.clear()
 
     for (const [key, pending] of workspacePendingRequests) {
-      if (pending.owner === this) {workspacePendingRequests.delete(key)}
+      if (pending.owner === this) {
+        workspacePendingRequests.delete(key)
+      }
     }
 
     if (typeof window !== 'undefined') {
@@ -122,11 +165,15 @@ export class HermesGateway extends JsonRpcGatewayClient {
       window.removeEventListener('focus', this.wakeWorkspacePoll)
     }
 
-    if (typeof document !== 'undefined') {document.removeEventListener('visibilitychange', this.wakeWorkspacePoll)}
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.wakeWorkspacePoll)
+    }
   }
 
   private scheduleWorkspacePoll(delay = this.workspacePollDelay): void {
-    if (this.workspacePollTimer !== null) { clearTimeout(this.workspacePollTimer) }
+    if (this.workspacePollTimer !== null) {
+      clearTimeout(this.workspacePollTimer)
+    }
     this.workspacePollTimer = setTimeout(() => {
       this.workspacePollTimer = null
       void this.reconcileWorkspace()
@@ -134,15 +181,24 @@ export class HermesGateway extends JsonRpcGatewayClient {
   }
 
   private rememberWorkspaceSnapshot(sessionId: string, profile: string, messages: unknown, cursor?: string): void {
-    this.workspaceSnapshots.set(sessionId, { profile, messages: JSON.stringify(messages), cursor, fullReadAt: Date.now() })
+    this.workspaceSnapshots.set(sessionId, {
+      profile,
+      messages: JSON.stringify(messages),
+      cursor,
+      fullReadAt: Date.now()
+    })
 
-    if (this.workspacePollTimer === null && this.workspacePollGeneration !== this.connectionGeneration) { this.scheduleWorkspacePoll() }
+    if (this.workspacePollTimer === null && this.workspacePollGeneration !== this.connectionGeneration) {
+      this.scheduleWorkspacePoll()
+    }
   }
 
   private async reconcileWorkspace(): Promise<void> {
     const connection = this.workspaceConnection
 
-    if (!connection || this.workspacePollGeneration === this.connectionGeneration) { return }
+    if (!connection || this.workspacePollGeneration === this.connectionGeneration) {
+      return
+    }
     const generation = this.connectionGeneration
     this.workspacePollGeneration = generation
     let changed = false
@@ -150,27 +206,45 @@ export class HermesGateway extends JsonRpcGatewayClient {
     try {
       for (const [sessionId, previous] of this.workspaceSnapshots) {
         const bridge = window.hermesDesktop.workspace!
-        const incremental = previous.profile === 'default' && previous.cursor !== undefined && Date.now() - previous.fullReadAt < 60_000
+        const incremental =
+          previous.profile === 'default' && previous.cursor !== undefined && Date.now() - previous.fullReadAt < 60_000
 
-        const snapshot = previous.profile === 'default'
-          ? await bridge.history(connection.origin, connection.scope, sessionId, ...(incremental ? [previous.cursor!] : []))
-          : await bridge.nativeHistory(connection.origin, connection.scope, sessionId)
+        const snapshot =
+          previous.profile === 'default'
+            ? await bridge.history(
+                connection.origin,
+                connection.scope,
+                sessionId,
+                ...(incremental ? [previous.cursor!] : [])
+              )
+            : await bridge.nativeHistory(connection.origin, connection.scope, sessionId)
 
         this.requireConnectionGeneration(generation)
         const messages = JSON.stringify(snapshot.messages)
 
         // A concurrent explicit resume owns its newer snapshot; do not rewind its cursor.
-        if (this.workspaceSnapshots.get(sessionId) !== previous) { continue }
-        const cursor = 'nextCursor' in snapshot && typeof snapshot.nextCursor === 'string' ? snapshot.nextCursor : undefined
+        if (this.workspaceSnapshots.get(sessionId) !== previous) {
+          continue
+        }
+        const cursor =
+          'nextCursor' in snapshot && typeof snapshot.nextCursor === 'string' ? snapshot.nextCursor : undefined
         const isDelta = incremental && cursor !== undefined
         const hasChanges = isDelta ? snapshot.messages.length > 0 : messages !== previous.messages
-        this.workspaceSnapshots.set(sessionId, { profile: previous.profile,
-          messages: isDelta ? previous.messages : messages, cursor,
-          fullReadAt: isDelta ? previous.fullReadAt : Date.now() })
+        this.workspaceSnapshots.set(sessionId, {
+          profile: previous.profile,
+          messages: isDelta ? previous.messages : messages,
+          cursor,
+          fullReadAt: isDelta ? previous.fullReadAt : Date.now()
+        })
 
         if (hasChanges) {
           changed = true
-          this.workspaceEvents.dispatch({ type: 'session.replay_gap', session_id: sessionId, profile: previous.profile, payload: {} })
+          this.workspaceEvents.dispatch({
+            type: 'session.replay_gap',
+            session_id: sessionId,
+            profile: previous.profile,
+            payload: {}
+          })
         }
       }
 
@@ -179,10 +253,14 @@ export class HermesGateway extends JsonRpcGatewayClient {
       // Reads may retry; never retry a send. IPC enforces the current account on every read.
       this.workspacePollDelay = Math.min(this.workspacePollDelay * 2, 30_000)
     } finally {
-      if (this.workspacePollGeneration === generation) { this.workspacePollGeneration = null }
+      if (this.workspacePollGeneration === generation) {
+        this.workspacePollGeneration = null
+      }
 
       if (this.workspaceConnection === connection && generation === this.connectionGeneration) {
-        this.scheduleWorkspacePoll(document.visibilityState === 'hidden' ? Math.max(this.workspacePollDelay, 120_000) : this.workspacePollDelay)
+        this.scheduleWorkspacePoll(
+          document.visibilityState === 'hidden' ? Math.max(this.workspacePollDelay, 120_000) : this.workspacePollDelay
+        )
       }
     }
   }
@@ -193,28 +271,50 @@ export class HermesGateway extends JsonRpcGatewayClient {
 
   override onState(handler: (state: ConnectionState) => void): () => void {
     this.workspaceStates.add(handler)
-    const off = super.onState(state => { if (!this.workspaceConnection) { handler(state) } })
+    const off = super.onState(state => {
+      if (!this.workspaceConnection) {
+        handler(state)
+      }
+    })
 
-    if (this.workspaceConnection) { handler(this.workspaceState) }
+    if (this.workspaceConnection) {
+      handler(this.workspaceState)
+    }
 
-    return () => { off(); this.workspaceStates.delete(handler) }
+    return () => {
+      off()
+      this.workspaceStates.delete(handler)
+    }
   }
 
   private setWorkspaceState(state: ConnectionState): void {
     this.workspaceState = state
 
-    for (const handler of this.workspaceStates) { handler(state) }
+    for (const handler of this.workspaceStates) {
+      handler(state)
+    }
   }
 
   /** HTTP readiness is an authenticated resource check, never a gateway.ready handshake. */
-  async connectWorkspace(origin: string, scope: WorkspaceScope, connectionId?: string, profile = 'default'): Promise<void> {
+  async connectWorkspace(
+    origin: string,
+    scope: WorkspaceScope,
+    connectionId?: string,
+    profile = 'default'
+  ): Promise<void> {
     const current = this.workspaceConnection
 
-    const same = current?.origin === origin && current.connectionId === connectionId && current.profile === profile &&
-      current.scope.userId === scope.userId && current.scope.workspaceId === scope.workspaceId &&
+    const same =
+      current?.origin === origin &&
+      current.connectionId === connectionId &&
+      current.profile === profile &&
+      current.scope.userId === scope.userId &&
+      current.scope.workspaceId === scope.workspaceId &&
       current.scope.organizationId === scope.organizationId
 
-    if (same && this.workspaceState === 'connecting' && this.workspaceDial) {return this.workspaceDial}
+    if (same && this.workspaceState === 'connecting' && this.workspaceDial) {
+      return this.workspaceDial
+    }
 
     if (same && this.workspaceState === 'open') {
       const generation = this.connectionGeneration
@@ -228,10 +328,21 @@ export class HermesGateway extends JsonRpcGatewayClient {
     const pending = this.openWorkspace(origin, scope, connectionId, profile)
     this.workspaceDial = pending
 
-    try {await pending} finally {if (this.workspaceDial === pending) {this.workspaceDial = null}}
+    try {
+      await pending
+    } finally {
+      if (this.workspaceDial === pending) {
+        this.workspaceDial = null
+      }
+    }
   }
 
-  private async openWorkspace(origin: string, scope: WorkspaceScope, connectionId?: string, profile = 'default'): Promise<void> {
+  private async openWorkspace(
+    origin: string,
+    scope: WorkspaceScope,
+    connectionId?: string,
+    profile = 'default'
+  ): Promise<void> {
     this.stopWorkspacePoll()
     this.workspacePollDelay = 2_000
     this.connectionGeneration++
@@ -249,8 +360,13 @@ export class HermesGateway extends JsonRpcGatewayClient {
         const known = workspaceReadScopes.get(connectionId)
         const normalizedOrigin = new URL(origin).origin
 
-        if (!known || known.origin !== normalizedOrigin || known.scope.userId !== scope.userId ||
-          known.scope.workspaceId !== scope.workspaceId || known.scope.organizationId !== scope.organizationId) {
+        if (
+          !known ||
+          known.origin !== normalizedOrigin ||
+          known.scope.userId !== scope.userId ||
+          known.scope.workspaceId !== scope.workspaceId ||
+          known.scope.organizationId !== scope.organizationId
+        ) {
           workspaceReadScopes.set(connectionId, { scope: { ...scope }, origin: normalizedOrigin })
         }
       }
@@ -260,7 +376,9 @@ export class HermesGateway extends JsonRpcGatewayClient {
       window.addEventListener('focus', this.wakeWorkspacePoll)
       document.addEventListener('visibilitychange', this.wakeWorkspacePoll)
     } catch (error) {
-      if (generation === this.connectionGeneration) { this.setWorkspaceState('error') }
+      if (generation === this.connectionGeneration) {
+        this.setWorkspaceState('error')
+      }
       throw error
     }
   }
@@ -268,8 +386,13 @@ export class HermesGateway extends JsonRpcGatewayClient {
   private rememberWorkspaceOriginal(sessionId: string, context: WorkspaceMainContext): void {
     const scope = this.workspaceConnection!.scope
 
-    if (context.user_id !== scope.userId || context.workspace_id !== scope.workspaceId ||
-      context.organization_id !== scope.organizationId || !context.binding_id || !context.original_conversation?.session_key) {
+    if (
+      context.user_id !== scope.userId ||
+      context.workspace_id !== scope.workspaceId ||
+      context.organization_id !== scope.organizationId ||
+      !context.binding_id ||
+      !context.original_conversation?.session_key
+    ) {
       throw new Error('The original Main conversation owner changed. Reopen Winman from Main.')
     }
 
@@ -283,20 +406,29 @@ export class HermesGateway extends JsonRpcGatewayClient {
     signal?.throwIfAborted()
     const sessionId = String(params.session_id || params.session_key || '')
 
-    const pendingKey = JSON.stringify([new URL(connection.origin).origin, connection.scope.userId,
-      connection.scope.workspaceId, connection.scope.organizationId, sessionId])
+    const pendingKey = JSON.stringify([
+      new URL(connection.origin).origin,
+      connection.scope.userId,
+      connection.scope.workspaceId,
+      connection.scope.organizationId,
+      sessionId
+    ])
 
     if (method === 'model.options') {
       if (params.query_only !== true || typeof params.query_scope !== 'string' || !params.query_scope.trim()) {
         throw new Error('Cloud model discovery requires the query-only source contract.')
       }
 
-      const query = new URLSearchParams({query_only:'1',query_scope:params.query_scope})
+      const query = new URLSearchParams({ query_only: '1', query_scope: params.query_scope })
 
-      if (params.refresh === true) {query.set('refresh','1')}
+      if (params.refresh === true) {
+        query.set('refresh', '1')
+      }
 
-      const result = await hermesApiAs<T>({connectionId:connection.connectionId || null,profile:connection.profile || 'default'},
-        {path:'/api/model/options?' + query})
+      const result = await hermesApiAs<T>(
+        { connectionId: connection.connectionId || null, profile: connection.profile || 'default' },
+        { path: '/api/model/options?' + query }
+      )
 
       this.requireConnectionGeneration(generation)
 
@@ -308,7 +440,12 @@ export class HermesGateway extends JsonRpcGatewayClient {
         throw new Error('Native original-chat binding requires its Cloud owner adapter.')
       }
 
-      const context = await bridge.bindNativeContext(connection.origin, connection.scope, sessionId, String(params.original_session_key || ''))
+      const context = await bridge.bindNativeContext(
+        connection.origin,
+        connection.scope,
+        sessionId,
+        String(params.original_session_key || '')
+      )
       this.requireConnectionGeneration(generation)
       this.rememberWorkspaceOriginal(sessionId, context)
 
@@ -317,26 +454,46 @@ export class HermesGateway extends JsonRpcGatewayClient {
 
     if (method === 'session.create') {
       if (String(params.profile || connection.profile || 'default') === 'default') {
-        const unsupported = ['model', 'provider', 'toolsets', 'reasoning_effort', 'reasoning', 'service_tier']
-          .filter(key => params[key] !== undefined)
+        const unsupported = ['model', 'provider', 'toolsets', 'reasoning_effort', 'reasoning', 'service_tier'].filter(
+          key => params[key] !== undefined
+        )
 
         // The composer always includes false for its default normal-speed mode.
-        if (params.fast !== undefined && params.fast !== false) { unsupported.push('fast') }
+        if (params.fast !== undefined && params.fast !== false) {
+          unsupported.push('fast')
+        }
 
-        if (params.cwd_explicit === true) { unsupported.push('cwd') }
+        if (params.cwd_explicit === true) {
+          unsupported.push('cwd')
+        }
 
-        if (params.hidden === true) { unsupported.push('hidden') }
+        if (params.hidden === true) {
+          unsupported.push('hidden')
+        }
 
-        if (unsupported.length) { throw new Error(`Cloud Main creation uses server settings; explicit options are unavailable: ${unsupported.join(', ')}`) }
+        if (unsupported.length) {
+          throw new Error(
+            `Cloud Main creation uses server settings; explicit options are unavailable: ${unsupported.join(', ')}`
+          )
+        }
 
-        if (!bridge.createSession) { throw new Error('Cloud Main creation is unavailable in this Desktop build.') }
+        if (!bridge.createSession) {
+          throw new Error('Cloud Main creation is unavailable in this Desktop build.')
+        }
         const prepared = this.protocol.prepare('session.create', params)
-        const snapshot = await bridge.createSession(connection.origin, connection.scope, String(params.title || ''), String(prepared.request_id))
+        const snapshot = await bridge.createSession(
+          connection.origin,
+          connection.scope,
+          String(params.title || ''),
+          String(prepared.request_id)
+        )
         this.requireConnectionGeneration(generation)
         this.rememberWorkspaceSnapshot(snapshot.sessionId, 'default', snapshot.messages, snapshot.nextCursor)
 
         return this.protocol.result('session.create', prepared, {
-          session_id: snapshot.sessionId, stored_session_id: snapshot.sessionId, messages: workspaceTranscript(snapshot)
+          session_id: snapshot.sessionId,
+          stored_session_id: snapshot.sessionId,
+          messages: workspaceTranscript(snapshot)
         }) as T
       }
 
@@ -347,7 +504,9 @@ export class HermesGateway extends JsonRpcGatewayClient {
       const target = String(params.profile || connection.profile || 'default')
 
       const roster = await hermesApiAs<{ profiles: Array<{ name: string }> }>(
-        { connectionId: connection.connectionId, profile: 'default' }, { path: '/api/profiles' })
+        { connectionId: connection.connectionId, profile: 'default' },
+        { path: '/api/profiles' }
+      )
 
       this.requireConnectionGeneration(generation)
 
@@ -368,31 +527,52 @@ export class HermesGateway extends JsonRpcGatewayClient {
     }
 
     if (method === 'profiles.list') {
-      if (!connection.connectionId) { throw new Error('The Cloud roster requires an explicit connection owner.') }
-      const result = await hermesApiAs<T>({ connectionId: connection.connectionId, profile: 'default' }, { path: '/api/profiles' })
+      if (!connection.connectionId) {
+        throw new Error('The Cloud roster requires an explicit connection owner.')
+      }
+      const result = await hermesApiAs<T>(
+        { connectionId: connection.connectionId, profile: 'default' },
+        { path: '/api/profiles' }
+      )
       this.requireConnectionGeneration(generation)
 
       return result
     }
 
     if (method === 'session.list' && params.title === 'Bot Chat') {
-      if (!connection.connectionId) { throw new Error('The Cloud registry requires an explicit connection owner.') }
+      if (!connection.connectionId) {
+        throw new Error('The Cloud registry requires an explicit connection owner.')
+      }
 
-      const roster = await hermesApiAs<{ profiles: Array<{ name: string; canonical_session?: {
-        id: string; resolved_id?: string; title?: string; root_title?: string; [key: string]: unknown
-      } | null }> }>({ connectionId: connection.connectionId, profile: 'default' }, { path: '/api/profiles' })
+      const roster = await hermesApiAs<{
+        profiles: Array<{
+          name: string
+          canonical_session?: {
+            id: string
+            resolved_id?: string
+            title?: string
+            root_title?: string
+            [key: string]: unknown
+          } | null
+        }>
+      }>({ connectionId: connection.connectionId, profile: 'default' }, { path: '/api/profiles' })
 
       this.requireConnectionGeneration(generation)
       const profile = roster.profiles.find(row => row.name === params.profile)
 
-      if (!profile) { throw new Error('This Native profile is unavailable in the current workspace.') }
+      if (!profile) {
+        throw new Error('This Native profile is unavailable in the current workspace.')
+      }
       const canonical = profile.canonical_session
 
       if (canonical && (canonical.root_title || canonical.title) !== 'Bot Chat') {
         throw new Error('The Native Bot Chat title registry is unavailable.')
       }
 
-      return { sessions: canonical ? [{ ...canonical, session_id: canonical.resolved_id || canonical.id }] : [], scope: 'stored' } as T
+      return {
+        sessions: canonical ? [{ ...canonical, session_id: canonical.resolved_id || canonical.id }] : [],
+        scope: 'stored'
+      } as T
     }
 
     if (method === 'ping' || method === 'setup.status' || method === 'setup.runtime_check') {
@@ -400,14 +580,20 @@ export class HermesGateway extends JsonRpcGatewayClient {
       this.requireConnectionGeneration(generation)
       assertWorkspaceScope(identity, connection.scope)
 
-      if (method === 'ping') { return { ok: true } as T }
+      if (method === 'ping') {
+        return { ok: true } as T
+      }
       const ready = identity.account_provisioning?.inference_ready
 
-      if (typeof ready !== 'boolean') { throw new Error('Cloud inference readiness is unavailable.') }
+      if (typeof ready !== 'boolean') {
+        throw new Error('Cloud inference readiness is unavailable.')
+      }
 
-      return (method === 'setup.status'
-        ? { ready, provider_configured: ready }
-        : { ok: ready, error: ready ? undefined : identity.account_provisioning?.reason }) as T
+      return (
+        method === 'setup.status'
+          ? { ready, provider_configured: ready }
+          : { ok: ready, error: ready ? undefined : identity.account_provisioning?.reason }
+      ) as T
     }
 
     if (method === 'session.resume' || method === 'session.activate') {
@@ -420,7 +606,9 @@ export class HermesGateway extends JsonRpcGatewayClient {
           const context = await bridge.nativeContext(connection.origin, connection.scope, sessionId)
           this.requireConnectionGeneration(generation)
 
-          if (context) { this.rememberWorkspaceOriginal(sessionId, context) }
+          if (context) {
+            this.rememberWorkspaceOriginal(sessionId, context)
+          }
         }
 
         this.rememberWorkspaceSnapshot(sessionId, String(params.profile || connection.profile), snapshot.messages)
@@ -433,23 +621,39 @@ export class HermesGateway extends JsonRpcGatewayClient {
       signal?.throwIfAborted()
       this.rememberWorkspaceSnapshot(sessionId, 'default', history.messages, history.nextCursor)
 
-      return { resumed: history.sessionId, session_id: history.sessionId, session_key: history.sessionId,
-        message_count: history.messages.length, messages: workspaceTranscript(history) } as T
+      return {
+        resumed: history.sessionId,
+        session_id: history.sessionId,
+        session_key: history.sessionId,
+        message_count: history.messages.length,
+        messages: workspaceTranscript(history)
+      } as T
     }
 
     if (method === 'prompt.cancel' && (params.profile || connection.profile || 'default') !== 'default') {
-      if (!bridge.cancelNative) {throw new Error('Native admission cancellation requires its Cloud owner adapter.')}
-      const result = await bridge.cancelNative(connection.origin, connection.scope, sessionId, String(params.admission_id || ''))
+      if (!bridge.cancelNative) {
+        throw new Error('Native admission cancellation requires its Cloud owner adapter.')
+      }
+      const result = await bridge.cancelNative(
+        connection.origin,
+        connection.scope,
+        sessionId,
+        String(params.admission_id || '')
+      )
       this.requireConnectionGeneration(generation)
 
       return result.receipt as T
     }
 
     if (method === 'session.interrupt') {
-      if (!bridge.interrupt) {throw new Error('Stream interruption requires its Cloud owner adapter.')}
+      if (!bridge.interrupt) {
+        throw new Error('Stream interruption requires its Cloud owner adapter.')
+      }
       const pending = workspacePendingRequests.get(pendingKey)
 
-      if (!pending) {return { cancel_requested: false } as T}
+      if (!pending) {
+        return { cancel_requested: false } as T
+      }
       pending.stopRequested = true
       const result = await bridge.interrupt(connection.origin, connection.scope, sessionId, pending.requestId)
       this.requireConnectionGeneration(generation)
@@ -460,65 +664,121 @@ export class HermesGateway extends JsonRpcGatewayClient {
     if (method === 'prompt.submit') {
       const requestId = String(params.submission_id || params.request_id || '')
 
-      if (!requestId) {throw new Error('A retained request identity is required to send a Cloud message.')}
+      if (!requestId) {
+        throw new Error('A retained request identity is required to send a Cloud message.')
+      }
 
-      if (workspacePendingRequests.has(pendingKey)) {throw new Error('A Cloud request is already pending in this conversation.')}
+      if (workspacePendingRequests.has(pendingKey)) {
+        throw new Error('A Cloud request is already pending in this conversation.')
+      }
       const pending = { owner: this, requestId, stopRequested: false }
       workspacePendingRequests.set(pendingKey, pending)
 
       try {
         if ((params.profile || connection.profile || 'default') !== 'default') {
-          if (!bridge.sendNative) { throw new Error('Native Bot Chat submission requires its Cloud owner adapter.') }
+          if (!bridge.sendNative) {
+            throw new Error('Native Bot Chat submission requires its Cloud owner adapter.')
+          }
 
           if (!this.workspaceOriginalContexts.has(sessionId) && bridge.nativeContext) {
             const recovered = await bridge.nativeContext(connection.origin, connection.scope, sessionId)
             this.requireConnectionGeneration(generation)
             signal?.throwIfAborted()
 
-            if (recovered) {this.rememberWorkspaceOriginal(sessionId, recovered)}
+            if (recovered) {
+              this.rememberWorkspaceOriginal(sessionId, recovered)
+            }
           }
 
           const context = this.workspaceOriginalContexts.get(sessionId)
 
-          if (!context) { throw new Error('Open Winman from the original Main conversation before sending.') }
+          if (!context) {
+            throw new Error('Open Winman from the original Main conversation before sending.')
+          }
           const identity = String(params.submission_id || params.request_id || '')
 
-          if (!identity) { throw new Error('A retained Native request identity is required.') }
-          const snapshot = await bridge.sendNative(connection.origin, connection.scope, sessionId, String(params.text || ''), identity, context.binding_id)
+          if (!identity) {
+            throw new Error('A retained Native request identity is required.')
+          }
+          const snapshot = await bridge.sendNative(
+            connection.origin,
+            connection.scope,
+            sessionId,
+            String(params.text || ''),
+            identity,
+            context.binding_id
+          )
           this.requireConnectionGeneration(generation)
           this.rememberWorkspaceSnapshot(sessionId, String(params.profile || connection.profile), snapshot.messages)
-          this.workspaceEvents.dispatch({ type: 'session.replay_gap', session_id: sessionId, profile: String(connection.profile), payload: {} })
+          this.workspaceEvents.dispatch({
+            type: 'session.replay_gap',
+            session_id: sessionId,
+            profile: String(connection.profile),
+            payload: {}
+          })
 
           return this.protocol.result('prompt.submit', params, snapshot.admission_receipt) as T
         }
 
         const identity = String(params.submission_id || params.request_id || '')
 
-        if (!identity) { throw new Error('A retained request identity is required to send a Cloud message.') }
-        const snapshot = await bridge.send(connection.origin, connection.scope, sessionId, String(params.text || ''), identity)
+        if (!identity) {
+          throw new Error('A retained request identity is required to send a Cloud message.')
+        }
+        const snapshot = await bridge.send(
+          connection.origin,
+          connection.scope,
+          sessionId,
+          String(params.text || ''),
+          identity
+        )
         this.requireConnectionGeneration(generation)
         // IPC requires the completed server stream before returning real history.
-        const rows = snapshot.messages.filter(message => message.role === 'user' && message.metadata?.durable_request_id === identity)
+        const rows = snapshot.messages.filter(
+          message => message.role === 'user' && message.metadata?.durable_request_id === identity
+        )
 
-        if (snapshot.sessionId !== sessionId || rows.length !== 1) { throw new Error('The Main completion receipt is uncertain. Recover history before sending again.') }
+        if (snapshot.sessionId !== sessionId || rows.length !== 1) {
+          throw new Error('The Main completion receipt is uncertain. Recover history before sending again.')
+        }
         const rowId = Number(rows[0].messageId)
         this.rememberWorkspaceSnapshot(sessionId, 'default', snapshot.messages, snapshot.nextCursor)
-        this.workspaceEvents.dispatch({ type: 'session.replay_gap', session_id: sessionId, profile: 'default', payload: {} })
+        this.workspaceEvents.dispatch({
+          type: 'session.replay_gap',
+          session_id: sessionId,
+          profile: 'default',
+          payload: {}
+        })
 
-        return { session_id: sessionId, submission_id: identity, status: 'terminal',
-          ...(Number.isSafeInteger(rowId) && rowId > 0 ? { user_row_id: rowId } : {}) } as T
+        return {
+          session_id: sessionId,
+          submission_id: identity,
+          status: 'terminal',
+          ...(Number.isSafeInteger(rowId) && rowId > 0 ? { user_row_id: rowId } : {})
+        } as T
       } catch (error) {
-        if (pending.stopRequested && error instanceof Error && error.message.endsWith(`${WORKSPACE_USER_STOP_ERROR}:${requestId}`))
-          {throw new WorkspaceRequestStopped(requestId)}
+        if (
+          pending.stopRequested &&
+          error instanceof Error &&
+          error.message.endsWith(`${WORKSPACE_USER_STOP_ERROR}:${requestId}`)
+        ) {
+          throw new WorkspaceRequestStopped(requestId)
+        }
 
         throw error
       } finally {
-        if (workspacePendingRequests.get(pendingKey)?.owner === this && workspacePendingRequests.get(pendingKey)?.requestId === requestId)
-          {workspacePendingRequests.delete(pendingKey)}
+        if (
+          workspacePendingRequests.get(pendingKey)?.owner === this &&
+          workspacePendingRequests.get(pendingKey)?.requestId === requestId
+        ) {
+          workspacePendingRequests.delete(pendingKey)
+        }
       }
     }
 
-    throw Object.assign(new Error(`Semantier Workspace does not support Desktop operation ${method}.`), { code: -32601 })
+    throw Object.assign(new Error(`Semantier Workspace does not support Desktop operation ${method}.`), {
+      code: -32601
+    })
   }
 
   private canonical = false
@@ -546,28 +806,48 @@ export class HermesGateway extends JsonRpcGatewayClient {
     }
   }
 
-  private deliverCanonicalPrompt(event: { type: string; session_id?: string; profile?: string; payload?: unknown }, replayed: boolean) {
+  private deliverCanonicalPrompt(
+    event: { type: string; session_id?: string; profile?: string; payload?: unknown },
+    replayed: boolean
+  ) {
     const kind = CANONICAL_PROMPT_EVENTS[event.type]
     const p = event.payload as Record<string, unknown> | undefined
     const sid = event.session_id
 
-    if (!kind || !p || !sid || typeof p.prompt_id !== 'string') { return }
+    if (!kind || !p || !sid || typeof p.prompt_id !== 'string') {
+      return
+    }
     const id = p.prompt_id
     const profile = canonicalProfile(event.profile)
     const generation = this.connectionGeneration
 
-    if (this.deliveredPrompts.has(id)) { return }
+    if (this.deliveredPrompts.has(id)) {
+      return
+    }
     this.deliveredPrompts.set(id, { sessionId: sid, profile })
     const choices = Array.isArray(p.choices) ? p.choices : []
 
     // The question card reads one `questions[]` shape. A canonical clarify prompt is one
     // question (the shared gateway asks a batch one card at a time), so its prompt id doubles
     // as the qid that `clarify.lock` answers with (see `request` below).
-    const params: Record<string, unknown> = kind === 'clarify'
-      ? { session_id: sid, answers: p.answers,
-          questions: Array.isArray(p.questions) ? p.questions : [{ qid: id, question: p.question, choices, multi_select: p.multi_select }] }
-      : { session_id: sid, request_id: id, command: p.command, description: p.description, choices,
-          allow_permanent: choices.includes('always'), edit: p.edit }
+    const params: Record<string, unknown> =
+      kind === 'clarify'
+        ? {
+            session_id: sid,
+            answers: p.answers,
+            questions: Array.isArray(p.questions)
+              ? p.questions
+              : [{ qid: id, question: p.question, choices, multi_select: p.multi_select }]
+          }
+        : {
+            session_id: sid,
+            request_id: id,
+            command: p.command,
+            description: p.description,
+            choices,
+            allow_permanent: choices.includes('always'),
+            edit: p.edit
+          }
 
     let settled = false
 
@@ -577,42 +857,61 @@ export class HermesGateway extends JsonRpcGatewayClient {
       params,
       replayed,
       respond: result => {
-        if (settled || generation !== this.connectionGeneration) { return }
+        if (settled || generation !== this.connectionGeneration) {
+          return
+        }
         settled = true
 
         // A clarify reply without an answer (skip, Stop, cancel) is the empty answer the
         // authority records as skipped; `clarify.respond` refuses a missing field.
-        const answer = kind === 'clarify'
-          ? { answer: typeof result.answer === 'string' ? result.answer : '' }
-          : { choice: result.choice }
+        const answer =
+          kind === 'clarify'
+            ? { answer: typeof result.answer === 'string' ? result.answer : '' }
+            : { choice: result.choice }
 
-        void this.request(`${kind}.respond`, { session_id: sid, profile, request_id: id, ...answer })
-          .catch(() => this.recoverCanonicalPrompt(id, sid, profile, generation))
+        void this.request(`${kind}.respond`, { session_id: sid, profile, request_id: id, ...answer }).catch(() =>
+          this.recoverCanonicalPrompt(id, sid, profile, generation)
+        )
       },
       // A card this window declined (a stopped session) is not delivered: the next authoritative
       // snapshot that still lists the prompt shows it again. Only answered prompts stay deduplicated.
       fail: () => {
-        if (settled) { return }
+        if (settled) {
+          return
+        }
         settled = true
 
-        if (generation === this.connectionGeneration) { this.deliveredPrompts.delete(id) }
+        if (generation === this.connectionGeneration) {
+          this.deliveredPrompts.delete(id)
+        }
       }
     }
 
     recordCanonicalOwner(request, this.displayProfiles.get(canonicalSessionKey(sid, profile)) ?? profile)
 
     for (const handler of this.promptHandlers) {
-      if (handler(request) !== false) { return }
+      if (handler(request) !== false) {
+        return
+      }
     }
   }
 
-  private async recoverCanonicalPrompt(id: string, sessionId: string, profile: string, generation: number): Promise<void> {
-    if (generation !== this.connectionGeneration || !this.deliveredPrompts.has(id)) { return }
+  private async recoverCanonicalPrompt(
+    id: string,
+    sessionId: string,
+    profile: string,
+    generation: number
+  ): Promise<void> {
+    if (generation !== this.connectionGeneration || !this.deliveredPrompts.has(id)) {
+      return
+    }
     this.deliveredPrompts.delete(id)
 
     // A lost reply may have committed. Reopen a card only if the authority's
     // snapshot still lists it; never resend an approval from a cached event.
-    try { await this.request('session.resume', { session_id: sessionId, profile }) } catch {
+    try {
+      await this.request('session.resume', { session_id: sessionId, profile })
+    } catch {
       // A disconnected socket will reconcile its pending prompts on reattach.
     }
   }
@@ -620,7 +919,9 @@ export class HermesGateway extends JsonRpcGatewayClient {
   override close(): void {
     this.stopWorkspacePoll()
 
-    if (this.workspaceConnection) { this.setWorkspaceState('closed') }
+    if (this.workspaceConnection) {
+      this.setWorkspaceState('closed')
+    }
     this.workspaceConnection = null
     this.connectionGeneration++
     this.deliveredPrompts.clear()
@@ -640,7 +941,9 @@ export class HermesGateway extends JsonRpcGatewayClient {
     const cursors = this.getSeqWatermarks()
 
     for (const [epoch, owner] of this.replayProfiles) {
-      if (!(owner.sessionId in cursors)) { this.replayProfiles.delete(epoch) }
+      if (!(owner.sessionId in cursors)) {
+        this.replayProfiles.delete(epoch)
+      }
     }
   }
 
@@ -648,16 +951,24 @@ export class HermesGateway extends JsonRpcGatewayClient {
     // Named listeners run before wildcard listeners in the shared client.
     // Normalize before either kind sees the prompt, including replay delivery.
     const offHttp = this.workspaceEvents.on(type, handler)
-    const offNative = super.on<K>(type, event => this.deliverNormalized(event, handler as (event: GatewayEvent) => void))
+    const offNative = super.on<K>(type, event =>
+      this.deliverNormalized(event, handler as (event: GatewayEvent) => void)
+    )
 
-    return () => { offHttp(); offNative() }
+    return () => {
+      offHttp()
+      offNative()
+    }
   }
 
   override onAny(handler: (event: GatewayEvent) => void): () => void {
     const offHttp = this.workspaceEvents.onAny(handler)
     const offNative = super.onAny(event => this.deliverNormalized(event, handler))
 
-    return () => { offHttp(); offNative() }
+    return () => {
+      offHttp()
+      offNative()
+    }
   }
 
   private deliverNormalized(event: GatewayEvent, handler: (event: GatewayEvent) => void): void {
@@ -666,7 +977,9 @@ export class HermesGateway extends JsonRpcGatewayClient {
     const parked = this.canonical && event.session_id ? this.parkedFrames.get(key) : undefined
 
     const deliver = () => {
-      if (!this.canonical || this.normalizeCanonicalEvent(event)) { handler(event) }
+      if (!this.canonical || this.normalizeCanonicalEvent(event)) {
+        handler(event)
+      }
     }
 
     if (parked) {
@@ -678,7 +991,6 @@ export class HermesGateway extends JsonRpcGatewayClient {
       this.parkedFrames.get(key)?.push(deliver)
     }
   }
-
 
   private rememberSessionProfile(sessionId: string, profile: unknown): void {
     const profiles = this.sessionProfiles.get(sessionId) ?? new Set<string>()
@@ -693,13 +1005,15 @@ export class HermesGateway extends JsonRpcGatewayClient {
   private snapshotRoute(params: Record<string, unknown>, snapshot: any): Record<string, unknown> {
     const sid = snapshot?.session_id
 
-    if (typeof sid !== 'string') { return params }
+    if (typeof sid !== 'string') {
+      return params
+    }
     const previous = canonicalProfile(params.profile)
     const replayOwner = this.replayProfiles.get(snapshot.replay_epoch)
     const named = snapshot.info?.profile_name
 
-    const profile = typeof named === 'string' && named ? named :
-      replayOwner?.sessionId === sid ? replayOwner.profile : previous
+    const profile =
+      typeof named === 'string' && named ? named : replayOwner?.sessionId === sid ? replayOwner.profile : previous
 
     this.profileAliases.set(canonicalSessionKey(sid, previous), profile)
 
@@ -717,12 +1031,17 @@ export class HermesGateway extends JsonRpcGatewayClient {
   }
 
   private normalizeCanonicalEvent(event: GatewayEvent): boolean {
-    if (!event.session_id) { return true }
+    if (!event.session_id) {
+      return true
+    }
     const owner = event.replay_epoch ? this.replayProfiles.get(event.replay_epoch) : undefined
     const profiles = this.sessionProfiles.get(event.session_id)
 
-    let profile = owner?.sessionId === event.session_id ? owner.profile : this.eventRoutes.get(event) ??
-      (profiles?.size === 1 ? profiles.values().next().value : profiles?.size ? undefined : 'default')
+    let profile =
+      owner?.sessionId === event.session_id
+        ? owner.profile
+        : (this.eventRoutes.get(event) ??
+          (profiles?.size === 1 ? profiles.values().next().value : profiles?.size ? undefined : 'default'))
 
     if (profile === undefined) {
       this.reconcileAmbiguousEvent(event.session_id, event.replay_epoch)
@@ -743,18 +1062,23 @@ export class HermesGateway extends JsonRpcGatewayClient {
   private reconcileAmbiguousEvent(sessionId: string, epoch?: string): void {
     const key = JSON.stringify([sessionId, epoch])
 
-    if (this.reconciledEpochs.has(key)) { return }
+    if (this.reconciledEpochs.has(key)) {
+      return
+    }
     this.reconciledEpochs.add(key)
     this.parkedFrames.set(key, [])
     const generation = this.connectionGeneration
 
     // A new/unknown replay epoch cannot choose between equal stored IDs. One
     // authoritative snapshot per known owner recovers cards and establishes routes.
-    const probes = [...this.sessionProfiles.get(sessionId) ?? []].map(profile =>
-      this.request('session.resume', { session_id: sessionId, profile }))
+    const probes = [...(this.sessionProfiles.get(sessionId) ?? [])].map(profile =>
+      this.request('session.resume', { session_id: sessionId, profile })
+    )
 
     void Promise.allSettled(probes).then(results => {
-      if (generation !== this.connectionGeneration) { return }
+      if (generation !== this.connectionGeneration) {
+        return
+      }
       const parked = this.parkedFrames.get(key) ?? []
       this.parkedFrames.delete(key)
 
@@ -765,7 +1089,9 @@ export class HermesGateway extends JsonRpcGatewayClient {
         return
       }
 
-      for (const deliver of parked) { deliver() }
+      for (const deliver of parked) {
+        deliver()
+      }
     })
   }
 
@@ -797,7 +1123,9 @@ export class HermesGateway extends JsonRpcGatewayClient {
 
       // The shared client's reconnect cursor predates the new socket's
       // attachments. Never route an unknown old cursor to the launch profile.
-      if (!owner || owner.sessionId !== params.session_id) { throw new Error('Replay owner unavailable; reopen the session') }
+      if (!owner || owner.sessionId !== params.session_id) {
+        throw new Error('Replay owner unavailable; reopen the session')
+      }
       params = { ...params, profile: owner.profile }
     }
 
@@ -812,10 +1140,14 @@ export class HermesGateway extends JsonRpcGatewayClient {
     const profiles = this.sessionProfiles.get(String(sid ?? ''))
 
     if (params.profile === undefined && profiles?.size) {
-      if (profiles.size !== 1) { throw new Error('Session ID belongs to several profiles; select its owner profile before continuing') }
+      if (profiles.size !== 1) {
+        throw new Error('Session ID belongs to several profiles; select its owner profile before continuing')
+      }
       const profile = profiles.values().next().value!
 
-      if (profile !== 'default') { params = { ...params, profile } }
+      if (profile !== 'default') {
+        params = { ...params, profile }
+      }
     }
 
     if (typeof sid === 'string' && ['session.resume', 'session.activate'].includes(method)) {
@@ -827,29 +1159,46 @@ export class HermesGateway extends JsonRpcGatewayClient {
     return params
   }
 
-  override async request<T>(method: string, params: Record<string, unknown> = {}, timeoutMs?: number, signal?: AbortSignal): Promise<T> {
-    if (this.workspaceConnection) { return this.requestWorkspace<T>(method, params, signal) }
+  override async request<T>(
+    method: string,
+    params: Record<string, unknown> = {},
+    timeoutMs?: number,
+    signal?: AbortSignal
+  ): Promise<T> {
+    if (this.workspaceConnection) {
+      return this.requestWorkspace<T>(method, params, signal)
+    }
 
-    if (!this.canonical) { return super.request<T>(method, legacyParams(method, params), timeoutMs, signal) }
+    if (!this.canonical) {
+      return super.request<T>(method, legacyParams(method, params), timeoutMs, signal)
+    }
     const generation = this.connectionGeneration
     const deadline = Date.now() + (timeoutMs ?? DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS)
     // A truncating submit (edit / regenerate / restore) is the owner's rewind, then the submit.
     const rewind = method === 'prompt.submit' ? splitRewindSubmit(params) : null
 
     if (rewind) {
-      if (rewind.rewind) { await this.request('session.rewind', rewind.rewind, remainingRequestBudget(deadline, signal), signal) }
+      if (rewind.rewind) {
+        await this.request('session.rewind', rewind.rewind, remainingRequestBudget(deadline, signal), signal)
+      }
 
       return this.request<T>('prompt.submit', rewind.submit, remainingRequestBudget(deadline, signal), signal)
     }
 
     // A question's owner is immutable even when a second profile attaches an
     // equal stored session ID while the first card remains open.
-    const promptOwner = method === 'clarify.lock' ? this.deliveredPrompts.get(String(params.request_id ?? '')) : undefined
+    const promptOwner =
+      method === 'clarify.lock' ? this.deliveredPrompts.get(String(params.request_id ?? '')) : undefined
 
     if (promptOwner) {
       const answer = typeof params.answer === 'string' ? params.answer : ''
 
-      return this.request<T>('clarify.respond', { session_id: promptOwner.sessionId, profile: promptOwner.profile, request_id: params.request_id, answer }, timeoutMs, signal)
+      return this.request<T>(
+        'clarify.respond',
+        { session_id: promptOwner.sessionId, profile: promptOwner.profile, request_id: params.request_id, answer },
+        timeoutMs,
+        signal
+      )
     }
 
     params = this.routeCanonicalParams(method, params)
@@ -878,11 +1227,19 @@ export class HermesGateway extends JsonRpcGatewayClient {
         return this.request(m, p, remainingRequestBudget(deadline, signal), signal)
       }
 
-      const settled = await this.protocol.settle(method, prepared, this.protocol.result(method, prepared, result), followUp) as T
+      const settled = (await this.protocol.settle(
+        method,
+        prepared,
+        this.protocol.result(method, prepared, result),
+        followUp
+      )) as T
       this.requireConnectionGeneration(generation)
 
       if (method === 'session.resume' || method === 'session.create' || method === 'session.activate') {
-        this.adoptAttachedSnapshot(settled as { session_id?: string; prompts?: Array<Record<string, unknown>> }, prepared.profile)
+        this.adoptAttachedSnapshot(
+          settled as { session_id?: string; prompts?: Array<Record<string, unknown>> },
+          prepared.profile
+        )
       }
 
       return settled
@@ -893,31 +1250,56 @@ export class HermesGateway extends JsonRpcGatewayClient {
   }
 
   private requireConnectionGeneration(generation: number): void {
-    if (generation !== this.connectionGeneration) { throw new Error('Hermes gateway connection changed; reopen the session') }
+    if (generation !== this.connectionGeneration) {
+      throw new Error('Hermes gateway connection changed; reopen the session')
+    }
   }
 
   // Resume the session (and, for branch-like methods, its parent) on THIS socket before a
   // method that needs an authority subscription here.
-  private async attachForRequest(method: string, params: Record<string, unknown>, deadline: number, signal?: AbortSignal): Promise<void> {
+  private async attachForRequest(
+    method: string,
+    params: Record<string, unknown>,
+    deadline: number,
+    signal?: AbortSignal
+  ): Promise<void> {
     const sid = typeof params.session_id === 'string' ? params.session_id : null
 
-    const resume = (sessionId: string) => this.request('session.resume', {
-      session_id: sessionId, defer_history: true, omit_messages: true,
-      ...(params.profile ? { profile: params.profile } : {})
-    }, remainingRequestBudget(deadline, signal), signal)
+    const resume = (sessionId: string) =>
+      this.request(
+        'session.resume',
+        {
+          session_id: sessionId,
+          defer_history: true,
+          omit_messages: true,
+          ...(params.profile ? { profile: params.profile } : {})
+        },
+        remainingRequestBudget(deadline, signal),
+        signal
+      )
 
     if (sid && ATTACH_REQUIRED.has(method) && !this.attached.has(canonicalSessionKey(sid, params.profile))) {
       await resume(sid)
     }
 
-    const parent = PARENT_ATTACH_REQUIRED.has(method) ? params.parent_session_id ?? params.session_id ?? params.session_key : null
+    const parent = PARENT_ATTACH_REQUIRED.has(method)
+      ? (params.parent_session_id ?? params.session_id ?? params.session_key)
+      : null
 
     if (typeof parent === 'string' && parent && !this.attached.has(canonicalSessionKey(parent, params.profile))) {
       await resume(parent)
     }
   }
 
-  private adoptAttachedSnapshot(settled: { session_id?: string; replay_epoch?: string; info?: { profile_name?: string }; prompts?: Array<Record<string, unknown>> }, profile?: unknown): void {
+  private adoptAttachedSnapshot(
+    settled: {
+      session_id?: string
+      replay_epoch?: string
+      info?: { profile_name?: string }
+      prompts?: Array<Record<string, unknown>>
+    },
+    profile?: unknown
+  ): void {
     // Prompts still open on the authority re-deliver like `open_requests` after a reconnect.
     const sid = settled.session_id
 
@@ -934,8 +1316,11 @@ export class HermesGateway extends JsonRpcGatewayClient {
       }
     }
 
-    for (const prompt of (settled.prompts ?? [])) {
-      this.deliverCanonicalPrompt({ type: `${prompt.kind}.request`, session_id: sid, profile: canonicalProfile(profile), payload: prompt }, true)
+    for (const prompt of settled.prompts ?? []) {
+      this.deliverCanonicalPrompt(
+        { type: `${prompt.kind}.request`, session_id: sid, profile: canonicalProfile(profile), payload: prompt },
+        true
+      )
     }
   }
 
@@ -955,24 +1340,32 @@ export class HermesGateway extends JsonRpcGatewayClient {
       socketFactory: url => {
         const parsed = new URL(url)
 
-        if (!parsed.searchParams.has('native_dial')) {return new WebSocket(url)}
+        if (!parsed.searchParams.has('native_dial')) {
+          return new WebSocket(url)
+        }
         const ticket = parsed.searchParams.get('ticket')
 
-        if (!ticket) {throw new Error('Native gateway requires a fresh private ticket')}
+        if (!ticket) {
+          throw new Error('Native gateway requires a fresh private ticket')
+        }
         parsed.searchParams.delete('ticket')
 
         return new WebSocket(parsed.toString(), [CANONICAL_GATEWAY_PROTOCOL, `hermes-gateway-ticket.${ticket}`])
       }
     })
     this.onEvent(event => {
-      if (!this.canonical) { return }
+      if (!this.canonical) {
+        return
+      }
 
       if (event.type in CANONICAL_PROMPT_EVENTS) {
         this.deliverCanonicalPrompt({ ...event, profile: this.eventRoutes.get(event) }, false)
       } else if (event.type.endsWith('.settled')) {
         const id = (event.payload as { prompt_id?: unknown } | undefined)?.prompt_id
 
-        if (typeof id === 'string') { this.deliveredPrompts.delete(id) }
+        if (typeof id === 'string') {
+          this.deliveredPrompts.delete(id)
+        }
       }
     })
   }
@@ -1069,7 +1462,9 @@ export function hermesApiAs<T>(owner: ResolvedOwner, request: HermesApiRequest):
   const workspaceScope = marker?.scope
   const response = window.hermesDesktop.api<T>({ ...tagged, ...(workspaceScope ? { workspaceScope } : {}) })
 
-  if (!workspaceScope) { return response }
+  if (!workspaceScope) {
+    return response
+  }
 
   return response.then(result => {
     if (workspaceReadScopes.get(tagged.connectionId!) !== marker) {
@@ -1145,7 +1540,9 @@ export function hermesApi<T>(request: HermesApiRequest): Promise<T> {
   const workspaceScope = marker?.scope
   const response = window.hermesDesktop.api<T>({ ...tagged, ...(workspaceScope ? { workspaceScope } : {}) })
 
-  if (!workspaceScope) { return response }
+  if (!workspaceScope) {
+    return response
+  }
 
   return response.then(result => {
     if (workspaceReadScopes.get(tagged.connectionId!) !== marker) {

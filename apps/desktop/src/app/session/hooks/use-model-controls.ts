@@ -77,12 +77,14 @@ export function useModelControls({
         return { ...prev, provider, model, providers }
       }
 
-      queryClient.setQueryData<ModelOptionsResult>(modelOptionsQueryKey(profile, sessionId, ownerConnectionId), patch,
-        { updatedAt: 0 })
+      queryClient.setQueryData<ModelOptionsResult>(modelOptionsQueryKey(profile, sessionId, ownerConnectionId), patch, {
+        updatedAt: 0
+      })
 
       if (includeGlobal) {
-        queryClient.setQueryData<ModelOptionsResult>(modelOptionsQueryKey(profile, null, ownerConnectionId), patch,
-          { updatedAt: 0 })
+        queryClient.setQueryData<ModelOptionsResult>(modelOptionsQueryKey(profile, null, ownerConnectionId), patch, {
+          updatedAt: 0
+        })
       }
     },
     [cacheOwnerConnectionId, cacheProfile, queryClient]
@@ -299,11 +301,15 @@ export function useModelControls({
         updateModelOptionsCache(liveSessionId, provider, model, touchesPrimary && !liveSessionId, liveGatewayProfile)
       }
 
-      const stillOwnsSelection = () => latestOwner.current === capturedOwner &&
-        (!touchesPrimary || ($activeGatewayProfile.get() === capturedProfile && $activeSessionId.get() === primaryRuntimeId))
+      const stillOwnsSelection = () =>
+        latestOwner.current === capturedOwner &&
+        (!touchesPrimary ||
+          ($activeGatewayProfile.get() === capturedProfile && $activeSessionId.get() === primaryRuntimeId))
 
       const rollbackSelection = () => {
-        if (!stillOwnsSelection()) { return }
+        if (!stillOwnsSelection()) {
+          return
+        }
 
         if (liveSessionId) {
           sessionTileDelegate()?.updateSession(liveSessionId, state => ({
@@ -362,7 +368,9 @@ export function useModelControls({
       try {
         const result = await requestSwitch()
 
-        if (!stillOwnsSelection()) { return false }
+        if (!stillOwnsSelection()) {
+          return false
+        }
 
         if (result?.confirm_required) {
           rollbackSelection()
@@ -379,8 +387,9 @@ export function useModelControls({
             // dialog is open. Answering it must not clobber the newer choice:
             // bail (with a notice) if the live state no longer matches the
             // snapshot this prompt was created for.
-            isStale: () => !stillOwnsSelection() || (
-              touchesPrimary
+            isStale: () =>
+              !stillOwnsSelection() ||
+              (touchesPrimary
                 ? $activeSessionId.get() !== liveSessionId ||
                   $currentModel.get() !== prevModel ||
                   $currentProvider.get() !== prevProvider ||
@@ -406,7 +415,9 @@ export function useModelControls({
 
         return true
       } catch (err) {
-        if (!stillOwnsSelection()) { return false }
+        if (!stillOwnsSelection()) {
+          return false
+        }
 
         // An OLDER gateway refuses a mid-turn switch outright (4009) instead of
         // deferring it. Don't punish the user for a backend they haven't

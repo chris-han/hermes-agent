@@ -28,15 +28,20 @@ export function FileSyncSettings() {
     setError('')
 
     const update = () => {
-      if (api && connected)
-        {void api
+      if (api && connected) {
+        void api
           .status()
           .then(s => {
-            if (live) {setStatus(s)}
+            if (live) {
+              setStatus(s)
+            }
           })
           .catch(() => {
-            if (live) {setError(zh ? '请重新连接工作区。' : 'Reconnect your Workspace to see File Sync status.')}
-          })}
+            if (live) {
+              setError(zh ? '请重新连接工作区。' : 'Reconnect your Workspace to see File Sync status.')
+            }
+          })
+      }
     }
 
     update()
@@ -49,7 +54,9 @@ export function FileSyncSettings() {
   }, [api, connected, connection?.connectionId, connection?.workspaceScope?.userId, zh])
 
   async function act(action: 'choose' | 'pause' | 'resume') {
-    if (!api) {return}
+    if (!api) {
+      return
+    }
     const current = generation.current
     setBusy(true)
     setError('')
@@ -57,11 +64,17 @@ export function FileSyncSettings() {
     try {
       const result = await api[action]()
 
-      if (current === generation.current) {setStatus(result)}
+      if (current === generation.current) {
+        setStatus(result)
+      }
     } catch (error) {
-      if (current === generation.current) {setError(error instanceof Error ? error.message : String(error))}
+      if (current === generation.current) {
+        setError(error instanceof Error ? error.message : String(error))
+      }
     } finally {
-      if (current === generation.current) {setBusy(false)}
+      if (current === generation.current) {
+        setBusy(false)
+      }
     }
   }
 

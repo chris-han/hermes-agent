@@ -81,7 +81,9 @@ it('reads the catalog from the backend profile but hands the Desktop alias to pr
   )
 
   await waitFor(() => expect(requestDiscoveredModelOptions).toHaveBeenCalled())
-  expect(vi.mocked(requestDiscoveredModelOptions).mock.calls.every(([options]) => options.profile === 'backend-b')).toBe(true)
+  expect(
+    vi.mocked(requestDiscoveredModelOptions).mock.calls.every(([options]) => options.profile === 'backend-b')
+  ).toBe(true)
 
   fireEvent.click(await screen.findByRole('button', { name: 'Add provider' }))
   expect(startManualOnboarding).toHaveBeenCalledWith(undefined, { connectionId: 'connection-b', profile: 'desktop-b' })
