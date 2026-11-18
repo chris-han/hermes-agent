@@ -28,23 +28,27 @@ export function FileSyncSettings() {
     setError('')
 
     let request = 0
+    let polling = false
 
     const update = () => {
+      // A timer tick must not supersede a slow response from the current owner.
+      if (!api || !connected || polling) {return}
       const current = ++request
       const ownerGeneration = generation.current
 
-      if (api && connected)
-        {void api
-          .status()
-          .then(s => {
-            if (live && current === request && ownerGeneration === generation.current) {
-              setStatus(s)
-              setError('')
-            }
-          })
-          .catch(() => {
-            if (live && current === request && ownerGeneration === generation.current) {setError(zh ? '请重新连接工作区。' : 'Reconnect your Workspace to see File Sync status.')}
-          })}
+      polling = true
+      void api
+        .status()
+        .then(s => {
+          if (live && current === request && ownerGeneration === generation.current) {
+            setStatus(s)
+            setError('')
+          }
+        })
+        .catch(() => {
+          if (live && current === request && ownerGeneration === generation.current) {setError(zh ? '请重新连接工作区。' : 'Reconnect your Workspace to see File Sync status.')}
+        })
+        .finally(() => {polling = false})
     }
 
     update()
