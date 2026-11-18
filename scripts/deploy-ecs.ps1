@@ -672,17 +672,24 @@ function Restore-SignedRelease {
   $script:resumeInputSha256=$saved.receipt.sha256
   Assert-SignedResumeContract $saved
 }
+function ConvertTo-ReleasePayload([byte[]]$Bytes) {
+  $stream=[IO.MemoryStream]::new()
+  $gzip=[IO.Compression.GZipStream]::new($stream,[IO.Compression.CompressionLevel]::SmallestSize,$true)
+  $gzip.Write($Bytes,0,$Bytes.Length);$gzip.Dispose()
+  $encoded=[Convert]::ToBase64String($stream.ToArray());$stream.Dispose()
+  return $encoded
+}
 function Get-EcsCapacityRecovery([string]$Stage,[long]$Size) {
   $cloud=Join-Path (Split-Path -Parent $Repository) 'deploy/ecs-cloud/operations.py'
   if(!(Test-Path -LiteralPath $cloud)){throw 'Maintained ECS cleanup owner missing from selected Runtime.'}
-  $publisher=[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'releases/channel1.py')))
-  $operations=[Convert]::ToBase64String([IO.File]::ReadAllBytes($cloud))
+  $publisher=ConvertTo-ReleasePayload ([IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'releases/channel1.py')))
+  $operations=ConvertTo-ReleasePayload ([IO.File]::ReadAllBytes($cloud))
   $argsJson=@{root=$RemoteRoot;stage=$Stage;size=$Size;expected=$ExpectedChannelSha256} | ConvertTo-Json -Compress
   $args64=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($argsJson))
   $body=@'
-import base64,json,os,pathlib,stat,types
-c=types.ModuleType('channel1');exec(base64.b64decode('__PUBLISHER__'),c.__dict__)
-o=types.ModuleType('operations');exec(base64.b64decode('__OPERATIONS__'),o.__dict__)
+import base64,gzip,json,os,pathlib,stat,types
+c=types.ModuleType('channel1');exec(gzip.decompress(base64.b64decode('__PUBLISHER__')),c.__dict__)
+o=types.ModuleType('operations');exec(gzip.decompress(base64.b64decode('__OPERATIONS__')),o.__dict__)
 a=json.loads(base64.b64decode('__ARGS__'));root=pathlib.Path(a['root']);stage=pathlib.Path(a['stage'])
 if stage.parent!=root.parent or stage.is_symlink(): raise ValueError('Invalid upload owner')
 remaining=a['size']
@@ -703,10 +710,7 @@ if report['result']=='CAPACITY_READY': stage.mkdir(mode=0o700,exist_ok=True)
 print(json.dumps(report))
 '@
   $body=$body.Replace('__PUBLISHER__',$publisher).Replace('__OPERATIONS__',$operations).Replace('__ARGS__',$args64)
-  $stream=[IO.MemoryStream]::new()
-  $gzip=[IO.Compression.GZipStream]::new($stream,[IO.Compression.CompressionMode]::Compress,$true)
-  $gzip.Write([Text.Encoding]::UTF8.GetBytes($body));$gzip.Dispose()
-  $encoded=[Convert]::ToBase64String($stream.ToArray());$stream.Dispose()
+  $encoded=ConvertTo-ReleasePayload ([Text.Encoding]::UTF8.GetBytes($body))
   if($encoded.Length -gt 24000){throw 'Capacity payload exceeds bounded native SSH command size.'}
   $json=Ssh "python3 -c 'import base64,gzip;exec(gzip.decompress(base64.b64decode(`"$encoded`")))'"
   return ($json | ConvertFrom-Json -AsHashtable)
