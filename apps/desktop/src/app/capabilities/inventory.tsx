@@ -113,6 +113,11 @@ export function InventoryRow({ description, ...props }: ComponentProps<typeof Ca
     openDetail()
   }
 
+  // List rows need the subtitle for scanability; cards already render the
+  // description in a bounded preview. Do not repeat an identical, unbounded
+  // subtitle under it (e.g. the A2A toolset's multi-paragraph description).
+  const cardSubtitle = typeof description === 'string' && props.subtitle === description ? null : props.subtitle
+
   if (!cards) {
     return <CapRow {...props} onSelect={select} />
   }
@@ -135,7 +140,9 @@ export function InventoryRow({ description, ...props }: ComponentProps<typeof Ca
         {description && (
           <span className="mt-1 block line-clamp-2 break-words text-xs text-(--ui-text-tertiary)">{description}</span>
         )}
-        <span className="mt-1 flex flex-wrap gap-1 text-xs text-(--ui-text-tertiary)">{props.subtitle}</span>
+        {cardSubtitle != null && (
+          <span className="mt-1 flex min-w-0 flex-wrap gap-1 text-xs text-(--ui-text-tertiary)">{cardSubtitle}</span>
+        )}
       </button>
       <div className="flex items-center justify-between gap-2 text-xs text-(--ui-text-tertiary)">
         <span>{props.meta}</span>
