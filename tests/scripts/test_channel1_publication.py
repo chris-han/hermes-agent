@@ -605,3 +605,62 @@ def test_expired_stage_requires_single_links_and_no_writer(tmp_path,monkeypatch,
     else:
         assert not stage.exists() and result['result']=='CAPACITY_READY'
         assert result['removed'][0]['kind']=='expired-upload'
+
+
+def retirement_fixture(tmp_path):
+    import os
+    root=tmp_path/'public';root.mkdir()
+    publish(root,tmp_path/'old',121)
+    old_manifest=root/protocol.build_prefix(f'{121:032x}')/'build.json'
+    old_body=old_manifest.read_bytes()
+    old_package=old_manifest.with_name('SemantierAgent.msix')
+    old_pointer=(root/channel1.POINTER).read_bytes()
+    # Upload-stage alias is independently owned; remove it from this fixture.
+    (tmp_path/'old'/'SemantierAgent.msix').unlink()
+    publish(root,tmp_path/'new',122);old_manifest.write_bytes(old_body)
+    recovery=tmp_path/('.channel1-recovery-'+f'{122:032x}');recovery.mkdir()
+    os.link(old_package,recovery/'0')
+    (recovery/'2').write_bytes(old_pointer)
+    (recovery/'recovery.json').write_text(json.dumps({'root':str(root),
+      'afterPointerSha256':channel1.sha(root/channel1.POINTER),
+      'afterPackageSha256':channel1.sha(root/'releases/SemantierAgent.msix'),
+      'files':[{'key':'releases/SemantierAgent.msix','saved':'0','sha256':channel1.sha(old_package)},
+               {'key':channel1.POINTER,'saved':'2','sha256':channel1.sha(recovery/'2')}]}))
+    return root,old_package,recovery
+
+
+def test_explicit_retirement_removes_all_known_links_preserves_current_and_repeats(tmp_path):
+    root,old,recovery=retirement_fixture(tmp_path)
+    before={p:p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    kwargs=dict(build_id=f'{121:032x}',package_sha256=channel1.sha(old),
+                expected_previous_sha256=channel1.sha(root/channel1.POINTER),assert_inactive=lambda paths:None)
+    with channel1._lock(root):
+        plan=channel1.retire_package(root,**kwargs)
+    assert plan['result']=='RETIREMENT_PLAN' and len(plan['aliases'])==2
+    assert all(p.read_bytes()==body for p,body in before.items())
+    current=(root/'releases/SemantierAgent.msix').read_bytes()
+    result=channel1.retire_package(root,apply=True,**kwargs)
+    assert result['result']=='PACKAGE_RETIRED' and not old.exists() and not (recovery/'0').exists()
+    assert (recovery/'recovery.retired').exists() and not (recovery/'recovery.json').exists()
+    assert (root/'releases/SemantierAgent.msix').read_bytes()==current
+    assert channel1.retire_package(root,apply=True,**kwargs)['result']=='ALREADY_RETIRED'
+
+
+@pytest.mark.parametrize('blocker',['current','pointer','outside-link','live','pending-recovery','unknown-owner'])
+def test_explicit_retirement_fails_closed_before_changes(tmp_path,blocker):
+    import os
+    root,old,recovery=retirement_fixture(tmp_path)
+    kwargs=dict(build_id=f'{121:032x}',package_sha256=channel1.sha(old),
+                expected_previous_sha256=channel1.sha(root/channel1.POINTER),assert_inactive=lambda paths:None)
+    if blocker=='current':kwargs['build_id']=f'{122:032x}'
+    if blocker=='pointer':kwargs['expected_previous_sha256']='0'*64
+    if blocker=='outside-link':os.link(old,tmp_path.parent/(tmp_path.name+'-outside.msix'))
+    if blocker=='pending-recovery':
+        p=recovery/'recovery.json';value=json.loads(p.read_bytes());value['afterPointerSha256']='0'*64;p.write_text(json.dumps(value))
+    if blocker=='unknown-owner':
+        unknown=tmp_path/'unowned-cache';unknown.mkdir();os.link(old,unknown/'file.msix')
+    if blocker=='live':
+        def live(paths):raise ValueError('Live owner')
+        kwargs['assert_inactive']=live
+    with pytest.raises(ValueError):channel1.retire_package(root,apply=True,**kwargs)
+    assert old.exists() and (recovery/'0').exists() and (recovery/'recovery.json').exists()

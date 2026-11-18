@@ -151,3 +151,18 @@ if(!$stopped){throw 'Changed complete artifact accepted'}
     assert result.returncode == 0, result.stdout+result.stderr
     assert log.read_bytes() == before[log.name]
     assert {p.name for p in tmp_path.iterdir()} == {*before_names,script.name}
+
+
+@pytest.mark.platforms("windows")
+def test_rollback_retirement_whatif_is_local_and_read_only(tmp_path):
+    source=Path(__file__).resolve().parents[2]/'scripts/deploy-ecs.ps1'
+    output=tmp_path/'not-created'
+    command=['pwsh.exe','-NoProfile','-File',str(source),'-RetireRollbackBuild','a'*32,
+             '-RetireRollbackSha256','b'*64,'-ExpectedChannelSha256','c'*64,
+             '-Output',str(output),'-BuildMode','Prod','-WhatIf']
+    result=subprocess.run(command,capture_output=True,text=True,timeout=30,check=False)
+    assert result.returncode==0,result.stdout+result.stderr
+    assert 'RETIRE_OBSOLETE_ROLLBACK' in result.stdout and not output.exists()
+    for extra in ('-Latest','-ResumeSigned','-SetupOnly'):
+        result=subprocess.run([*command,extra],capture_output=True,text=True,timeout=30,check=False)
+        assert result.returncode!=0 and not output.exists()

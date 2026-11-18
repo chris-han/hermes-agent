@@ -78,6 +78,8 @@ param(
   [switch]$SkipOldCleanup,
   [switch]$NewRun,
   [switch]$ResumeSigned,
+  [string]$RetireRollbackBuild = '',
+  [string]$RetireRollbackSha256 = '',
   [switch]$SetupOnly,
   [switch]$LocalSetup,
   [switch]$UpdateSetup,
@@ -679,10 +681,59 @@ function ConvertTo-ReleasePayload([byte[]]$Bytes) {
   $encoded=[Convert]::ToBase64String($stream.ToArray());$stream.Dispose()
   return $encoded
 }
+function Invoke-RollbackRetirement {
+  if($RetireRollbackBuild -cnotmatch '^[a-f0-9]{32}$' -or $RetireRollbackSha256 -cnotmatch '^[a-f0-9]{64}$' -or
+     $ExpectedChannelSha256 -cnotmatch '^[a-f0-9]{64}$' -or $BuildMode -cne 'Prod' -or
+     $Latest -or $Commit -or $ResumeSigned -or $NewRun -or $BuildOnly -or $SetupOnly -or $LocalOnly -or $NativeUpdateFrom){
+    throw 'Rollback retirement requires explicit Prod, immutable build/package/pointer hashes, and no build/publish/install modes.'
+  }
+  $plan=@{operation='RETIRE_OBSOLETE_ROLLBACK';buildId=$RetireRollbackBuild;sha256=$RetireRollbackSha256;expectedChannelSha256=$ExpectedChannelSha256;root=$RemoteRoot;localInstallation='UNCHANGED';llmCalls=0}
+  if($WhatIfPreference){$plan | ConvertTo-Json -Compress;return}
+  Initialize-ReleasePaths
+  if(!$script:RuntimeRoot -or $script:SourceBinding.hermesGitlink -cne $script:SourceBinding.toolingHermesHead){throw 'Retirement tooling must equal the committed Runtime gitlink.'}
+  $dirty=& git.exe -C $Repository status --porcelain
+  if($LASTEXITCODE -ne 0 -or $dirty){throw 'Retirement tooling must be committed and clean.'}
+  if($RemoteRoot -cnotmatch '^/opt/[A-Za-z0-9_/-]+/releases$' -or $RemoteRoot.Contains('/../') -or
+     $SshTarget -cnotmatch '^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+$'){throw 'Invalid retirement destination.'}
+  $receiptPath=Join-Path $Output 'result.json'
+  if(!(Test-Path -LiteralPath $receiptPath)){throw 'Select the existing release receipt directory.'}
+  $script:sshOptions=@('-o','ConnectTimeout=15','-o','StrictHostKeyChecking=yes','-o','ServerAliveInterval=15','-o','ServerAliveCountMax=3')
+  if($IdentityFile){$script:sshOptions+=@('-i',(Resolve-Path -LiteralPath $IdentityFile).Path)}
+  if(!(Get-EcsSshPassword $CredentialsEnv)){$script:sshOptions+=@('-o','BatchMode=yes')}
+  $publisher=ConvertTo-ReleasePayload ([IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'releases/channel1.py')))
+  $arguments=@{root=$RemoteRoot;build_id=$RetireRollbackBuild;package_sha256=$RetireRollbackSha256;expected_previous_sha256=$ExpectedChannelSha256;apply=$true} | ConvertTo-Json -Compress
+  $args64=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($arguments))
+  $body="import base64,gzip,json,types`nc=types.ModuleType('channel1');exec(gzip.decompress(base64.b64decode('$publisher')),c.__dict__)`nprint(json.dumps(c.retire_package(**json.loads(base64.b64decode('$args64')))))"
+  $encoded=ConvertTo-ReleasePayload ([Text.Encoding]::UTF8.GetBytes($body))
+  if($encoded.Length -gt 24000){throw 'Retirement payload exceeds native SSH size bound.'}
+  $failed=$false
+  try {
+    $result=Ssh "python3 -c 'import base64,gzip;exec(gzip.decompress(base64.b64decode(`"$encoded`")))'"
+    $result=$result | ConvertFrom-Json
+  } catch {
+    $failed=$true
+    $result=[pscustomobject]@{result='STOP';buildId=$RetireRollbackBuild;error=$_.Exception.Message;reclaimedBytes=0}
+  }
+  $saved=Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
+  $saved | Add-Member -NotePropertyName rollbackRetirement -NotePropertyValue $result -Force
+  Save-Json $saved $receiptPath
+  $script:statusLog=Join-Path $Output 'checkpoints.jsonl'
+  Write-RunEvent @{type='rollback-retirement';at=[DateTime]::UtcNow.ToString('o');result=$result;tooling=$script:SourceBinding}
+  [IO.File]::AppendAllText((Join-Path $Output 'release-note.md'),"`nRollback retirement: $($result.result); build: $RetireRollbackBuild; bytes reclaimed: $($result.reclaimedBytes). Local signed files untouched; remote checks and outcome are recorded in the receipt.`n",$utf8)
+  $result | ConvertTo-Json -Depth 10 -Compress
+  if($failed){throw 'Rollback retirement STOP; see existing receipt.rollbackRetirement.'}
+}
 function Get-EcsCapacityRecovery([string]$Stage,[long]$Size) {
   $cloud=Join-Path (Split-Path -Parent $Repository) 'deploy/ecs-cloud/operations.py'
   if(!(Test-Path -LiteralPath $cloud)){throw 'Maintained ECS cleanup owner missing from selected Runtime.'}
-  $publisher=ConvertTo-ReleasePayload ([IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'releases/channel1.py')))
+  # Explicit retirement is a separate operation; omit its unused functions from
+  # this bounded Windows SSH payload, retaining the existing publisher verbatim.
+  $source=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'releases/channel1.py')).Replace("`r`n","`n")
+  $retirementStart=$source.IndexOf("`ndef _assert_package_inactive(")
+  $mainStart=$source.IndexOf("`ndef main():",$retirementStart)
+  if($retirementStart -lt 0 -or $mainStart -le $retirementStart){throw 'Publisher retirement source boundary missing.'}
+  $source=$source.Remove($retirementStart,$mainStart-$retirementStart)
+  $publisher=ConvertTo-ReleasePayload ([Text.Encoding]::UTF8.GetBytes($source))
   $operations=ConvertTo-ReleasePayload ([IO.File]::ReadAllBytes($cloud))
   $argsJson=@{root=$RemoteRoot;stage=$Stage;size=$Size;expected=$ExpectedChannelSha256} | ConvertTo-Json -Compress
   $args64=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($argsJson))
@@ -1669,6 +1720,13 @@ function Publish-IndependentSetup {
   }
 }
 try {
+if($RetireRollbackBuild -or $RetireRollbackSha256){
+  $allowed=@('RetireRollbackBuild','RetireRollbackSha256','ExpectedChannelSha256','Output','BuildMode','Repository','BuildPython','Node','CredentialsEnv','IdentityFile','RemoteRoot','SshTarget','WhatIf','Confirm')
+  foreach($key in $PSBoundParameters.Keys){if($key -notin $allowed){throw "Retirement cannot combine release modes or inputs: $key"}}
+  if(!$PSBoundParameters.ContainsKey('Output')){throw 'Retirement requires the existing release -Output.'}
+  Invoke-RollbackRetirement
+  return
+}
 if($ResumeSigned){
   if(!$PSBoundParameters.ContainsKey('Output') -or $BuildMode -cne 'Prod' -or $Latest -or $Commit -or $NewRun -or $SetupOnly -or $UpdateSetup -or $LocalOnly -or $BuildOnly){throw 'Use -ResumeSigned -Output <retained-run> -BuildMode Prod; no build, sync or install modes.'}
   $allowed=@('ResumeSigned','Output','BuildMode','Repository','BuildPython','AcceptanceNodeModules','SignTool','Node','IdentityFile','CredentialsEnv','WhatIf','Confirm')

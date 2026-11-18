@@ -670,6 +670,162 @@ def recover_space(root, *, expected_previous_sha256, required_bytes, free_bytes=
         return finish()
 
 
+def _assert_package_inactive(paths):
+    """Require Linux process evidence before unlinking a retired package inode."""
+    proc = Path('/proc')
+    if not proc.is_dir():
+        raise ValueError('Process ownership evidence unavailable')
+    identities = {(p.stat().st_dev, p.stat().st_ino) for p in paths}
+    owners = {str(p.parent) for p in paths if p.parent.name.startswith(('.semantier-stage-', '.channel1-recovery-', '.msix-rollback-'))}
+    for process in proc.glob('[0-9]*'):
+        if process.name == str(os.getpid()):
+            continue
+        try:
+            command = (process/'cmdline').read_bytes()
+            if any(owner.encode() in command for owner in owners):
+                raise ValueError('Live original publication owner')
+            for fd in (process/'fd').iterdir():
+                try:
+                    info = fd.stat()
+                    if (info.st_dev, info.st_ino) in identities:
+                        raise ValueError('Live package reader/writer')
+                except FileNotFoundError:
+                    pass
+        except FileNotFoundError:
+            pass
+        except PermissionError as error:
+            raise ValueError('Cannot exclude live package ownership') from error
+
+
+def retire_package(root, *, build_id, package_sha256, expected_previous_sha256,
+                   apply=False, assert_inactive=None):
+    """Explicit retirement of one obsolete signed package and its known aliases.
+
+    Completed rollback controls are retained as historical evidence, with their
+    manifest renamed recovery.retired so they cannot masquerade as usable recovery.
+    Active pointers, unknown links and live owners block before any mutation.
+    """
+    from contextlib import nullcontext
+    root = Path(root).absolute()
+    if not re.fullmatch('[0-9a-f]{32}', build_id) or not re.fullmatch('[0-9a-f]{64}', package_sha256):
+        raise ValueError('Explicit immutable package identity required')
+    _safe(root.parent, root.name)
+    with _lock(root) if apply else nullcontext():
+        pointer = _safe(root, POINTER)
+        if sha(pointer) != expected_previous_sha256:
+            raise ValueError('Concurrent pointer change before retirement')
+        record = json.loads(pointer.read_bytes())
+        active_keys = set()
+        active_sequences = []
+        for channel in (root/'releases/channels').glob('*.json'):
+            value = json.loads(_safe(root, channel.relative_to(root)).read_bytes())
+            for head in (value.get('head'), value.get('nativeHead')):
+                if not head:
+                    continue
+                if head['buildId'] == build_id:
+                    raise ValueError('Active release cannot be retired')
+                manifest = _safe(root, head['manifestKey'])
+                if sha(manifest) != head['sha256']:
+                    raise ValueError('Active manifest binding mismatch')
+                body = json.loads(manifest.read_bytes())
+                active_sequences.append(body['request']['sequence'])
+                for row in body['packages']:
+                    active_keys.add(row['artifact']['key'])
+                    if row['artifact']['sha256'] == package_sha256:
+                        raise ValueError('Shared active package cannot be retired')
+        manifest = _safe(root, 'releases/channel-builds/'+build_id+'/build.json')
+        body = json.loads(manifest.read_bytes())
+        if body['request']['buildId'] != build_id or not active_sequences or body['request']['sequence'] >= min(active_sequences):
+            raise ValueError('Package is not an obsolete release')
+        rows = body['packages']
+        key = 'releases/channel-builds/'+build_id+'/SemantierAgent.msix'
+        if len(rows) != 1 or rows[0]['artifact']['key'] != key or rows[0]['artifact']['sha256'] != package_sha256 or key in active_keys:
+            raise ValueError('Retirement artifact binding mismatch')
+        package = _safe(root, key)
+        stable = _safe(root, 'releases/SemantierAgent.msix')
+        active_sha = sha(stable)
+        head = record.get('nativeHead') or record.get('head')
+        active = json.loads(_safe(root, head['manifestKey']).read_bytes())['packages']
+        if (record.get('state') != 'active' or len(active) != 1
+                or active[0]['artifact']['sha256'] != active_sha
+                or not _safe(root, active[0]['artifact']['key']).samefile(stable)):
+            raise ValueError('Active stable package binding mismatch')
+        if not package.exists():
+            return {'result': 'ALREADY_RETIRED', 'buildId': build_id, 'sha256': package_sha256, 'reclaimedBytes': 0}
+        info = package.stat()
+        if package.samefile(stable) or info.st_size != rows[0]['artifact']['size'] or sha(package) != package_sha256:
+            raise ValueError('Retired/current package integrity mismatch')
+        if hasattr(os, 'geteuid') and (info.st_uid != os.geteuid() or root.stat().st_uid != os.geteuid()):
+            raise ValueError('Retirement actor does not own package/root')
+        with zipfile.ZipFile(package) as archive:
+            identity = ET.fromstring(archive.read('AppxManifest.xml')).find('{*}Identity').attrib
+            if (identity['Name'] != 'Semantier.Agent.Acceptance'
+                    or identity['Publisher'] != 'CN=Semantier Technology, O=Semantier Technology'
+                    or identity['Version'] != body['request']['windowsVersion']):
+                raise ValueError('Retired package identity mismatch')
+        entries = list(root.parent.rglob('*'))
+        if len(entries) > 16384:
+            raise ValueError('Retirement inventory bound exceeded')
+        aliases = []
+        for path in entries:
+            if path.is_symlink() or not path.is_file():
+                continue
+            value = path.stat()
+            if (value.st_dev, value.st_ino) != (info.st_dev, info.st_ino):
+                continue
+            relative = path.relative_to(root.parent)
+            _safe(root.parent, relative)
+            owner = relative.parts[0]
+            known = (path == package or path == root/'releases/.channel1-restore.tmp'
+                     or re.fullmatch(r'\.channel1-recovery-[0-9a-f]{32}', owner)
+                     or re.fullmatch(r'\.semantier-stage-[0-9a-f]{32}', owner)
+                     or re.fullmatch(r'\.msix-rollback-\d+-[A-Za-z0-9TZ]+', owner))
+            if not known:
+                raise ValueError('Unknown package alias owner')
+            aliases.append(path)
+        if len(aliases) != info.st_nlink:
+            raise ValueError('Unknown external hardlink; retirement stopped')
+        recoveries = []
+        for recovery in root.parent.glob('.channel1-recovery-*/recovery.json'):
+            _safe(root.parent, recovery.relative_to(root.parent))
+            saved = json.loads(recovery.read_bytes())
+            if not any(row['sha256'] == package_sha256 for row in saved['files']):
+                continue
+            if (saved['root'] != str(root) or saved['afterPointerSha256'] != expected_previous_sha256
+                    or saved['afterPackageSha256'] != active_sha):
+                raise ValueError('Active or ambiguous recovery transaction')
+            for row in saved['files']:
+                if sha(_safe(recovery.parent, row['saved'])) != row['sha256']:
+                    raise ValueError('Rollback receipt byte binding mismatch')
+            retired = recovery.with_name('recovery.retired')
+            if retired.exists():
+                raise ValueError('Conflicting retired recovery evidence')
+            recoveries.append(recovery)
+        (assert_inactive or _assert_package_inactive)(aliases)
+        report = {'result': 'RETIREMENT_PLAN', 'buildId': build_id, 'sha256': package_sha256,
+                  'version': body['request']['windowsVersion'], 'aliases': [str(p) for p in aliases],
+                  'retiredRecoveryManifests': [str(p) for p in recoveries], 'reclaimedBytes': 0}
+        if not apply:
+            return report
+        before = shutil.disk_usage(root).free
+        for recovery in recoveries:
+            recovery.rename(recovery.with_name('recovery.retired'))
+        # Remove the immutable alias last: an interrupted retirement can resume.
+        aliases.sort(key=lambda p: p == package)
+        for remaining, path in enumerate(aliases):
+            current = path.stat()
+            if ((current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns)
+                    != (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+                    or current.st_nlink != len(aliases)-remaining):
+                raise ValueError('Package links changed during retirement')
+            path.unlink()
+        if sha(pointer) != expected_previous_sha256 or sha(stable) != active_sha:
+            raise ValueError('Active release changed during retirement')
+        report.update(result='PACKAGE_RETIRED', reclaimedBytes=max(0, shutil.disk_usage(root).free-before),
+                      logicalPackageBytes=info.st_size, activePackageSha256=active_sha)
+        return report
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
