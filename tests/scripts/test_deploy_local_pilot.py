@@ -40,3 +40,29 @@ if($script:case -in @('downgrade','foreign') -and $script:added){throw 'Unsafe u
     r=subprocess.run([shutil.which("pwsh"),"-NoProfile","-File",str(script),str(operator),case],capture_output=True,text=True,timeout=30,check=False)
     assert r.returncode==0,r.stdout+r.stderr
     assert "PRESERVING_PILOT_PASS" in r.stdout
+
+
+def test_single_msix_graph_without_resource_id_in_strict_mode(tmp_path):
+    import json
+    key="releases/channel-builds/"+"a"*32+"/main.msix"
+    request={"base":"https://download.semantier.cn","identity":"Semantier.Agent.Acceptance",
+             "publisher":"CN=Semantier Technology, O=Semantier Technology","version":"0.0.123.0"}
+    row={"key":key,"kind":"main-package","arch":"x64","size":3000000000,"sha256":"b"*64,
+         "nativeDigest":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=","references":[],
+         **{k:request[k] for k in ("identity","publisher","version")}}
+    request["graph"]={"schema":1,"transport":"windows-package-uri","payloadInventorySha256":"c"*64,
+                      "root":key,"objects":[row]}
+    data=tmp_path/"request.json";data.write_text(json.dumps(request))
+    script=tmp_path/"graph.ps1"
+    script.write_text(r"""
+$ErrorActionPreference='Stop'
+Set-StrictMode -Version Latest
+. $args[0]
+$r=Get-Content -LiteralPath $args[1] -Raw | ConvertFrom-Json
+$rows=@(Read-NativeUpdateGraph $r)
+if($rows.Count -ne 1){throw 'Single package graph not read'}
+""")
+    source=Path(__file__).resolve().parents[2]/"apps/desktop/scripts/native-package-update.ps1"
+    r=subprocess.run([shutil.which("pwsh"),"-NoProfile","-File",str(script),str(source),str(data)],
+                     capture_output=True,text=True,timeout=30,check=False)
+    assert r.returncode==0,r.stdout+r.stderr

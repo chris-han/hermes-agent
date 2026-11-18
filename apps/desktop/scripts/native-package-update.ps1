@@ -187,7 +187,7 @@ function Read-NativeUpdateGraph($request) {
   elseif($row.arch -cne 'neutral'){throw 'Native neutral architecture invalid'}
   if($row.kind -ceq 'main-bundle'){$bundle++}
   if($row.kind -ceq 'asset-package' -and ($row.resourceId -cnotmatch '^runtime[0-9]{4}$' -or ($row.allowExecution -isnot [bool] -or $row.allowExecution -ne $true) -or @($row.references).Count)){throw 'Native asset invalid'}
-  $id=$row.kind+'/'+$row.resourceId
+  $id=$row.kind+'/'+$(if($row.kind -ceq 'asset-package'){$row.resourceId}else{''})
   if($identities.ContainsKey($id)){throw 'Native identity ambiguous'}
   $identities[$id]=$true;$byKey[$row.key]=$row
  }
