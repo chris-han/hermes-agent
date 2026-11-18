@@ -43,31 +43,35 @@ export function createFileSyncIpc(sourceForSender: (senderId: number) => string 
   })
 
   async function own(senderId: number) {
+    const generation = supervisor.ownershipGeneration
     const origin = sourceForSender(senderId)
 
     if (!origin) {throw new Error('Connect this window to your Semantier Workspace first.')}
 
-    return { origin, identity: await identity(origin) }
+    const account = await identity(origin)
+
+    if (generation !== supervisor.ownershipGeneration || sourceForSender(senderId) !== origin) {
+      throw new Error('The account changed. Reconnect File Sync.')
+    }
+
+    return { origin, identity: account, generation }
+  }
+
+  async function unchanged(senderId: number, owner: Awaited<ReturnType<typeof own>>) {
+    const current = await own(senderId)
+
+    if (current.generation !== owner.generation || current.origin !== owner.origin || current.identity.userId !== owner.identity.userId || current.identity.workspaceId !== owner.identity.workspaceId) {
+      throw new Error('The account changed. Reconnect File Sync.')
+    }
   }
 
   ipcMain.handle('hermes:file-sync:status', async event => {
     const owner = await own(event.sender.id)
 
-    const record = (await supervisor.owners()).find(
-      x =>
-        x.serverOrigin === owner.origin &&
-        x.userId === owner.identity.userId &&
-        x.workspaceId === owner.identity.workspaceId
-    )
+    const status = await supervisor.statusFor(owner.origin, owner.identity)
+    await unchanged(event.sender.id, owner)
 
-    const status = supervisor.status()
-
-    if (!record) {return { state: 'Paused' }}
-
-    return {
-      ...(status.folder === record.canonicalLocalFolder ? status : { state: 'Paused' }),
-      folder: record.canonicalLocalFolder
-    }
+    return status
   })
   ipcMain.handle('hermes:file-sync:choose', async event => {
     const owner = await own(event.sender.id)
@@ -81,16 +85,21 @@ export function createFileSyncIpc(sourceForSender: (senderId: number) => string 
     const current = await own(event.sender.id)
 
     if (
+      current.generation !== owner.generation ||
       current.origin !== owner.origin ||
       current.identity.userId !== owner.identity.userId ||
       current.identity.workspaceId !== owner.identity.workspaceId
     )
       {throw new Error('The account changed. Choose the folder again after reconnecting.')}
 
-    return supervisor.enable(owner.origin, result.filePaths[0])
+    return supervisor.enable(owner.origin, result.filePaths[0], owner.identity)
   })
   ipcMain.handle('hermes:file-sync:pause', async event => {
-    await own(event.sender.id)
+    const owner = await own(event.sender.id)
+    const record = await supervisor.selectedBinding(owner.origin, owner.identity)
+    await unchanged(event.sender.id, owner)
+
+    if (!record || supervisor.status().folder !== record.canonicalLocalFolder) {throw new Error('No active folder for this account.')}
     await supervisor.pause()
 
     return supervisor.status()
@@ -98,16 +107,9 @@ export function createFileSyncIpc(sourceForSender: (senderId: number) => string 
   ipcMain.handle('hermes:file-sync:resume', async event => {
     const owner = await own(event.sender.id)
 
-    const record = (await supervisor.owners()).find(
-      x =>
-        x.serverOrigin === owner.origin &&
-        x.userId === owner.identity.userId &&
-        x.workspaceId === owner.identity.workspaceId
-    )
+    await unchanged(event.sender.id, owner)
 
-    if (!record) {throw new Error('Choose a folder for this account first.')}
-
-    return supervisor.enable(owner.origin, record.canonicalLocalFolder)
+    return supervisor.resumeFor(owner.origin, owner.identity)
   })
 
   return supervisor

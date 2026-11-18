@@ -27,18 +27,23 @@ export function FileSyncSettings() {
     setStatus({ state: 'Paused' })
     setError('')
 
+    let request = 0
+
     const update = () => {
+      const current = ++request
+      const ownerGeneration = generation.current
+
       if (api && connected)
         {void api
           .status()
           .then(s => {
-            if (live) {
+            if (live && current === request && ownerGeneration === generation.current) {
               setStatus(s)
               setError('')
             }
           })
           .catch(() => {
-            if (live) {setError(zh ? '请重新连接工作区。' : 'Reconnect your Workspace to see File Sync status.')}
+            if (live && current === request && ownerGeneration === generation.current) {setError(zh ? '请重新连接工作区。' : 'Reconnect your Workspace to see File Sync status.')}
           })}
     }
 
@@ -49,11 +54,11 @@ export function FileSyncSettings() {
       live = false
       clearInterval(timer)
     }
-  }, [api, connected, connection?.connectionId, connection?.workspaceScope?.userId, zh])
+  }, [api, connected, connection?.connectionId, connection?.workspaceScope?.userId, connection?.workspaceScope?.workspaceId, connection?.baseUrl, zh])
 
   async function act(action: 'choose' | 'pause' | 'resume') {
     if (!api) {return}
-    const current = generation.current
+    const current = ++generation.current
     setBusy(true)
     setError('')
 
@@ -64,7 +69,10 @@ export function FileSyncSettings() {
     } catch (error) {
       if (current === generation.current) {setError(error instanceof Error ? error.message : String(error))}
     } finally {
-      if (current === generation.current) {setBusy(false)}
+      if (current === generation.current) {
+        generation.current++
+        setBusy(false)
+      }
     }
   }
 

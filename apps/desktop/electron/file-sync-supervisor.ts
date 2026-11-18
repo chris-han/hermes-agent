@@ -65,6 +65,9 @@ export class FileSyncSupervisor {
   constructor(public options: Options) {
     this.registryPath = path.join(options.stateDir, 'folder-owners.json')
   }
+  get ownershipGeneration() {
+    return this.generation
+  }
   status() {
     return { ...this.view }
   }
@@ -72,7 +75,11 @@ export class FileSyncSupervisor {
     try {
       const registry = JSON.parse(await fs.readFile(this.registryPath, 'utf8'))
 
-      if (registry.version !== 1 || !Array.isArray(registry.bindings)) {
+      if (registry.version !== 1 || !Array.isArray(registry.bindings) || registry.bindings.some((record: Binding) =>
+        !record || ['id', 'serverOrigin', 'userId', 'workspaceId', 'canonicalLocalFolder', 'remoteRoot', 'sealedToken'].some(
+          key => typeof record[key as keyof Binding] !== 'string' || !record[key as keyof Binding]
+        ) || typeof record.enabled !== 'boolean' || typeof record.paired !== 'boolean' || !path.isAbsolute(record.canonicalLocalFolder)
+      )) {
         throw new Error('Invalid File Sync ownership registry. Preserve it for recovery.')
       }
 
@@ -85,13 +92,31 @@ export class FileSyncSupervisor {
       throw error
     }
   }
-  private async write(bindings: Binding[]) {
+  private async write(bindings: Binding[], selected?: Binding) {
+    let selectedBindingIds: string[] = []
+
+    try {
+      const registry = JSON.parse(await fs.readFile(this.registryPath, 'utf8'))
+      selectedBindingIds = registry.selectedBindingIds || []
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {throw error}
+    }
+
+    if (selected) {
+      selectedBindingIds = selectedBindingIds.filter(id => {
+        const record = bindings.find(x => x.id === id)
+
+        return record && !this.sameOwner(record, selected.serverOrigin, selected)
+      })
+      selectedBindingIds.push(selected.id)
+    }
+
     await fs.mkdir(this.options.stateDir, { recursive: true, mode: 0o700 })
     const temp = this.registryPath + '.' + randomUUID() + '.tmp'
     const handle = await fs.open(temp, 'wx', 0o600)
 
     try {
-      await handle.writeFile(JSON.stringify({ version: 1, bindings }))
+      await handle.writeFile(JSON.stringify({ version: 1, bindings, selectedBindingIds }))
       await handle.sync()
     } finally {
       await handle.close()
@@ -145,14 +170,83 @@ export class FileSyncSupervisor {
       await this.write(owners.map(x => (x.id === this.current?.id ? { ...x, enabled: false } : x)))
     }
   }
+  private sameOwner(record: Binding, origin: string, identity: Identity) {
+    return record.serverOrigin === origin && record.userId === identity.userId && record.workspaceId === identity.workspaceId
+  }
+  async selectedBinding(origin: string, identity: Identity) {
+    const generation = this.generation
+    const owners = await this.owners()
+
+    const registry = await fs.readFile(this.registryPath, 'utf8').then(value => JSON.parse(value)).catch(error => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {return {}}
+      throw error
+    })
+
+    if (generation !== this.generation) {throw new Error('The account changed. Reconnect File Sync.')}
+    const enabled = owners.filter(x => x.enabled)
+    const ids: unknown = registry.selectedBindingIds || []
+
+    if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string' || owners.filter(x => x.id === id).length !== 1) ||
+        new Set(ids).size !== ids.length || enabled.length > 1 || new Set(owners.map(x => x.id)).size !== owners.length ||
+        new Set(owners.map(x => canonicalKey(x.canonicalLocalFolder))).size !== owners.length) {
+      throw new Error('Inconsistent File Sync ownership registry. Preserve it for recovery.')
+    }
+
+    if (this.current && this.sameOwner(this.current, origin, identity) && !owners.some(x => x.id === this.current?.id)) {
+      throw new Error('Inconsistent File Sync ownership registry. Preserve it for recovery.')
+    }
+
+    const candidates = owners.filter(x => this.sameOwner(x, origin, identity))
+    const selected = candidates.filter(x => ids.includes(x.id))
+    const current = this.current && candidates.find(x => x.id === this.current?.id)
+    const active = enabled.find(x => this.sameOwner(x, origin, identity))
+
+    if (selected.length > 1 || (current && selected.length && current.id !== selected[0].id) ||
+        (active && selected.length && active.id !== selected[0].id) || (active && current && active.id !== current.id)) {
+      throw new Error('Inconsistent File Sync selection. Choose the folder explicitly; files are preserved.')
+    }
+
+    const record = current || active || selected[0] || (candidates.length === 1 ? candidates[0] : undefined)
+
+    if (!record && candidates.length) {throw new Error('Ambiguous File Sync selection. Choose the folder explicitly; files are preserved.')}
+
+    return record
+  }
+  async statusFor(origin: string, identity: Identity) {
+    const record = await this.selectedBinding(origin, identity)
+
+    if (!record) {return { state: 'Paused' } as FileSyncStatus}
+    const status = this.status()
+
+    if (this.current?.id === record.id && (status.folder !== record.canonicalLocalFolder || (!record.enabled && ['Synced', 'Syncing', 'Conflict'].includes(status.state)))) {
+      throw new Error('Inconsistent File Sync engine ownership. Preserve it for recovery.')
+    }
+
+    return { ...(this.current?.id === record.id || (status.state === 'Error' && status.folder === record.canonicalLocalFolder) ? status : { state: 'Paused' as const }), folder: record.canonicalLocalFolder }
+  }
+  async resumeFor(origin: string, identity: Identity) {
+    const generation = this.generation
+    const record = await this.selectedBinding(origin, identity)
+
+    if (generation !== this.generation) {throw new Error('The account changed. Reconnect File Sync.')}
+
+    if (!record) {throw new Error('Choose a folder for this account first.')}
+
+    return this.enable(origin, record.canonicalLocalFolder, identity)
+  }
   async restore() {
-    const record = (await this.owners()).find(x => x.enabled)
+    const enabled = (await this.owners()).filter(x => x.enabled)
+
+    if (enabled.length > 1) {throw new Error('Inconsistent File Sync ownership registry. Preserve it for recovery.')}
+    const record = enabled[0]
+
+    if (record) {await this.selectedBinding(record.serverOrigin, record)}
 
     if (record) {
       await this.enable(record.serverOrigin, record.canonicalLocalFolder)
     }
   }
-  async enable(rawOrigin: string, folder: string) {
+  async enable(rawOrigin: string, folder: string, expectedIdentity?: Identity) {
     if(this.closing){throw new Error('File Sync is closing with the application.')}
 
     if (this.busy) {
@@ -176,6 +270,10 @@ export class FileSyncSupervisor {
       check()
       const identity = await this.options.identity(origin)
       check()
+
+      if (expectedIdentity && (identity.userId !== expectedIdentity.userId || identity.workspaceId !== expectedIdentity.workspaceId)) {
+        throw new Error('The account changed. Reconnect File Sync.')
+      }
 
       const owners = await this.owners()
       check()
@@ -208,7 +306,7 @@ export class FileSyncSupervisor {
       check()
 
       const store = () =>
-        this.write([...owners.filter(x => x.id !== record.id).map(x => ({ ...x, enabled: false })), record])
+        this.write([...owners.filter(x => x.id !== record.id).map(x => ({ ...x, enabled: false })), record], record)
 
       // Commit ownership before the first engine invocation, even if pairing fails.
       await store()
