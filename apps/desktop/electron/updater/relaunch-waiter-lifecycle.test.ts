@@ -42,7 +42,8 @@ for (const mode of [
       schema:1, base:'https://s3.semantier.com', graph:{schema:1, transport:'windows-package-uri', root:'fixture', payloadInventorySha256:'a'.repeat(64), objects:[]},
       manifestSha256:'b'.repeat(64), graphSha256:'a'.repeat(64), publisher:'CN=Fixture', identity:'disposable-waiter-test', version:'2.0.0.0', currentVersion:'1.0.0.0',
       targetBuildId:'c'.repeat(32), targetCommit:'d'.repeat(40), fullName:'baseline-package', familyName:'baseline-family',
-      applicationId:'Hermes', executable:process.execPath, userDataDirectory:os.tmpdir(), journalDirectory:'fixture-only-no-native-execution'
+      applicationId:'Hermes', executable:process.execPath, userDataDirectory:os.tmpdir(), journalDirectory:'fixture-only-no-native-execution',
+      backendHome:os.tmpdir(), activeProfile:'default', credentialScope:os.tmpdir()
     } : undefined
 
     let child: ChildProcess | undefined

@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { mkdir, rm } from 'node:fs/promises'
 import path from 'node:path'
@@ -13,6 +14,48 @@ import { type NativeCommandResult, runChannelPowerShell } from './channel-native
 import { type ChannelBuild, decodeNativePackageGraph } from './channel-protocol'
 import { registerUpdateRelaunch } from './relaunch'
 import { startUpdateRelaunchWaiter } from './relaunch-waiter'
+
+/** Only the native journal/package owner may distinguish an old waiter from isolation. */
+export function recoverNativeUpdateHome(
+  resourcesPath: string,
+  userData: string,
+  build: ChannelBuild,
+  registryHome: string | null
+): string | null {
+  try {
+    const result = execFileSync(
+      path.win32.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-EncodedCommand',
+        Buffer.from(
+          String.raw`
+$ErrorActionPreference='Stop'
+$p=[Console]::In.ReadToEnd()|ConvertFrom-Json
+. (Join-Path $p.resources 'native-package-update.ps1')
+Get-NativeLegacyRelaunchHome $p.userData $p.build $p.processId $p.registryHome | ConvertTo-Json -Compress
+`,
+          'utf16le'
+        ).toString('base64')
+      ],
+      {
+        input: JSON.stringify({ resources: resourcesPath, userData, build, processId: process.pid, registryHome }),
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 30_000,
+        maxBuffer: 64 * 1024
+      }
+    )
+
+    return result.trim() ? JSON.parse(result) : null
+  } catch (cause) {
+    throw new Error(
+      'Native update could not prove the original backend home. Relaunch with HERMES_HOME set to the original home and --profile <original-profile>. Keep the existing connection and credentials.',
+      { cause }
+    )
+  }
+}
 
 /** Verify downloaded bytes and native metadata before App Installer can stop the backend. */
 export async function verifyPreparedChannelInstaller(
@@ -129,8 +172,9 @@ if($info -and $info.Uri){@{supported=$false;reason='appinstaller-association-mig
 
   const value: { supported?: boolean; reason?: string } = JSON.parse(result.stdout)
 
-  if (typeof value.supported !== 'boolean' || !value.reason || !/^[a-z-]+$/.test(value.reason))
-    {throw new Error('Invalid native capability observation')}
+  if (typeof value.supported !== 'boolean' || !value.reason || !/^[a-z-]+$/.test(value.reason)) {
+    throw new Error('Invalid native capability observation')
+  }
 
   return { supported: value.supported, reason: value.reason }
 }
@@ -144,6 +188,7 @@ export function createNativeUriAppInstallerStrategy(
     app: Pick<App, 'getPath'>
     resourcesPath: string
     log: (message: string) => void
+    continuity: () => { backendHome: string; activeProfile: string }
     inspect?: typeof inspectRunningChannelApp
     eligibility?: typeof inspectNativePackageUriEligibility
     startWaiter?: typeof startUpdateRelaunchWaiter
@@ -162,12 +207,15 @@ export function createNativeUriAppInstallerStrategy(
         !installed.packageFamilyName ||
         !installed.applicationId ||
         !target.package.publisher
-      )
-        {throw new Error('Native package identity unavailable')}
+      ) {
+        throw new Error('Native package identity unavailable')
+      }
 
       const eligible = await (context.eligibility ?? inspectNativePackageUriEligibility)(installed.packageFullName)
 
-      if (!eligible.supported) {throw new Error(`Native update unavailable: ${eligible.reason}`)}
+      if (!eligible.supported) {
+        throw new Error(`Native update unavailable: ${eligible.reason}`)
+      }
 
       const graph = decodeNativePackageGraph(
         JSON.stringify(target.nativeGraph),
@@ -176,6 +224,13 @@ export function createNativeUriAppInstallerStrategy(
       )
 
       const updates = path.join(context.app.getPath('userData'), 'updates')
+      const continuity = context.continuity()
+
+      const credentialScope =
+        continuity.activeProfile === 'default'
+          ? continuity.backendHome
+          : path.join(continuity.backendHome, 'profiles', continuity.activeProfile)
+
       await mkdir(updates, { recursive: true })
 
       return registerUpdateRelaunch(context.app, fromVersion, {
@@ -202,7 +257,12 @@ export function createNativeUriAppInstallerStrategy(
               applicationId: installed.applicationId!,
               executable: installed.executable,
               userDataDirectory: context.app.getPath('userData'),
-              journalDirectory: path.join(updates, `native-${target.manifestSha256}-${randomUUID().replaceAll('-', '')}`)
+              ...continuity,
+              credentialScope,
+              journalDirectory: path.join(
+                updates,
+                `native-${target.manifestSha256}-${randomUUID().replaceAll('-', '')}`
+              )
             }
           )
       })

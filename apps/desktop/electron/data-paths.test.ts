@@ -11,6 +11,46 @@ afterEach((): void => {
   vi.unstubAllEnvs()
 })
 
+test('verified native relaunch home wins over waiter userData without changing explicit-home or isolation precedence', () => {
+  const env = {
+    HERMES_DESKTOP_USER_DATA_DIR: 'C:\\Users\\test\\AppData\\Roaming\\Acceptance',
+    HERMES_DATA_DIR_SUFFIX: '-acceptance'
+  }
+
+  const options = {
+    home: 'C:\\Users\\test',
+    env,
+    platform: 'win32' as const,
+    readNativeUpdateHome: () => 'C:\\Users\\test\\AppData\\Local\\hermes-acceptance'
+  }
+
+  assert.equal(resolveDesktopHermesHome(options), options.readNativeUpdateHome())
+  assert.equal(
+    resolveDesktopHermesHome({
+      ...options,
+      env: { ...env, HERMES_HOME: 'D:\\custom' },
+      readNativeUpdateHome: () => {
+        throw new Error('must not override explicit home')
+      }
+    }),
+    'D:\\custom'
+  )
+  assert.equal(
+    resolveDesktopHermesHome({ ...options, readNativeUpdateHome: () => null }),
+    'C:\\Users\\test\\AppData\\Roaming\\Acceptance\\hermes-home'
+  )
+  assert.throws(
+    () =>
+      resolveDesktopHermesHome({
+        ...options,
+        readNativeUpdateHome: () => {
+          throw new Error('unproven home')
+        }
+      }),
+    /unproven home/
+  )
+})
+
 test.skipIf(process.platform === 'win32')('local SSH sockets use the suffixed default root', (): void => {
   vi.stubEnv('HERMES_DATA_DIR_SUFFIX', 'magic-test')
   const socket: string = controlSocketPath('user', 'host', 22)

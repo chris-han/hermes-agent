@@ -649,7 +649,7 @@ import { configureChannel1Quic, createDesktopUpdateFetches } from './updater/cha
 import { markChannelArtifactHandoff, retireInstalledChannelArtifacts } from './updater/channel-artifact-cache'
 import { inspectRunningChannelApp } from './updater/channel-native'
 import { ChannelStrategy } from './updater/channel-strategy'
-import { createNativeUriAppInstallerStrategy, inspectNativePackageUriEligibility, verifyPreparedChannelInstaller } from './updater/channel-windows-host'
+import { createNativeUriAppInstallerStrategy, inspectNativePackageUriEligibility, recoverNativeUpdateHome, verifyPreparedChannelInstaller } from './updater/channel-windows-host'
 import { type CheckoutStrategy, createCheckoutStrategy } from './updater/checkout'
 import { readSourceUpdate, sourceChannelName, type SourceUpdate } from './updater/checkout-source'
 import { DeliverySources } from './updater/delivery-source'
@@ -1299,11 +1299,31 @@ if (process.env.HERMES_DESKTOP_TMPDIR) {
   delete process.env.HERMES_DESKTOP_TMPDIR
 }
 
+let nativeUpdateHome: string | null = null
+
 const HERMES_HOME: string = resolveDesktopHermesHome({
   home: app.getPath('home'),
   directoryExists,
-  readWindowsHome: (): string | null => readWindowsUserEnvVar('HERMES_HOME')
+  readWindowsHome: (): string | null => readWindowsUserEnvVar('HERMES_HOME'),
+  readNativeUpdateHome: (): string | null => {
+    nativeUpdateHome =
+      IS_PACKAGED && INSTALL_STAMP?.channelBuild
+        ? recoverNativeUpdateHome(
+            process.resourcesPath,
+            app.getPath('userData'),
+            INSTALL_STAMP.channelBuild,
+            readWindowsUserEnvVar('HERMES_HOME')
+          )
+        : null
+
+    return nativeUpdateHome
+  }
 })
+
+// Bind the proved legacy home for PM PATH composition and every child, too.
+if (nativeUpdateHome) {
+  process.env.HERMES_HOME = nativeUpdateHome
+}
 
 // #77311: `desktop.electron_flags` and the renderer heap ceiling
 // (`desktop.renderer_max_old_space_mb`) used to reach Chromium only through
@@ -3688,7 +3708,12 @@ function createNativePackagedStrategy(
     }
 
     if (target?.nativeGraph && INSTALL_STAMP?.channelBuild) {
-      return createNativeUriAppInstallerStrategy(deps, target, INSTALL_STAMP.channelBuild, {app, resourcesPath:process.resourcesPath, log:rememberLog})
+      return createNativeUriAppInstallerStrategy(deps, target, INSTALL_STAMP.channelBuild, {
+        app,
+        resourcesPath: process.resourcesPath,
+        log: rememberLog,
+        continuity: () => ({ backendHome: HERMES_HOME, activeProfile: primaryProfileKey() || 'default' })
+      })
     }
 
     return target

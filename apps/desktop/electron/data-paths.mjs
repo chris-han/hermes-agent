@@ -38,13 +38,15 @@ export function resolveDesktopUserData(defaultPath, env = process.env) {
     : defaultPath + (env.HERMES_DATA_DIR_SUFFIX || '')
 }
 
-export function resolveDesktopHermesHome({ home, env = process.env, platform = process.platform, directoryExists = () => false, readWindowsHome = () => null }) {
+export function resolveDesktopHermesHome({ home, env = process.env, platform = process.platform, directoryExists = () => false, readWindowsHome = () => null, readNativeUpdateHome = () => null }) {
   const paths = platform === 'win32' ? path.win32 : path.posix
   if (env.HERMES_HOME) {
     return normalizeHermesHomeRoot(env.HERMES_HOME, paths)
   }
   // Fresh-install rehearsals must not touch the real Hermes home.
   if (env.HERMES_DESKTOP_USER_DATA_DIR) {
+    const nativeHome = platform === 'win32' ? readNativeUpdateHome() : null
+    if (nativeHome) { return normalizeHermesHomeRoot(nativeHome, paths) }
     return paths.join(paths.resolve(env.HERMES_DESKTOP_USER_DATA_DIR), 'hermes-home')
   }
   if (platform === 'win32' && env.HERMES_HOME === undefined) {
