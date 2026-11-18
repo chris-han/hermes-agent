@@ -25,8 +25,11 @@ function verifyFilexInputs(desktop, platform = process.platform, arch = process.
   if (receipt.noticesSha256 !== noticeHash || noticeHash !== hash(fs.readFileSync(path.join(desktop, 'assets', 'filex-THIRD-PARTY-NOTICES.txt')))) throw new Error('Stale filex redistribution notices')
   return receipt
 }
-/** @param {string} file */
-function isPinnedFilex(file) {
-  return /(?:^|[\\/])resources[\\/]filex[\\/]filex\.exe$/i.test(file)
+/** @param {string} file @param {string} appRoot */
+function isPinnedFilex(file, appRoot) {
+  if (!appRoot) return false
+  /** @param {string} value */
+  const normalize = value => path.resolve(value.replaceAll('\\', '/')).replaceAll('\\', '/').toLowerCase()
+  return normalize(file) === normalize(path.join(appRoot, 'resources', 'filex', 'filex.exe'))
 }
 module.exports = { pins, hash, verifyFilexInputs, isPinnedFilex }

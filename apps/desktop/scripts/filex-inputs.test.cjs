@@ -15,9 +15,9 @@ test('clean checkout and wrong executable cannot yield a sync-enabled package', 
   } finally { fs.rmSync(root, { recursive: true, force: true }) }
 })
 test('signing exception covers only the pinned package destination', () => {
-  assert.equal(isPinnedFilex('C:\\app\\resources\\filex\\filex.exe'), true)
-  assert.equal(isPinnedFilex('/app/resources/filex/filex.exe'), true)
-  for (const file of ['/app/filex.exe', '/app/resources/agent-payload/filex.exe', '/app/resources/filex/other.exe']) assert.equal(isPinnedFilex(file), false)
+  assert.equal(isPinnedFilex('C:\\app\\resources\\filex\\filex.exe', 'C:\\app'), true)
+  assert.equal(isPinnedFilex('/app/resources/filex/filex.exe', '/app'), true)
+  for (const file of ['/app/filex.exe', '/app/resources/agent-payload/filex.exe', '/app/resources/agent-payload/tools/resources/filex/filex.exe', '/app/resources/filex/other.exe']) assert.equal(isPinnedFilex(file, '/app'), false)
 })
 test('prepared pinned payload validates read-only, and stale helper/receipt are rejected', { skip: !process.env.FILEX_INPUTS_DESKTOP }, () => {
   const desktop = process.env.FILEX_INPUTS_DESKTOP

@@ -345,3 +345,20 @@ test('batch signing passes its paired toolchain and runtime to both child phases
   assert.equal(sign.args[sign.args.indexOf('/dlib') + 1], tools.dlib)
   assert.equal(timestamp.args.includes('/dlib'), false)
 })
+
+
+test('the pinned-filex exception is bound to appOutDir, not a nested payload suffix', async () => {
+  const root=tmpTree()
+  const pinned=path.join(root,'resources','filex','filex.exe')
+  const nested=path.join(root,'resources','agent-payload','tools','resources','filex','filex.exe')
+  for(const file of [pinned,nested]){fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,'fixture binary')}
+  const calls=[]
+  const result=await batchSignAppTree(root,path.join(root,'Semantier.exe'),{
+    env:{AZURE_SIGN_ENDPOINT:'https://test.invalid',AZURE_SIGN_ACCOUNT:'fixture',AZURE_SIGN_PROFILE:'fixture'},
+    signtool:'signtool.exe',dlib:'fixture.dll',mkdtemp:()=>root,
+    exec:async (_tool,args)=>{calls.push(args)}
+  })
+  assert.equal(result.signed,1)
+  assert.equal(calls.some(args=>args.includes(nested)),true)
+  assert.equal(calls.some(args=>args.includes(pinned)),false)
+})
