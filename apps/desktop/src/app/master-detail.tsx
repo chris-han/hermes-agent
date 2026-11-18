@@ -120,6 +120,7 @@ export function MasterDetail({
           'grid min-h-0 flex-1 grid-cols-1',
           split === 'wide' ? MASTER_DETAIL_WIDE_COLS : 'sm:grid-cols-[14rem_minmax(0,1fr)]'
         )}
+        data-master-detail-grid
         ref={gridRef}
         style={override !== undefined ? ({ '--md-split': `${override}px` } as CSSProperties) : undefined}
       >

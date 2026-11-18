@@ -93,7 +93,10 @@ export const COMMIT_SHA_RE = /^[0-9a-f]{40}$/i
 export type AgentPluginsStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 /** The recovering `requestGateway` from `useGatewayRequest`. */
-export type GatewayRequest = <T>(method: string, params?: Record<string, unknown>, timeoutMs?: number) => Promise<T>
+export interface GatewayRequest {
+  <T>(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<T>
+  capabilityOwner?: string
+}
 
 export const $agentPlugins = atom<AgentPluginRow[]>([])
 export const $agentPluginsStatus = atom<AgentPluginsStatus>('idle')
@@ -102,6 +105,7 @@ export const $agentPluginsError = atom<string | null>(null)
  *  profile; `undefined` = nothing loaded yet). Surfaces that write a row's
  *  settings must check it: the list is shared, and a scope switch keeps the
  *  previous profile's rows on screen until the new list lands. */
+export const $agentPluginsOwner = atom<string | undefined>(undefined)
 export const $agentPluginsProfile = atom<null | string | undefined>(undefined)
 /** Best available address of the row whose toggle RPC is in flight. */
 export const $agentPluginBusy = atom<string | null>(null)
@@ -145,14 +149,15 @@ const withProfile = (params: Record<string, unknown>, profile?: string | null) =
  *  stale list. */
 export function loadAgentPlugins(request: GatewayRequest, profile?: string | null): Promise<void> {
   const scope = profile ?? null
+  const owner = `${request.capabilityOwner ?? ''}::${scope ?? ''}`
 
-  if (inflight && inflightProfile === scope) {
+  if (inflight && inflightProfile === owner) {
     return inflight
   }
 
   const generation = ++loadGeneration
 
-  inflightProfile = scope
+  inflightProfile = owner
   inflight = (async () => {
     if ($agentPluginsStatus.get() !== 'ready') {
       $agentPluginsStatus.set('loading')
@@ -170,6 +175,7 @@ export function loadAgentPlugins(request: GatewayRequest, profile?: string | nul
 
       $agentPlugins.set((result?.plugins ?? []).map(normalizeAgentPluginRow))
       $agentPluginsProfile.set(scope)
+      $agentPluginsOwner.set(owner)
       $agentPluginsStatus.set('ready')
       $agentPluginsError.set(null)
     } catch (e) {
@@ -204,6 +210,7 @@ export async function toggleAgentPlugin(
   failMessage: string,
   profile?: string | null
 ): Promise<boolean> {
+  const generation = loadGeneration
   $agentPluginBusy.set(key)
 
   try {
@@ -226,11 +233,15 @@ export async function toggleAgentPlugin(
     const refreshed = result.plugin
 
     // Patch only a list loaded for the profile this toggle targeted.
-    if (refreshed && $agentPluginsProfile.get() === (profile ?? null)) {
+    if (
+      refreshed &&
+      $agentPluginsProfile.get() === (profile ?? null) &&
+      $agentPluginsOwner.get() === `${request.capabilityOwner ?? ''}::${profile ?? ''}`
+    ) {
       const snapshot = normalizeAgentPluginRow(refreshed)
 
       $agentPlugins.set($agentPlugins.get().map(row => (row.key === key ? { ...row, ...snapshot } : row)))
-    } else {
+    } else if (generation === loadGeneration) {
       await loadAgentPlugins(request, profile)
     }
 
@@ -432,7 +443,9 @@ export async function removeAgentPlugin(
       throw new Error(failMessage)
     }
 
-    $agentPlugins.set($agentPlugins.get().filter(row => row.name !== name))
+    if ($agentPluginsOwner.get() === `${request.capabilityOwner ?? ''}::${profile ?? ''}`) {
+      $agentPlugins.set($agentPlugins.get().filter(row => row.name !== name))
+    }
 
     return true
   } catch (e) {
@@ -491,7 +504,10 @@ export async function saveAgentPluginSettings(
     // The shared list may belong to another profile by now (a scope switch
     // mid-save): only a list loaded for the profile this save targeted takes
     // its refreshed row, and a refetch would hijack the other profile's view.
-    const ownsList = $agentPluginsProfile.get() === (opts.profile ?? null)
+    const ownsList =
+      $agentPluginsProfile.get() === (opts.profile ?? null) &&
+      ($agentPluginsOwner.get() === undefined ||
+        $agentPluginsOwner.get() === `${request.capabilityOwner ?? ''}::${opts.profile ?? ''}`)
 
     if (ownsList && result?.plugin) {
       const refreshed = result.plugin

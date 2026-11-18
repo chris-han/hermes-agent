@@ -1,6 +1,6 @@
 import { compactNumber } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 
 import { CountSkeleton } from '@/components/ui/skeleton'
 import { type ProfileScope, setToolsetEnabled } from '@/hermes'
@@ -13,7 +13,6 @@ import { notify, notifyError } from '@/store/notifications'
 import type { ToolsetInfo } from '@/types/hermes'
 
 import {
-  CapRow,
   DetailColumn,
   ListColumn,
   ListStrip,
@@ -22,6 +21,7 @@ import {
   MasterDetail
 } from '../../master-detail'
 import { asText, toolNames, toolsetDisplayLabel } from '../../settings/helpers'
+import { InventoryRow as CapRow, InventoryItems } from '../inventory'
 import { CapabilityEmpty, SortButton } from '../primitives'
 
 import { useToolCalls } from './tool-calls'
@@ -47,6 +47,8 @@ export function ToolsetsTab({ profile, query, toolsets }: ToolsetsTabProps) {
   const toolsetsSortDesc = useStore($toolsetsSortDesc)
   const toolCalls = useToolCalls(profile)
   const [bulkBusy, setBulkBusy] = useState(false)
+  const pendingWrites = useRef(new Set<string>())
+  const [pending, setPending] = useState<Set<string>>(new Set())
   const [selectedToolset, setSelectedToolset] = useState<string | null>(null)
 
   // Optimistic write-through against the scoped Tools key: toggles repaint
@@ -83,6 +85,13 @@ export function ToolsetsTab({ profile, query, toolsets }: ToolsetsTabProps) {
   // immediately — a toast per flip would spam rapid customization). Errors
   // revert and notify.
   async function handleToggleToolset(toolset: ToolsetInfo, enabled: boolean) {
+    if (pendingWrites.current.has(toolset.name)) {
+      return
+    }
+
+    pendingWrites.current.add(toolset.name)
+    setPending(new Set(pendingWrites.current))
+    const previous = { ...toolset }
     setToolsets(
       current =>
         current?.map(row => (row.name === toolset.name ? { ...row, enabled, available: enabled } : row)) ?? current
@@ -93,17 +102,21 @@ export function ToolsetsTab({ profile, query, toolsets }: ToolsetsTabProps) {
     } catch (err) {
       setToolsets(
         current =>
-          current?.map(row => (row.name === toolset.name ? { ...row, enabled: !enabled, available: !enabled } : row)) ??
-          current
+          current?.map(row =>
+            row.name === toolset.name ? { ...row, enabled: previous.enabled, available: previous.enabled } : row
+          ) ?? current
       )
       notifyError(err, t.skills.failedToUpdate(toolsetDisplayLabel(toolset)))
+    } finally {
+      pendingWrites.current.delete(toolset.name)
+      setPending(new Set(pendingWrites.current))
     }
   }
 
   // Sequential on purpose: each toggle is a config read-modify-write on the
   // backend; parallel calls would race the disabled-list save.
   async function bulkApply(targets: ToolsetInfo[], enabled: boolean) {
-    if (bulkBusy || targets.length === 0) {
+    if (bulkBusy || pendingWrites.current.size > 0 || targets.length === 0) {
       return
     }
 
@@ -130,7 +143,7 @@ export function ToolsetsTab({ profile, query, toolsets }: ToolsetsTabProps) {
   // One switch line covering enable-all/disable-all.
   const bulkSwitch: ListStripMenuToggle = {
     checked: bulkToolsets.length > 0 && bulkToolsets.every(ts => ts.enabled),
-    disabled: bulkBusy,
+    disabled: bulkBusy || pending.size > 0,
     label: t.skills.all,
     onToggle: checked =>
       void bulkApply(
@@ -153,33 +166,36 @@ export function ToolsetsTab({ profile, query, toolsets }: ToolsetsTabProps) {
           />
         }
       >
-        {visibleToolsets.map(toolset => {
-          const label = toolsetDisplayLabel(toolset)
-          const calls = toolCalls ? toolsetCalls(toolset, toolCalls) : null
+        <InventoryItems>
+          {visibleToolsets.map(toolset => {
+            const label = toolsetDisplayLabel(toolset)
+            const calls = toolCalls ? toolsetCalls(toolset, toolCalls) : null
 
-          return (
-            <CapRow
-              active={activeToolset?.name === toolset.name}
-              busy={bulkBusy}
-              enabled={toolset.enabled}
-              key={toolset.name}
-              meta={
-                calls === null ? (
-                  <CountSkeleton />
-                ) : calls > 0 ? (
-                  `×${compactNumber(calls)}`
-                ) : (
-                  `${toolNames(toolset).length} tools`
-                )
-              }
-              onSelect={() => setSelectedToolset(toolset.name)}
-              onToggle={checked => void handleToggleToolset(toolset, checked)}
-              subtitle={asText(toolset.description)}
-              title={label}
-              toggleLabel={t.skills.toggleToolset(label, !toolset.enabled)}
-            />
-          )
-        })}
+            return (
+              <CapRow
+                active={activeToolset?.name === toolset.name}
+                busy={bulkBusy || pending.has(toolset.name)}
+                description={toolset.description}
+                enabled={toolset.enabled}
+                key={toolset.name}
+                meta={
+                  calls === null ? (
+                    <CountSkeleton />
+                  ) : calls > 0 ? (
+                    `×${compactNumber(calls)}`
+                  ) : (
+                    `${toolNames(toolset).length} tools`
+                  )
+                }
+                onSelect={() => setSelectedToolset(toolset.name)}
+                onToggle={checked => void handleToggleToolset(toolset, checked)}
+                subtitle={asText(toolset.description)}
+                title={label}
+                toggleLabel={t.skills.toggleToolset(label, !toolset.enabled)}
+              />
+            )
+          })}
+        </InventoryItems>
       </ListColumn>
       <DetailColumn footer={t.skills.changesApplyNewSessions}>
         {activeToolset && (

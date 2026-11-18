@@ -1,9 +1,8 @@
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { deleteLearningNode, type ProfileScope } from '@/hermes'
 import { type Translations, useI18n } from '@/i18n'
+import { useInventoryCopy } from '@/i18n/capability-inventory'
 import { notify } from '@/store/notifications'
-
-export const ARCHIVE_SKILL_DESCRIPTION = 'The skill is archived and can be restored with `hermes curator restore`.'
 
 export function notifySkillArchived(t: Translations): void {
   notify({ kind: 'success', message: t.skills.skillArchivedMessage, title: t.skills.skillArchivedTitle })
@@ -51,11 +50,12 @@ export function ArchiveSkillConfirmDialog({
   skillName
 }: ArchiveSkillConfirmDialogProps) {
   const { t } = useI18n()
+  const copy = useInventoryCopy()
 
   return (
     <ConfirmDialog
-      confirmLabel="Archive"
-      description={ARCHIVE_SKILL_DESCRIPTION}
+      confirmLabel={t.skills.archive}
+      description={copy.archiveDescription}
       destructive
       dismissOnConfirm
       onClose={onClose}
@@ -72,7 +72,7 @@ export function ArchiveSkillConfirmDialog({
         )
       }}
       open={open}
-      title={`Archive ${skillName}?`}
+      title={copy.archiveTitle(skillName)}
     />
   )
 }

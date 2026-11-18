@@ -825,3 +825,16 @@ class PluginCatalogLookupResult(Result):
 method("plugins.catalog.lookup", params=PluginCatalogLookupParams, result=PluginCatalogLookupResult,
        doc="One curated plugin-catalog entry by name, from the backend's live catalog (cached, with the "
            "in-tree fallback and kill list); backs hermes://plugin/install?catalog= deep links.")
+
+
+class PluginCatalogListEntry(PluginCatalogLookupEntry):
+    description: str
+
+
+class PluginCatalogListResult(Result):
+    available: bool
+    entries: list[PluginCatalogListEntry]
+
+
+method("plugins.catalog.list", params=ProfileParams, result=PluginCatalogListResult,
+       doc="Native read-only discovery using the install catalog and removal policy.")

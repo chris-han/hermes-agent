@@ -1,17 +1,24 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { render as baseRender, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createPluginContext } from '@/contrib/plugin'
 import { $pluginDecisions, $pluginRecords, dropPlugin, patchPlugin, publishPlugin } from '@/contrib/plugins-store'
 import { queryClient } from '@/lib/query-client'
-import { $agentPlugins, $agentPluginsStatus } from '@/store/agent-plugins'
+import { $agentPlugins, $agentPluginsOwner, $agentPluginsStatus } from '@/store/agent-plugins'
 import { $confirmRequest, settleConfirm } from '@/store/confirm'
 import { $notifications } from '@/store/notifications'
-import { $paneHeightOverride, setPaneHeightOverride } from '@/store/panes'
+import { setPaneHeightOverride } from '@/store/panes'
 import { $pluginInstallRequest, closePluginInstallRequest } from '@/store/plugin-install-request'
 import { $connection } from '@/store/session'
 
 import { PluginsTab } from './plugins-tab'
+
+function render(ui: Parameters<typeof baseRender>[0]) {
+  const profile = (ui as { props: { profile?: string | null } }).props.profile ?? null
+  $agentPluginsOwner.set(`::${profile ?? ''}`)
+
+  return baseRender(ui)
+}
 
 const requestGateway = vi.fn(async () => ({ plugins: [] }))
 
@@ -229,19 +236,20 @@ describe('PluginsTab', () => {
   it('opens the dual-target install modal from a catalog pick message', async () => {
     render(<PluginsTab profile="workbot" />)
 
-    window.dispatchEvent(
-      new MessageEvent('message', {
-        data: {
+    await screen.findByRole('button', { name: 'Retry' })
+    queryClient.setQueryData(['native-plugin-catalog', undefined, 'workbot'], {
+      available: true,
+      entries: [
+        {
           name: 'weather-plugin',
           repo: 'https://github.com/example/weather-plugin',
           sha: 'a'.repeat(40),
           subdir: '',
-          tier: 'community',
-          type: 'hermes-plugin-pick'
-        },
-        origin: 'https://hermes-agent.nousresearch.com'
-      })
-    )
+          description: ''
+        }
+      ]
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Install' }))
 
     await waitFor(() => {
       const request = $pluginInstallRequest.get()
@@ -378,17 +386,20 @@ describe('PluginsTab', () => {
   it('appends the subdir fragment for multi-plugin repos', async () => {
     render(<PluginsTab profile={null} />)
 
-    window.dispatchEvent(
-      new MessageEvent('message', {
-        data: {
+    await screen.findByRole('button', { name: 'Retry' })
+    queryClient.setQueryData(['native-plugin-catalog', undefined, null], {
+      available: true,
+      entries: [
+        {
           name: 'nested-plugin',
           repo: 'https://github.com/example/plugins-monorepo',
+          sha: 'a'.repeat(40),
           subdir: 'nested-plugin',
-          type: 'hermes-plugin-pick'
-        },
-        origin: 'https://hermes-agent.nousresearch.com'
-      })
-    )
+          description: ''
+        }
+      ]
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Install' }))
 
     await waitFor(() => {
       expect($pluginInstallRequest.get()?.repo).toBe('https://github.com/example/plugins-monorepo#nested-plugin')
@@ -559,26 +570,15 @@ describe('PluginsTab catalog UX', () => {
     setPaneHeightOverride('capabilities-plugin-catalog', undefined)
   })
 
-  afterEach(cleanup)
+  afterEach(() => {
+    cleanup()
+    queryClient.clear()
+  })
 
-  it('grows the catalog when its top-edge sash is dragged up, and resets on double-click', () => {
-    // jsdom has no layout: give the Capabilities column a real height so the
-    // "never crush the lists above" clamp has something to clamp against.
-    const clientHeight = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(900)
-    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 1000 })
+  it('shows native catalog recovery without a hosted page', async () => {
     render(<PluginsTab profile={null} />)
-    const sash = screen.getByTestId('plugin-catalog-sash')
-
-    fireEvent.pointerDown(sash, { button: 0, clientY: 600 })
-    fireEvent.pointerMove(window, { clientY: 400 })
-    fireEvent.pointerUp(window)
-
-    // Default 380px + 200px of upward drag (clamped only by window/column size).
-    expect($paneHeightOverride('capabilities-plugin-catalog').get()).toBe(580)
-
-    fireEvent.doubleClick(sash)
-    expect($paneHeightOverride('capabilities-plugin-catalog').get()).toBeUndefined()
-    clientHeight.mockRestore()
+    expect(await screen.findByRole('button', { name: 'Retry' })).toBeTruthy()
+    expect(document.querySelector('iframe')).toBeNull()
   })
 
   it('shows an Update chip when the catalog pin moved past the installed SHA', () => {
@@ -724,18 +724,24 @@ describe('PluginsTab catalog UX', () => {
       }
     ])
 
+    const installedRows = $agentPlugins.get()
     render(<PluginsTab profile={null} />)
 
-    window.dispatchEvent(
-      new MessageEvent('message', {
-        data: {
+    await screen.findByRole('button', { name: 'Retry' })
+    $agentPlugins.set(installedRows)
+    queryClient.setQueryData(['native-plugin-catalog', undefined, null], {
+      available: true,
+      entries: [
+        {
           name: 'demo-weather',
           repo: 'https://github.com/example/demo-weather',
-          type: 'hermes-plugin-pick'
-        },
-        origin: 'https://hermes-agent.nousresearch.com'
-      })
-    )
+          sha: 'a'.repeat(40),
+          subdir: '',
+          description: ''
+        }
+      ]
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Install' }))
 
     // The modal must NOT open — the pick is refused with a toast.
     await new Promise(resolve => setTimeout(resolve, 20))
@@ -759,16 +765,20 @@ describe('PluginsTab catalog UX', () => {
 
     render(<PluginsTab profile={null} />)
 
-    window.dispatchEvent(
-      new MessageEvent('message', {
-        data: {
+    await screen.findByRole('button', { name: 'Retry' })
+    queryClient.setQueryData(['native-plugin-catalog', undefined, null], {
+      available: true,
+      entries: [
+        {
           name: 'demo-weather',
           repo: 'https://github.com/example/demo-weather',
-          type: 'hermes-plugin-pick'
-        },
-        origin: 'https://hermes-agent.nousresearch.com'
-      })
-    )
+          sha: 'a'.repeat(40),
+          subdir: '',
+          description: ''
+        }
+      ]
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Install' }))
 
     await waitFor(() => expect($pluginInstallRequest.get()).not.toBeNull())
   })

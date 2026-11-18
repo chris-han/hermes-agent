@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from 'react'
 import { PageLoader } from '@/components/page-loader'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/i18n'
+import { useInventoryCopy } from '@/i18n/capability-inventory'
 import { queryClient } from '@/lib/query-client'
 import { invalidateSlashCompletions } from '@/lib/slash-completion-cache'
 import { useStoreSelector } from '@/lib/use-session-slice'
@@ -17,18 +18,18 @@ import { PageSearchShell } from '../page-search-shell'
 import type { SetStatusbarItemGroup } from '../shell/statusbar-controls'
 
 import { ConnectorsTab } from './connectors/connectors-tab'
+import { CapabilityInventory } from './inventory'
 import { PluginsTab } from './plugins/plugins-tab'
 import { CapabilityScopeSelector, useCapabilityScope } from './scope-selector'
-import { EmbeddedHubPicker } from './skills/embedded-hub-picker'
+import { MarketplaceTab } from './skills/marketplace-tab'
 import { SKILLS_QUERY_KEY, skillSearchTerms, useSkillsQuery } from './skills/skills-data'
 import { SkillsTab } from './skills/skills-tab'
 import { refreshToolCalls } from './toolsets/tool-calls'
 import { TOOLSETS_QUERY_KEY, toolsetSearchTerms, useToolsetsQuery, visibleToolsetCount } from './toolsets/toolsets-data'
 import { ToolsetsTab } from './toolsets/toolsets-tab'
 
-// Skills Hub browsing lives inside the Skills tab. Legacy `?tab=hub`
-// links fall back to 'skills' via useRouteEnumParam.
-const CAPABILITY_MODES = ['skills', 'toolsets', 'connectors', 'plugins'] as const
+// Legacy hub links land on the native Marketplace destination.
+const CAPABILITY_MODES = ['skills', 'toolsets', 'plugins', 'connectors', 'marketplace', 'hub'] as const
 
 type CapabilityMode = (typeof CAPABILITY_MODES)[number]
 
@@ -63,6 +64,7 @@ export function CapabilitiesView({
   ...props
 }: CapabilitiesViewProps) {
   const { t } = useI18n()
+  const copy = useInventoryCopy()
   // Both hooks run unconditionally (rules of hooks); embedded picks the local
   // one so tab clicks inside a dialog don't rewrite the page URL.
   const routeTab = useRouteEnumParam('tab', CAPABILITY_MODES, 'skills')
@@ -72,20 +74,12 @@ export function CapabilitiesView({
 
   const [query, setQuery] = useState('')
 
-  // Keep the docs iframe alive after the first Skills visit.
-  const [hubMounted, setHubMounted] = useState(mode === 'skills')
-
-  if (mode === 'skills' && !hubMounted) {
-    setHubMounted(true)
-  }
-
   const scope = useCapabilityScope({ fixedConnection, fixedProfile })
 
   // The two installed lists the tab pills count. They are fetched here, as a
   // pair, because the counts stay live for the tab the user is NOT on.
   const { data: skills, isError: skillsFailed, error: skillsError } = useSkillsQuery(scope.profile)
   const { data: toolsets, isError: toolsetsFailed } = useToolsetsQuery(scope.profile)
-  const installedSkillNames = useMemo(() => new Set((skills ?? []).map(skill => skill.name)), [skills])
 
   const refreshCapabilities = useCallback(async () => {
     await Promise.all([
@@ -135,6 +129,8 @@ export function CapabilitiesView({
   )
 
   const tabContent = {
+    marketplace: () => <MarketplaceTab key={scope.key} profile={scope.profile} query={query} />,
+    hub: () => <MarketplaceTab key={scope.key} profile={scope.profile} query={query} />,
     // The gateway instance backs ONLY the live `reload.mcp` RPC, and it is the
     // ACTIVE gateway's socket — for a scope pinned to a different backend that
     // (config edits still apply on that backend's next session).
@@ -172,34 +168,30 @@ export function CapabilitiesView({
   return (
     <PageSearchShell
       {...props}
-      activeTab={mode}
+      activeTab={mode === 'hub' ? 'marketplace' : mode}
       onSearchChange={setQuery}
       onTabChange={id => setMode(id as CapabilityMode)}
       // The Connectors directory owns its search field; plugins has its own list.
       searchHidden={mode === 'connectors' || mode === 'plugins'}
       searchHints={searchHints}
-      searchPlaceholder={mode === 'skills' ? t.skills.searchSkills : t.skills.searchToolsets}
+      searchPlaceholder={
+        mode === 'skills' || mode === 'marketplace' || mode === 'hub' ? t.skills.searchSkills : t.skills.searchToolsets
+      }
       searchValue={query}
       tabs={[
         { id: 'skills', label: t.skills.tabSkills, meta: skills?.length ?? null },
         { id: 'toolsets', label: t.skills.tabToolsets, meta: toolsets ? visibleToolsetCount(toolsets) : null },
+        { id: 'plugins', label: t.skills.tabPlugins },
         { id: 'connectors', label: t.connectorsPage.title },
-        { id: 'plugins', label: t.skills.tabPlugins }
+        { id: 'marketplace', label: copy.marketplace }
       ]}
     >
       <div className="flex h-full flex-col">
         {mode !== 'plugins' && <CapabilityScopeSelector scope={scope} />}
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className={mode === 'skills' ? 'min-h-40 flex-1 overflow-hidden' : 'min-h-0 flex-1'}>
+          <CapabilityInventory key={`${mode}:${scope.key}`} tab={mode === 'hub' ? 'marketplace' : mode}>
             {loadGate ?? tabContent[mode]()}
-          </div>
-          {hubMounted && (
-            <EmbeddedHubPicker
-              hidden={mode !== 'skills'}
-              installedNames={installedSkillNames}
-              profile={scope.profile}
-            />
-          )}
+          </CapabilityInventory>
         </div>
       </div>
     </PageSearchShell>

@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router'
 import type * as ReactRouterDom from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { setApiRequestConnection } from '@/api/client'
 import type * as HermesApi from '@/hermes'
 import { queryClient } from '@/lib/query-client'
 import type * as HubActions from '@/store/hub-actions'
@@ -114,6 +115,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  setApiRequestConnection(null)
   cleanup()
   vi.clearAllMocks()
   // Shared singleton client — drop cached skills/toolsets so each test refetches.
@@ -165,7 +167,7 @@ describe('CapabilitiesView toolset management', { timeout: 60_000 }, () => {
     })
 
     // The selector appears with >1 profile.
-    const trigger = await screen.findByRole('combobox')
+    const trigger = await screen.findAllByRole('combobox').then(rows => rows[0])
     await act(async () => {
       fireEvent.click(trigger)
     })
@@ -210,7 +212,7 @@ describe('CapabilitiesView toolset management', { timeout: 60_000 }, () => {
     })
 
     // The selector renders on the Skills tab too (Capabilities-wide).
-    const trigger = await screen.findByRole('combobox')
+    const trigger = await screen.findAllByRole('combobox').then(rows => rows[0])
     await act(async () => {
       fireEvent.click(trigger)
     })
@@ -261,65 +263,23 @@ describe('CapabilitiesView toolset management', { timeout: 60_000 }, () => {
     expect(await screen.findByText(/Deep research steps/)).toBeTruthy()
   })
 
-  it('hub picker refuses to reinstall an already-installed skill', async () => {
-    const { notify } = await import('@/store/notifications')
-    const { EmbeddedHubPicker } = await import('./skills/embedded-hub-picker')
-
-    render(<EmbeddedHubPicker installedNames={new Set(['web-research'])} profile={null} />)
-
-    // The picker is expanded by default — the hub iframe is live on mount.
-    expect(document.querySelector('iframe')).toBeTruthy()
-
-    await act(async () => {
-      window.dispatchEvent(
-        new MessageEvent('message', {
-          data: { type: 'hermes-skill-pick', name: 'web-research', identifier: 'web-research' },
-          origin: 'https://hermes-agent.nousresearch.com'
-        })
-      )
-    })
-
-    // Refused with an informational toast, no install action spawned.
-    await waitFor(() =>
-      expect(vi.mocked(notify)).toHaveBeenCalledWith(
-        expect.objectContaining({ title: expect.stringContaining('web-research') })
-      )
-    )
+  it('rehomes same-named ambient profiles when the registry connection changes', async () => {
+    setApiRequestConnection('remote-a')
+    await renderSkills()
+    await waitFor(() => expect(getToolsets).toHaveBeenCalledWith(expect.objectContaining({ connectionId: 'remote-a' })))
+    await act(async () => setApiRequestConnection('remote-b'))
+    await waitFor(() => expect(getToolsets).toHaveBeenCalledWith(expect.objectContaining({ connectionId: 'remote-b' })))
+    expect(getToolsets.mock.calls.at(-1)?.[0].connectionId).toBe('remote-b')
   })
 
-  it('mounts the hub iframe lazily and keeps it (hidden) across tab switches', async () => {
-    // On a non-Skills tab the docs-site iframe must not exist at all — an
-    // eagerly mounted hub is exactly the Capabilities lag bug.
-    await renderSkills() // ?tab=toolsets
+  it('keeps installed management native when switching views', async () => {
+    await renderSkills()
     await screen.findByRole('switch', { name: 'Turn Web Search toolset off' })
+    fireEvent.click(screen.getByRole('button', { name: 'Cards' }))
     expect(document.querySelector('iframe')).toBeNull()
-    cleanup()
-
-    // Embedded mode drives tabs through local state (the route hooks are
-    // mocked here), starting on Skills: the picker mounts with the tab.
-    await act(async () => {
-      render(
-        <QueryClientProvider client={queryClient}>
-          <MemoryRouter initialEntries={['/capabilities']}>
-            <CapabilitiesView embedded />
-          </MemoryRouter>
-        </QueryClientProvider>
-      )
-    })
-
-    const iframe = document.querySelector('iframe')
-    expect(iframe).toBeTruthy()
-    expect(iframe!.closest('section')!.classList.contains('hidden')).toBe(false)
-
-    // Switch to Tools → the iframe STAYS mounted (no docs-site reload on the
-    // next visit) but its section is fully hidden, so nothing from the hub
-    // can paint over the toolsets UI.
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /Tools/ }))
-    })
-    const kept = document.querySelector('iframe')
-    expect(kept).toBeTruthy()
-    expect(kept!.closest('section')!.classList.contains('hidden')).toBe(true)
+    expect(screen.getByRole('button', { name: /Web Search/ })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'List' }))
+    expect(await screen.findByRole('switch', { name: 'Turn Web Search toolset off' })).toBeTruthy()
   })
 
   it('shows a vision explainer that deep-links to Settings → Models', async () => {

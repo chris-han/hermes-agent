@@ -1,7 +1,7 @@
 import { compactNumber } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
-import { type ReactNode, useCallback, useMemo, useState } from 'react'
+import { type ReactNode, useCallback, useMemo, useRef, useState } from 'react'
 
 import { ArchiveSkillConfirmDialog } from '@/app/learning/archive-skill-confirm-dialog'
 import { CodeEditor } from '@/components/chat/code-editor'
@@ -16,17 +16,23 @@ import {
   setSkillEnabled
 } from '@/hermes'
 import { useI18n } from '@/i18n'
+import { useInventoryCopy } from '@/i18n/capability-inventory'
 import { Loader2 } from '@/lib/icons'
 import { Codecs, persistentAtom } from '@/lib/persisted'
 import { queryClient } from '@/lib/query-client'
 import { invalidateSlashCompletions } from '@/lib/slash-completion-cache'
 import { useStoreSelector } from '@/lib/use-session-slice'
-import { $hubActions, installHubSkill, notifyHubActionFailed, OFFICIAL_SKILLS_KEY } from '@/store/hub-actions'
+import {
+  $hubActions,
+  hubActionKey,
+  installHubSkill,
+  notifyHubActionFailed,
+  OFFICIAL_SKILLS_KEY
+} from '@/store/hub-actions'
 import { notify, notifyError } from '@/store/notifications'
 import type { OfficialSkillInfo, SkillInfo } from '@/types/hermes'
 
 import {
-  CapRow,
   DetailColumn,
   DetailPane,
   ListColumn,
@@ -36,6 +42,7 @@ import {
   MasterDetail
 } from '../../master-detail'
 import { prettyName } from '../../settings/helpers'
+import { InventoryRow as CapRow, InventoryItems, InventorySelect } from '../inventory'
 import { CapabilityEmpty, SortButton } from '../primitives'
 
 import { OfficialSkillDetail } from './official-skill-detail'
@@ -47,7 +54,7 @@ import { categoryFor, filteredOfficial, filteredSkills, skillsQueryKey, usageOf 
 const $skillsSortDesc = persistentAtom('hermes.desktop.capabilities.skillsSortDesc', true, Codecs.bool)
 
 // Row subtitle: category, with non-default origins badged.
-function skillSubtitle(skill: SkillInfo): ReactNode {
+function skillSubtitle(skill: SkillInfo, learned: string): ReactNode {
   const category = prettyName(categoryFor(skill))
   const provenance = skill.provenance
 
@@ -56,7 +63,7 @@ function skillSubtitle(skill: SkillInfo): ReactNode {
       <span className="truncate">{category}</span>
       {provenance === 'agent' && (
         <Badge className="shrink-0 normal-case" variant="default">
-          learned
+          {learned}
         </Badge>
       )}
       {provenance === 'hub' && (
@@ -82,8 +89,15 @@ interface SkillsTabProps {
 /** The Skills tab: installed skills, official optional skills, and learned-skill editing. */
 export function SkillsTab({ onRefresh, profile, query, skills }: SkillsTabProps) {
   const { t } = useI18n()
+  const c = useInventoryCopy()
+  const [source, setSource] = useState('all')
+  const [status, setStatus] = useState('all')
+  const [sort, setSort] = useState('usage')
+  const [category, setCategory] = useState('all')
   const skillsSortDesc = useStore($skillsSortDesc)
   const [bulkBusy, setBulkBusy] = useState(false)
+  const pendingWrites = useRef(new Set<string>())
+  const [pending, setPending] = useState<Set<string>>(new Set())
   const [selectedSkill, setSelectedSkill] = useState<string | null>(null)
   const [selectedOfficial, setSelectedOfficial] = useState<string | null>(null)
 
@@ -110,7 +124,18 @@ export function SkillsTab({ onRefresh, profile, query, skills }: SkillsTabProps)
     [profile]
   )
 
-  const visibleSkills = useMemo(() => filteredSkills(skills, query, skillsSortDesc), [query, skills, skillsSortDesc])
+  const visibleSkills = useMemo(
+    () =>
+      filteredSkills(skills, query, skillsSortDesc)
+        .filter(
+          row =>
+            (category === 'all' || categoryFor(row) === category) &&
+            (source === 'all' || row.provenance === source) &&
+            (status === 'all' || row.enabled === (status === 'enabled'))
+        )
+        .sort((a, b) => (sort === 'name' ? a.name.localeCompare(b.name) : 0)),
+    [query, skills, skillsSortDesc, source, status, sort, category]
+  )
 
   // Installed-name set stays unfiltered so search cannot make a skill look absent.
   const installedSkillNames = useMemo(() => new Set(skills.map(s => s.name)), [skills])
@@ -152,6 +177,13 @@ export function SkillsTab({ onRefresh, profile, query, skills }: SkillsTabProps)
   }
 
   async function handleToggleSkill(skill: SkillInfo, enabled: boolean) {
+    if (pendingWrites.current.has(skill.name)) {
+      return
+    }
+
+    pendingWrites.current.add(skill.name)
+    setPending(new Set(pendingWrites.current))
+    const previous = { ...skill }
     setSkills(current => current?.map(row => (row.name === skill.name ? { ...row, enabled } : row)) ?? current)
 
     try {
@@ -161,16 +193,20 @@ export function SkillsTab({ onRefresh, profile, query, skills }: SkillsTabProps)
       invalidateSlashCompletions()
     } catch (err) {
       setSkills(
-        current => current?.map(row => (row.name === skill.name ? { ...row, enabled: !enabled } : row)) ?? current
+        current =>
+          current?.map(row => (row.name === skill.name ? { ...row, enabled: previous.enabled } : row)) ?? current
       )
       notifyError(err, t.skills.failedToUpdate(skill.name))
+    } finally {
+      pendingWrites.current.delete(skill.name)
+      setPending(new Set(pendingWrites.current))
     }
   }
 
   // Sequential on purpose: each toggle is a config read-modify-write on the
   // backend; parallel calls would race the disabled-list save.
   async function bulkApply(targets: SkillInfo[], enabled: boolean) {
-    if (bulkBusy || targets.length === 0) {
+    if (bulkBusy || pendingWrites.current.size > 0 || targets.length === 0) {
       return
     }
 
@@ -202,7 +238,7 @@ export function SkillsTab({ onRefresh, profile, query, skills }: SkillsTabProps)
   // One switch line covering enable-all/disable-all.
   const bulkSwitch: ListStripMenuToggle = {
     checked: allEnabled,
-    disabled: bulkBusy,
+    disabled: bulkBusy || pending.size > 0,
     label: t.skills.all,
     onToggle: checked =>
       void bulkApply(
@@ -231,7 +267,7 @@ export function SkillsTab({ onRefresh, profile, query, skills }: SkillsTabProps)
   }
 
   const saveSkillEdit = async () => {
-    if (!skillEditor) {
+    if (!skillEditor || skillSaving) {
       return
     }
 
@@ -265,6 +301,7 @@ export function SkillsTab({ onRefresh, profile, query, skills }: SkillsTabProps)
       title={<span className="text-[0.68rem] font-normal text-muted-foreground/60">{skillEditor.name}/SKILL.md</span>}
     >
       <CodeEditor
+        disabled={skillSaving}
         filePath="SKILL.md"
         initialValue={skillEditor.content}
         key={skillEditor.name}
@@ -277,7 +314,7 @@ export function SkillsTab({ onRefresh, profile, query, skills }: SkillsTabProps)
 
   return (
     <>
-      {visibleSkills.length === 0 && visibleOfficial.length === 0 ? (
+      {skills.length === 0 && visibleOfficial.length === 0 ? (
         <CapabilityEmpty noun="skills" query={query} />
       ) : (
         <MasterDetail pane={skillEditorPane} resizeId="capabilities-split" split="wide">
@@ -289,7 +326,7 @@ export function SkillsTab({ onRefresh, profile, query, skills }: SkillsTabProps)
                   <ListStripMenu
                     items={[
                       {
-                        disabled: bulkBusy,
+                        disabled: bulkBusy || pending.size > 0,
                         label: t.skills.disableUnused,
                         onSelect: () => void disableUnused()
                       }
@@ -301,30 +338,93 @@ export function SkillsTab({ onRefresh, profile, query, skills }: SkillsTabProps)
               />
             }
           >
-            {visibleSkills.map(skill => (
-              <CapRow
-                active={activeOfficial === null && activeSkill?.name === skill.name}
-                busy={bulkBusy}
-                enabled={skill.enabled}
-                key={skill.name}
-                meta={usageOf(skill) > 0 ? `×${compactNumber(usageOf(skill))}` : undefined}
-                onSelect={() => {
-                  setSelectedSkill(skill.name)
-                  setSelectedOfficial(null)
-                }}
-                onToggle={enabled => void handleToggleSkill(skill, enabled)}
-                subtitle={skillSubtitle(skill)}
-                title={skill.name}
-                toggleLabel={skill.name}
+            <div className="flex flex-wrap gap-2 pb-2">
+              <InventorySelect
+                label={c.source}
+                onChange={setSource}
+                options={[
+                  { value: 'all', label: c.all },
+                  ...[...new Set(skills.map(row => row.provenance))]
+                    .filter((value): value is NonNullable<SkillInfo['provenance']> => Boolean(value))
+                    .map(value => ({
+                      value,
+                      label:
+                        value === 'agent'
+                          ? c.learned
+                          : value === 'bundled'
+                            ? c.builtin
+                            : value === 'external'
+                              ? c.external
+                              : c.hub
+                    }))
+                ]}
+                value={source}
               />
-            ))}
+              <InventorySelect
+                label={c.status}
+                onChange={setStatus}
+                options={[
+                  { value: 'all', label: c.status },
+                  { value: 'enabled', label: c.enabled },
+                  { value: 'disabled', label: c.disabled }
+                ]}
+                value={status}
+              />
+              <InventorySelect
+                label={c.name}
+                onChange={setSort}
+                options={[
+                  { value: 'usage', label: c.usage },
+                  { value: 'name', label: c.name }
+                ]}
+                value={sort}
+              />
+              <InventorySelect
+                label={c.category}
+                onChange={setCategory}
+                options={[
+                  { value: 'all', label: c.category },
+                  ...[...new Set(skills.map(categoryFor))].sort().map(value => ({ value, label: prettyName(value) }))
+                ]}
+                value={category}
+              />
+            </div>
+            {[true, false].map(learned => {
+              const group = visibleSkills.filter(skill => (skill.provenance === 'agent') === learned)
+
+              return group.length ? (
+                <section key={String(learned)}>
+                  <h2 className="px-2 pt-3 pb-1 text-xs font-medium">{learned ? c.learned : c.other}</h2>
+                  <InventoryItems>
+                    {group.map(skill => (
+                      <CapRow
+                        active={activeOfficial === null && activeSkill?.name === skill.name}
+                        busy={bulkBusy || pending.has(skill.name)}
+                        description={skill.description}
+                        enabled={skill.enabled}
+                        key={skill.name}
+                        meta={usageOf(skill) > 0 ? `×${compactNumber(usageOf(skill))}` : undefined}
+                        onSelect={() => {
+                          setSelectedSkill(skill.name)
+                          setSelectedOfficial(null)
+                        }}
+                        onToggle={enabled => void handleToggleSkill(skill, enabled)}
+                        subtitle={skillSubtitle(skill, c.learnedItem)}
+                        title={skill.name}
+                        toggleLabel={skill.name}
+                      />
+                    ))}
+                  </InventoryItems>
+                </section>
+              ) : null
+            })}
             {visibleOfficial.length > 0 && (
               <div className="flex h-7 shrink-0 items-end px-2 pb-1 text-[0.62rem] font-medium uppercase tracking-wide text-(--ui-text-quaternary)">
                 {t.skills.officialCatalog}
               </div>
             )}
             {visibleOfficial.map(skill => {
-              const installing = runningInstalls.has(skill.identifier)
+              const installing = runningInstalls.has(hubActionKey(skill.identifier, profile))
 
               return (
                 <CapRow
@@ -347,7 +447,7 @@ export function SkillsTab({ onRefresh, profile, query, skills }: SkillsTabProps)
           <DetailColumn footer={t.skills.changesApplyNewSessions}>
             {activeOfficial ? (
               <OfficialSkillDetail
-                installing={runningInstalls.has(activeOfficial.identifier)}
+                installing={runningInstalls.has(hubActionKey(activeOfficial.identifier, profile))}
                 onInstall={() => handleInstallOfficial(activeOfficial)}
                 profile={profile}
                 skill={activeOfficial}
@@ -369,7 +469,8 @@ export function SkillsTab({ onRefresh, profile, query, skills }: SkillsTabProps)
         <ArchiveSkillConfirmDialog
           onApply={() => {
             const name = archiveTarget
-            const snapshot = skills
+            const archived = skills.find(skill => skill.name === name)
+            const position = skills.findIndex(skill => skill.name === name)
 
             setSkills(current => current?.filter(skill => skill.name !== name) ?? current)
             invalidateSlashCompletions()
@@ -378,7 +479,17 @@ export function SkillsTab({ onRefresh, profile, query, skills }: SkillsTabProps)
               setSkillEditor(null)
             }
 
-            return () => setSkills(() => snapshot)
+            return () =>
+              setSkills(current => {
+                if (!archived || !current || current.some(skill => skill.name === name)) {
+                  return current
+                }
+
+                const restored = [...current]
+                restored.splice(Math.max(0, position), 0, archived)
+
+                return restored
+              })
           }}
           onClose={() => setArchiveTarget(null)}
           onFailure={(err, name) => notifyError(err, name)}

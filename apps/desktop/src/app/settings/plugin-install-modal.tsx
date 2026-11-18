@@ -22,6 +22,7 @@ import { Puzzle } from '@/lib/icons'
 import { AlertTriangle, Loader2 } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { COMMIT_SHA_RE } from '@/store/agent-plugins'
+import { requestGatewayForAgent } from '@/store/gateway'
 import {
   $pluginInstallRequest,
   closePluginInstallRequest,
@@ -283,9 +284,22 @@ interface InstallViewProps {
 function InstallView({ request, installing, onInstallingChange }: InstallViewProps) {
   const { t } = useI18n()
   const m = t.settings.plugins.installModal
-  const { requestGateway } = useGatewayRequest()
+  const { requestGateway: ambientRequest } = useGatewayRequest()
+
+  const requestGateway: typeof ambientRequest = (method, params, timeout) =>
+    request.connectionId
+      ? requestGatewayForAgent(
+          request.connectionId,
+          String(params?.profile || request.profile || 'default'),
+          method,
+          params,
+          timeout
+        )
+      : ambientRequest(method, params, timeout)
+
   const navigate = useNavigate()
-  const remote = useStore($connection)?.mode === 'remote'
+  const ambientRemote = useStore($connection)?.mode === 'remote'
+  const remote = request.connectionId ? request.connectionId !== 'local' : ambientRemote
   const activeProfile = useStore($activeGatewayProfile)
   const profiles = useStore($profiles)
   const profileScope = useStore($profileScope)
@@ -375,7 +389,11 @@ function InstallView({ request, installing, onInstallingChange }: InstallViewPro
             profile={{
               value: targetProfile,
               label: targetLabel,
-              options: targetInfo ? profiles : [...profiles, { name: targetProfile }],
+              options: request.connectionId
+                ? [{ name: targetProfile }]
+                : targetInfo
+                  ? profiles
+                  : [...profiles, { name: targetProfile }],
               onChange: setTargetProfile
             }}
             remote={remote}

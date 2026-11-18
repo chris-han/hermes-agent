@@ -1,6 +1,5 @@
 /**
- * The real skills hub page embedded as a picker, plus its offline search
- * fallback.
+ * Native skill discovery and installation for the owning Bot profile.
  *
  * A leaf: the advanced profile editor and the create dialog both mount it, and
  * it reaches back into neither.
@@ -12,25 +11,6 @@ import { useEffect, useRef, useState } from 'react'
 import { useBots } from './i18n'
 import { requestForBot } from './routing'
 import type { RosterRow } from './types'
-
-// ── skills hub section: the REAL hub page (docs) embedded as a picker ──────
-// https://hermes-agent.nousresearch.com/docs/skills?embed=picker hides the
-// docs chrome and adds "+ Add to this Agent" per card, posting
-// {type: 'hermes-skill-pick', ...} to us (hermes-agent#86243). We validate
-// the origin, install via skills.manage, and bubble onInstalled so the
-// checklist above gains the row. Search-box fallback kept for offline use.
-
-const HUB_ORIGIN = 'https://hermes-agent.nousresearch.com'
-const FALLBACK_HUB_ORIGIN = 'https://nousresearch.github.io'
-const HUB_PICKER_URL = HUB_ORIGIN + '/docs/skills?embed=picker'
-const FALLBACK_HUB_PICKER_URL = FALLBACK_HUB_ORIGIN + '/hermes-agent/docs/skills?embed=picker'
-// A WAF-blocked or unreachable docs host must not delay the fallback longer
-// than this — the probe only decides which origin to embed, never blocks it.
-const HUB_PROBE_TIMEOUT_MS = 8_000
-
-function isHubOrigin(origin: string) {
-  return origin === HUB_ORIGIN || origin === FALLBACK_HUB_ORIGIN
-}
 
 /** One `skills.manage action=search` hit. */
 interface HubSkillResult {
@@ -52,85 +32,23 @@ export function HubSkillsSection({ bot, onInstalled }: HubSkillsSectionProps) {
   const [searching, setSearching] = useState(false)
   const [installing, setInstalling] = useState<null | string>(null)
   const [installed, setInstalled] = useState<Record<string, boolean>>({})
-  const [browseHub, setBrowseHub] = useState(false)
-  const [hubPickerUrl, setHubPickerUrl] = useState(HUB_PICKER_URL)
-  const installRef = useRef<((name: string, displayName?: string) => Promise<void>) | null>(null)
-  const frameRef = useRef<HTMLIFrameElement | null>(null)
-
-  // Vercel's WAF denies some residential IP ranges for the whole docs domain,
-  // leaving the pane on a block page (#118203). The equivalent GitHub Pages
-  // deployment serves the same picker, so probe the primary before each
-  // browse session and fall back when it is unreachable or refuses us. The
-  // probe carries its own deadline — a hanging connection must not stall the
-  // fallback.
+  const [error, setError] = useState(false)
+  const generation = useRef(0)
+  const searchGeneration = useRef(0)
+  const installLock = useRef(false)
+  // eslint-disable-next-line no-restricted-syntax -- Cancellation epoch for stale async work, not a mirror of reactive state.
   useEffect(() => {
-    if (!browseHub) {
-      return undefined
-    }
-
-    let mounted = true
-
-    void fetch(HUB_PICKER_URL, {
-      method: 'HEAD',
-      signal: AbortSignal.timeout(HUB_PROBE_TIMEOUT_MS)
-    })
-      .then(response => {
-        if (mounted && !response.ok) {
-          setHubPickerUrl(FALLBACK_HUB_PICKER_URL)
-        }
-      })
-      .catch(() => {
-        if (mounted) {
-          setHubPickerUrl(FALLBACK_HUB_PICKER_URL)
-        }
-      })
+    generation.current += 1
+    setResults(null)
+    setInstalled({})
+    setInstalling(null)
+    setSearching(false)
+    installLock.current = false
 
     return () => {
-      mounted = false
+      generation.current += 1
     }
-  }, [browseHub])
-
-  // Picker messages from the embedded hub page. Origin- AND source-checked —
-  // only OUR frame may ask for an install (the hub origin alone would let any
-  // other window on it, e.g. an OAuth popup, trigger installs too); installs
-  // route through the same install() the search fallback uses.
-  useEffect(() => {
-    if (!browseHub) {
-      return undefined
-    }
-
-    const onMessage = (event: MessageEvent) => {
-      if (!isHubOrigin(event.origin)) {
-        return
-      }
-
-      if (!frameRef.current || event.source !== frameRef.current.contentWindow) {
-        return
-      }
-
-      const data = event.data
-
-      if (!data || data.type !== 'hermes-skill-pick' || !data.name) {
-        return
-      }
-
-      const target = String(data.identifier || data.name)
-
-      // Skill identifiers are slugs / owner-name paths — keep anything
-      // else out of skills.manage.
-      if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(target)) {
-        return
-      }
-
-      if (installRef.current) {
-        void installRef.current(target, String(data.name))
-      }
-    }
-
-    window.addEventListener('message', onMessage)
-
-    return () => window.removeEventListener('message', onMessage)
-  }, [browseHub])
+  }, [bot?.name, bot?.connectionId, bot?.targetProfile])
 
   const search = async () => {
     const q = query.trim()
@@ -139,30 +57,45 @@ export function HubSkillsSection({ bot, onInstalled }: HubSkillsSectionProps) {
       return
     }
 
+    const epoch = generation.current
+    const searchEpoch = ++searchGeneration.current
+    setError(false)
     setSearching(true)
     setResults(null)
 
     try {
-      const res: { results?: HubSkillResult[] } = await host.request('skills.manage', {
-        action: 'search',
-        query: q
-      })
+      const params = { action: 'search', query: q, ...(bot ? { profile: bot.name } : {}) }
+
+      const res: { results?: HubSkillResult[] } = await (bot
+        ? requestForBot(bot, 'skills.manage', params)
+        : host.request('skills.manage', params))
+
+      if (epoch !== generation.current || searchEpoch !== searchGeneration.current) {
+        return
+      }
 
       setResults(res.results || [])
     } catch {
-      setResults([])
+      if (epoch === generation.current) {
+        setError(true)
+        setResults(null)
+      }
     } finally {
-      setSearching(false)
+      if (epoch === generation.current) {
+        setSearching(false)
+      }
     }
   }
 
   const install = async (name: string, displayName?: string) => {
     const label = displayName || name
 
-    if (installing) {
+    if (installLock.current || installed[label]) {
       return
     }
 
+    installLock.current = true
+    const epoch = generation.current
     setInstalling(label)
 
     try {
@@ -175,7 +108,16 @@ export function HubSkillsSection({ bot, onInstalled }: HubSkillsSectionProps) {
         ...(bot ? { profile: bot.name } : {})
       }
 
-      await (bot ? requestForBot(bot, 'skills.manage', params) : host.request('skills.manage', params))
+      const result = await (bot ? requestForBot(bot, 'skills.manage', params) : host.request('skills.manage', params))
+
+      if (epoch !== generation.current) {
+        return
+      }
+
+      if (!result || (result as { installed?: boolean }).installed !== true) {
+        throw new Error('Install did not confirm success')
+      }
+
       setInstalled(prev => ({
         ...prev,
         [label]: true
@@ -189,73 +131,30 @@ export function HubSkillsSection({ bot, onInstalled }: HubSkillsSectionProps) {
         onInstalled(label)
       }
     } catch (err) {
-      host.notifyError(err, b.tools.installFailed(label))
+      if (epoch === generation.current) {
+        host.notifyError(err, b.tools.installFailed(label))
+      }
     } finally {
-      setInstalling(null)
+      if (epoch === generation.current) {
+        installLock.current = false
+        setInstalling(null)
+      }
     }
   }
-
-  installRef.current = install
 
   return (
     <div className="grid gap-1.5 border-t border-(--ui-stroke-secondary) pt-2">
       <div className="flex items-baseline justify-between gap-2">
         <div className="text-[0.7rem] font-medium text-(--ui-text-secondary)">{b.tools.skillsHub}</div>
-        <Button
-          className="text-[0.65rem] text-(--ui-text-quaternary) hover:text-(--ui-text-secondary)"
-          onClick={() => setBrowseHub(v => !v)}
-          size="inline"
-          variant="text"
-        >
-          {browseHub ? h.pickerHide : h.pickerBrowse}
-        </Button>
       </div>
-      {browseHub ? (
-        <div className="grid gap-1">
-          {/* Resizable viewport: native CSS resize handle (bottom-right */
-          /* corner) lets the user drag it larger/smaller. The iframe */
-          /* inside is rendered oversized and scaled DOWN (133% × 0.75) */
-          /* so the hub page starts zoomed out — we can't style the */
-          /* cross-origin page itself, but scaling the frame is ours. */}
-          <div
-            className="relative w-full max-w-full resize overflow-hidden border border-(--ui-stroke-secondary)"
-            style={{
-              height: 560,
-              minHeight: 240,
-              minWidth: 320,
-              borderRadius: 8
-            }}
-          >
-            <iframe
-              // The hub page needs three capabilities beyond the bare sandbox
-              // posture (#91612): same-origin so its own routing and storage
-              // work, popups so its external links (docs, GitHub, Discord)
-              // reach the OS browser — pinned by the main-process
-              // window-open-policy delegation, never a popup window — and
-              // clipboard-write for the Copy controls, granted only to the
-              // hub origins by the session permission handlers. The
-              // will-frame-navigate guard in main keeps this frame pinned to
-              // the picker URL.
-              allow="clipboard-write"
-              ref={frameRef}
-              sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-              src={hubPickerUrl}
-              style={{
-                width: '133.34%',
-                height: '133.34%',
-                border: 'none',
-                background: 'transparent',
-                transform: 'scale(0.75)',
-                transformOrigin: 'top left'
-              }}
-              title={b.tools.skillsHub}
-            />
-          </div>
-          <div className="px-1 text-[0.65rem] leading-4 text-(--ui-text-quaternary)">
-            {installing ? h.installStarted(installing) : `${h.pickerHint} ${b.tools.resizeHint}`}
-          </div>
+      {error && (
+        <div className="text-xs" role="alert">
+          {h.actionFailed}
+          <Button onClick={() => void search()} size="sm">
+            {h.search}
+          </Button>
         </div>
-      ) : null}
+      )}
       <div className="flex gap-1.5">
         <Input
           className="h-7 flex-1 text-xs"

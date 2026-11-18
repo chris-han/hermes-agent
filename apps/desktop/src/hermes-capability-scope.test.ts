@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { approvePairing, getMessagingPlatforms } from './api/messaging'
 import { getAuxiliaryModels, getGlobalModelInfo } from './api/models'
-import { getOfficialSkills, getSkillHubSources } from './api/skills'
+import { getOfficialSkills, getSkillHubSources, searchSkillsHub } from './api/skills'
 import { getTerminalBackends, getToolsetConfig, selectTerminalBackend } from './api/toolsets'
 import {
   getHermesConfigRecord,
@@ -43,6 +43,19 @@ describe('capability helpers are connection-scoped', () => {
   })
 
   const last = () => api.mock.calls.at(-1)?.[0] as { connectionId?: string; profile?: string; priority?: string }
+
+  it('routes native marketplace sources and search through the exact rendered connection/profile', async () => {
+    setApiRequestProfile('ambient')
+    setApiRequestConnection('wrong-backend')
+
+    for (const connectionId of ['local', 'remote-a']) {
+      const scope = { connectionId, profile: 'worker' }
+      await getSkillHubSources(scope)
+      expect(last()).toMatchObject(scope)
+      await searchSkillsHub('research', 'all', 100, scope)
+      expect(last()).toMatchObject(scope)
+    }
+  })
 
   it('omits both scopes when none are active (single-source users unaffected)', () => {
     void getSkills()

@@ -1,18 +1,13 @@
 import { useStore } from '@nanostores/react'
-import {
-  memo,
-  type ReactNode,
-  type PointerEvent as ReactPointerEvent,
-  useEffect,
-  useMemo,
-  useRef,
-  useState
-} from 'react'
+import { memo, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react'
 
+import { setEnvVar } from '@/api/config'
 import { getToolsets, setToolsetEnabled } from '@/api/toolsets'
 import { useGatewayRequest } from '@/app/gateway/hooks/use-gateway-request'
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { SearchField } from '@/components/ui/search-field'
 import { Switch } from '@/components/ui/switch'
 import { Tip } from '@/components/ui/tooltip'
 import { $pluginRecords, enablePackageDesktopHalf, type PluginRecord, setPluginEnabled } from '@/contrib/plugins-store'
@@ -20,17 +15,18 @@ import { useContributions } from '@/contrib/react/use-contributions'
 import { discoverRuntimePlugins, uninstallDiskPlugin } from '@/contrib/runtime-loader'
 import { pluginSettingsRouteHref, SETTINGS_PLUGINS_AREA } from '@/contrib/settings-pages'
 import type { ProfileScope } from '@/hermes'
+import { profileScopeKey } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { DESKTOP_PLUGIN_TOOLSETS } from '@/lib/desktop-toolsets'
 import { triggerHaptic } from '@/lib/haptics'
 import { FolderOpen, Loader2, Monitor, Package, RefreshCw, Trash2 } from '@/lib/icons'
-import { CATALOG_ORIGIN, CATALOG_PICKER_URL } from '@/lib/plugin-catalog'
 import { queryClient } from '@/lib/query-client'
 import { cn } from '@/lib/utils'
 import {
   $agentPluginBusy,
   $agentPlugins,
   $agentPluginsError,
+  $agentPluginsOwner,
   $agentPluginsStatus,
   type AgentPluginRow,
   type AgentPluginServerState,
@@ -39,52 +35,25 @@ import {
   isDesktopRelevantPlugin,
   loadAgentPlugins,
   removeAgentPlugin,
+  saveAgentPluginSettings,
   toggleAgentPlugin,
   updateAgentPlugin
 } from '@/store/agent-plugins'
 import { confirm } from '@/store/confirm'
+import { requestGatewayForAgent } from '@/store/gateway'
 import { notify, notifyError } from '@/store/notifications'
-import { $paneHeightOverride, setPaneHeightOverride } from '@/store/panes'
-import { openCatalogPluginInstall } from '@/store/plugin-catalog-install'
 import { openPluginInstallRequest } from '@/store/plugin-install-request'
 import { $connection } from '@/store/session'
 
 import { PanelEmpty } from '../../overlays/panel'
+import { PluginSettingsForm } from '../../settings/plugin-settings-form'
 import { Pill } from '../../settings/primitives'
 import { useDeepLinkHighlight } from '../../settings/use-deep-link-highlight'
+import { useInventoryCards } from '../inventory'
 import { TOOLSETS_QUERY_KEY } from '../toolsets/toolsets-data'
 
+import { NativePluginCatalog } from './native-catalog'
 import { mergePluginPackages, type PackageKind, type PluginPackage } from './plugin-packages'
-
-// The REAL Plugin Catalog page (docs site) embedded as a one-click picker —
-// the same pattern as the Skills tab's EmbeddedHubPicker. `?embed=picker`
-// hides the docs chrome and adds "+ Add to this Agent" per card, which posts
-//   { type: 'hermes-plugin-pick', name, repo, sha, subdir, tier, installCmd }
-// to the parent window. We validate the origin and open the shared
-// dual-target install modal (agent half → catalog-pinned install into the
-// scoped profile; desktop half → this app), so unified packages install both
-// halves in one flow. URLs live in `@/lib/plugin-catalog` so the
-// `hermes://plugin/install?catalog=` deep link resolves against the same feed.
-
-// Catalog viewport: persisted through the shared pane store, dragged from the
-// section's TOP edge ("pull the catalog up"), clamped so neither the catalog
-// nor the plugin list above can vanish. Same contract as EmbeddedHubPicker.
-const CATALOG_PANE_ID = 'capabilities-plugin-catalog'
-const CATALOG_DEFAULT_PX = 380
-const CATALOG_MIN_PX = 120
-const CATALOG_MAX_VH = 0.75
-const CATALOG_COLLAPSED_PX = 4
-const CATALOG_LIST_RESERVED_PX = 176
-
-interface PluginPickMessage {
-  installCmd?: string
-  name?: string
-  repo?: string
-  sha?: string
-  subdir?: string
-  tier?: string
-  type?: string
-}
 
 /** Deep-link anchor for a package row (`/capabilities?tab=plugins&plugin=<key>`).
  *  Accepts the agent key, the agent name, or the desktop record id. */
@@ -137,7 +106,7 @@ async function rescanAll(requestGateway: GatewayRequest, scope: null | string) {
  *  half of a unified package into the scoped profile (the desktop half is
  *  already here). Provenance comes from the package marker Electron stamped
  *  when it copied the half out (catalog sidecar or git remote). */
-function installAgentHalfHere(record: PluginRecord, profile: null | string) {
+function installAgentHalfHere(record: PluginRecord, profile: null | string, connectionId?: string) {
   const origin = record.packageOrigin
 
   if (!origin?.repo) {
@@ -145,6 +114,7 @@ function installAgentHalfHere(record: PluginRecord, profile: null | string) {
   }
 
   openPluginInstallRequest({
+    connectionId,
     catalogName: origin.catalogName,
     legacyHint: 'agent',
     profile,
@@ -218,7 +188,7 @@ function ProvenancePill({ pkg }: { pkg: PluginPackage }) {
 
 /** Column widths shared by the header and every row so the two control
  *  columns line up down the page like a table. */
-const HALF_COL = 'flex w-36 shrink-0 items-center gap-1.5'
+const HALF_COL = 'flex max-w-full flex-wrap items-center gap-1.5 sm:w-36 sm:shrink-0'
 
 /** One control cell; `label` is the accessible name for screen readers only
  *  (the visible column label lives once, in the header). */
@@ -247,7 +217,8 @@ function PackageRow({
   onAgentToggle,
   onAgentUpdate,
   onAgentRemove,
-  onDesktopRemove
+  onDesktopRemove,
+  onConfigure
 }: {
   pkg: PluginPackage
   scope: null | string
@@ -257,6 +228,7 @@ function PackageRow({
   onAgentToggle: (row: AgentPluginRow, enable: boolean) => void
   onAgentUpdate: (row: AgentPluginRow) => void
   onAgentRemove: (row: AgentPluginRow) => void
+  onConfigure: (row: AgentPluginRow) => void
   onDesktopRemove: (record: PluginRecord) => void
 }) {
   const { t } = useI18n()
@@ -273,6 +245,12 @@ function PackageRow({
   const hasSettings = desktopSettings || agentSettings
 
   const openSettings = () => {
+    if (profile && typeof profile === 'object' && agentSettings && agent) {
+      onConfigure(agent)
+
+      return
+    }
+
     // A desktop page absorbs the package's schema form as a sub-page, so its
     // plugin id is the one entry that covers both halves. The link carries
     // the profile THIS page has selected: Settings keeps its own scope, and
@@ -297,7 +275,10 @@ function PackageRow({
   const desktopRemovable = desktop?.kind === 'disk' && !desktop.packageName && !agent
   // Electron's desktop-half reconcile only walks THIS machine's homes, so a
   // package installed on a remote backend can never materialize here (#114079).
-  const remoteBackend = useStore($connection)?.mode === 'remote'
+  const ambientRemote = useStore($connection)?.mode === 'remote'
+
+  const remoteBackend =
+    profile && typeof profile === 'object' && profile.connectionId ? profile.connectionId !== 'local' : ambientRemote
 
   // #96969: when the feature's agent-side tools live in a toolset (the
   // built-in Kanban board has no agent-plugin half), the Desktop switch flips
@@ -351,7 +332,7 @@ function PackageRow({
   return (
     <>
       <div
-        className="flex items-center gap-3 border-b border-(--ui-stroke-tertiary) px-3 py-2.5 last:border-b-0"
+        className="flex flex-wrap items-center gap-3 border-b border-(--ui-stroke-tertiary) px-3 py-2.5 last:border-b-0"
         data-testid={`plugin-row-${pkg.key}`}
         id={pluginElementId(agent?.key ?? agent?.name ?? desktop?.id ?? pkg.key)}
         role="row"
@@ -509,7 +490,13 @@ function PackageRow({
                 <Button
                   className="h-5 px-1.5 text-[0.65rem]"
                   disabled={!desktop.packageOrigin?.repo}
-                  onClick={() => installAgentHalfHere(desktop, scope)}
+                  onClick={() =>
+                    installAgentHalfHere(
+                      desktop,
+                      scope,
+                      profile && typeof profile === 'object' ? (profile.connectionId ?? undefined) : undefined
+                    )
+                  }
                   size="xs"
                   variant="outline"
                 >
@@ -545,10 +532,39 @@ export const PluginsTab = memo(function PluginsTab({
   const { t } = useI18n()
   const p = t.skills.plugins
   const d = t.settings.plugins
-  const { requestGateway } = useGatewayRequest()
+  const [query, setQuery] = useState('')
+  const [configuring, setConfiguring] = useState<AgentPluginRow | null>(null)
+  const { requestGateway: ambientRequest } = useGatewayRequest()
+  const cards = useInventoryCards()
+  const ownerKey = profileScopeKey(profile)
+  const connectionId = profile && typeof profile === 'object' ? profile.connectionId : null
+  const profileName = profileParam(profile)
+
+  const send: GatewayRequest = useCallback(
+    (method, params, timeout) => {
+      if (connectionId) {
+        return requestGatewayForAgent(connectionId, profileName || 'default', method, params, timeout)
+      }
+
+      return timeout === undefined ? ambientRequest(method, params) : ambientRequest(method, params, timeout)
+    },
+    [ambientRequest, connectionId, profileName]
+  )
+
+  const requestGateway = useMemo(
+    () => Object.assign(send, { capabilityOwner: connectionId ?? '' }),
+    [send, connectionId]
+  )
 
   const desktopRecords = useStore($pluginRecords)
-  const agentRows = useStore($agentPlugins)
+  const allAgentRows = useStore($agentPlugins)
+  const loadedOwner = useStore($agentPluginsOwner)
+
+  const agentRows = useMemo(
+    () => (loadedOwner === `${connectionId ?? ''}::${profileName ?? ''}` ? allAgentRows : []),
+    [loadedOwner, connectionId, profileName, allAgentRows]
+  )
+
   const status = useStore($agentPluginsStatus)
   const error = useStore($agentPluginsError)
   const busyKey = useStore($agentPluginBusy)
@@ -561,86 +577,14 @@ export const PluginsTab = memo(function PluginsTab({
   }, [requestGateway, scope])
 
   const packages = useMemo(
-    () => mergePluginPackages(Object.values(desktopRecords), agentRows.filter(isDesktopRelevantPlugin)),
-    [agentRows, desktopRecords]
+    () =>
+      mergePluginPackages(Object.values(desktopRecords), agentRows.filter(isDesktopRelevantPlugin))
+        .filter(pkg => `${pkg.name} ${pkg.description}`.toLowerCase().includes(query.toLowerCase()))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [agentRows, desktopRecords, query]
   )
 
   useDeepLinkHighlight({ param: 'plugin', ready: () => true, elementId: pluginElementId })
-
-  // Catalog picker viewport (persisted height, collapse toggle, top-edge sash).
-  const heightOverride = useStore($paneHeightOverride(CATALOG_PANE_ID))
-  const height = heightOverride ?? CATALOG_DEFAULT_PX
-  const open = height > CATALOG_COLLAPSED_PX
-  const [pickerMounted, setPickerMounted] = useState(open)
-  const [dragging, setDragging] = useState(false)
-  const sectionRef = useRef<HTMLElement>(null)
-
-  if (open && !pickerMounted) {
-    setPickerMounted(true)
-  }
-
-  const startDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) {
-      return
-    }
-
-    event.preventDefault()
-    const startY = event.clientY
-    const startHeight = height
-    const column = sectionRef.current?.parentElement
-    const columnMax = column ? column.clientHeight - CATALOG_LIST_RESERVED_PX : Number.POSITIVE_INFINITY
-    const max = Math.max(CATALOG_MIN_PX, Math.round(Math.min(window.innerHeight * CATALOG_MAX_VH, columnMax)))
-    setDragging(true)
-
-    const onMove = (move: globalThis.PointerEvent) => {
-      setPaneHeightOverride(
-        CATALOG_PANE_ID,
-        Math.round(Math.min(max, Math.max(CATALOG_MIN_PX, startHeight + (startY - move.clientY))))
-      )
-    }
-
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove)
-      setDragging(false)
-    }
-
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp, { once: true })
-  }
-
-  useEffect(() => {
-    if (!open) {
-      return undefined
-    }
-
-    const onMessage = (event: MessageEvent) => {
-      if (event.origin !== CATALOG_ORIGIN) {
-        return
-      }
-
-      const data = event.data as null | PluginPickMessage
-
-      if (!data || data.type !== 'hermes-plugin-pick' || !data.name || !data.repo) {
-        return
-      }
-
-      // Already-installed short-circuit + the dialog itself live in the shared
-      // helper so a catalog deep link behaves identically to this pick.
-      openCatalogPluginInstall(
-        {
-          name: String(data.name),
-          repo: String(data.repo),
-          sha: data.sha ? String(data.sha) : undefined,
-          subdir: data.subdir ? String(data.subdir) : undefined
-        },
-        scope
-      )
-    }
-
-    window.addEventListener('message', onMessage)
-
-    return () => window.removeEventListener('message', onMessage)
-  }, [open, p, scope])
 
   const agentBusy = (row: AgentPluginRow) => busyKey === (row.key ?? row.name) || busyKey === row.name
 
@@ -655,7 +599,13 @@ export const PluginsTab = memo(function PluginsTab({
           </p>
           <div className="flex shrink-0 items-center gap-1">
             <Button
-              onClick={() => openPluginInstallRequest({ profile: scope, repo: '' })}
+              onClick={() =>
+                openPluginInstallRequest({
+                  profile: scope,
+                  repo: '',
+                  connectionId: typeof profile === 'object' && profile ? (profile.connectionId ?? undefined) : undefined
+                })
+              }
               size="sm"
               type="button"
               variant="secondary"
@@ -690,6 +640,9 @@ export const PluginsTab = memo(function PluginsTab({
           </div>
         </div>
 
+        <div className="px-3 pb-2">
+          <SearchField onChange={setQuery} placeholder={t.skills.tabPlugins} value={query} />
+        </div>
         {status === 'error' ? (
           <PanelEmpty
             action={
@@ -703,15 +656,21 @@ export const PluginsTab = memo(function PluginsTab({
           />
         ) : packages.length === 0 && status === 'ready' ? (
           <p className="px-3 py-3 text-[length:var(--conversation-caption-font-size)] text-(--ui-text-tertiary)">
-            {p.emptyAll} {p.emptyHint}
+            {query.trim() ? (
+              t.skills.hub.noResults
+            ) : (
+              <>
+                {p.emptyAll} {p.emptyHint}
+              </>
+            )}
           </p>
         ) : (
-          <div className="flex flex-col" role="table">
+          <div className={cards ? 'grid grid-cols-1 gap-3 p-3 lg:grid-cols-2' : 'flex flex-col'} role="table">
             {/* Column header: the visible labels for the two control columns,
                 aligned with the cells below. The profile selector sits INSIDE
                 the Agent header so it visibly governs only that column. */}
             <div
-              className="flex items-center gap-3 border-y border-(--ui-stroke-tertiary) bg-(--ui-bg-quinary) px-3 py-1.5 text-[0.68rem] text-(--ui-text-tertiary)"
+              className="col-span-full flex flex-wrap items-center gap-3 border-y border-(--ui-stroke-tertiary) bg-(--ui-bg-quinary) px-3 py-1.5 text-[0.68rem] text-(--ui-text-tertiary)"
               role="row"
             >
               <div className="min-w-0 flex-1" role="columnheader" />
@@ -795,6 +754,7 @@ export const PluginsTab = memo(function PluginsTab({
                     }
                   )
                 }}
+                onConfigure={setConfiguring}
                 onDesktopRemove={record => {
                   void confirm({
                     confirmLabel: p.uninstall,
@@ -823,67 +783,54 @@ export const PluginsTab = memo(function PluginsTab({
             ))}
           </div>
         )}
-      </div>
 
-      <section
-        className="relative flex min-h-9 flex-col overflow-hidden border-t border-(--ui-stroke-secondary)"
-        ref={sectionRef}
-      >
-        <div
-          className="group/catsash absolute inset-x-0 top-0 z-10 h-1 -translate-y-1/2 cursor-row-resize"
-          data-testid="plugin-catalog-sash"
-          onDoubleClick={() => setPaneHeightOverride(CATALOG_PANE_ID, undefined)}
-          onPointerDown={startDrag}
-        >
-          <div
-            className={cn(
-              'absolute inset-x-0 top-1/2 h-px -translate-y-1/2 transition-colors',
-              dragging ? 'bg-(--ui-stroke-secondary)' : 'group-hover/catsash:bg-(--ui-stroke-secondary)'
-            )}
-          />
-        </div>
-        <div className="flex shrink-0 items-center justify-between px-3 py-1.5">
-          <span className="text-[0.62rem] font-medium tracking-wide uppercase text-(--ui-text-quaternary)">
-            {p.catalogTitle}
-          </span>
-          <Button onClick={() => setPaneHeightOverride(CATALOG_PANE_ID, open ? 0 : undefined)} size="xs" variant="text">
-            {open ? p.catalogHide : p.catalogBrowse}
-          </Button>
-        </div>
-        {pickerMounted && (
-          <div className={cn('flex min-h-0 flex-col gap-1 px-3 pb-2', !open && 'hidden')}>
-            <div
-              style={{
-                border: '1px solid var(--ui-stroke-secondary)',
-                borderRadius: 8,
-                flex: `0 1 ${height}px`,
-                maxWidth: '100%',
-                minHeight: 0,
-                minWidth: 320,
-                overflow: 'hidden',
-                position: 'relative',
-                width: '100%'
-              }}
-            >
-              <iframe
-                sandbox="allow-scripts allow-same-origin"
-                src={CATALOG_PICKER_URL}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  height: '133.34%',
-                  pointerEvents: dragging ? 'none' : 'auto',
-                  transform: 'scale(0.75)',
-                  transformOrigin: 'top left',
-                  width: '133.34%'
+        {configuring && (
+          <Dialog
+            onOpenChange={open => {
+              if (!open) {
+                setConfiguring(null)
+              }
+            }}
+            open
+          >
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>
+                  {configuring.name} · {label}
+                </DialogTitle>
+              </DialogHeader>
+              <PluginSettingsForm
+                disabled={busyKey === configuring.key}
+                fields={configuring.settings_schema ?? []}
+                idPrefix={`capability-plugin-${ownerKey}-${configuring.key}`}
+                onSave={async changes => {
+                  const ok = await saveAgentPluginSettings(requestGateway, {
+                    key: configuring.key!,
+                    profile: scope,
+                    values: changes.values,
+                    secrets: changes.secrets,
+                    writeSecret: (env, value) => setEnvVar(env, value, profile),
+                    failMessage: p.settingsForm.saveFailed(configuring.name)
+                  })
+
+                  if (ok) {
+                    notify({ kind: 'success', message: p.settingsForm.saved(configuring.name) })
+                    setConfiguring(null)
+                  }
+
+                  return ok
                 }}
-                title={p.catalogTitle}
+                title={configuring.name}
               />
-            </div>
-            <p className="shrink-0 px-1 text-[0.65rem] leading-4 text-(--ui-text-quaternary)">{p.catalogHint}</p>
-          </div>
+            </DialogContent>
+          </Dialog>
         )}
-      </section>
+        <NativePluginCatalog
+          connectionId={typeof profile === 'object' && profile ? (profile.connectionId ?? undefined) : undefined}
+          profile={scope}
+          request={requestGateway}
+        />
+      </div>
     </div>
   )
 })

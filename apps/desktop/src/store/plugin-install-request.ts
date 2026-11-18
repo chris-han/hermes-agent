@@ -6,6 +6,7 @@ export type PluginInstallLegacyHint = 'agent' | 'desktop' | null
 /** Future metrics (opt-in): install count + success/failure, per repo. */
 export interface PluginInstallRequest {
   /** Empty opens repository entry; a supplied repo goes straight to inspection. */
+  connectionId?: string
   repo: string
   enable?: boolean
   force?: boolean

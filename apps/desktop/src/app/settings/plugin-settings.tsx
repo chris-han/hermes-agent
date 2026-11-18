@@ -27,6 +27,7 @@ import type { IconComponent } from '@/lib/icons'
 import {
   $agentPluginBusy,
   $agentPlugins,
+  $agentPluginsOwner,
   $agentPluginsProfile,
   $agentPluginsStatus,
   isDesktopRelevantPlugin,
@@ -100,7 +101,8 @@ function useOwnedAgentPlugins(owner: null | string) {
   const rows = useStore($agentPlugins)
   const loadedFor = useStore($agentPluginsProfile)
   const status = useStore($agentPluginsStatus)
-  const owned = loadedFor === owner
+  const loadedOwner = useStore($agentPluginsOwner)
+  const owned = loadedFor === owner && (loadedOwner === undefined || loadedOwner === `::${owner ?? ''}`)
 
   return { owned, rows: owned ? rows : [], settled: status === 'error' || (status === 'ready' && owned), status }
 }

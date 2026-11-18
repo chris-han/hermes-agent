@@ -2419,6 +2419,24 @@
       }
     },
     {
+      "name": "plugins.catalog.list",
+      "summary": "Native read-only discovery using the install catalog and removal policy.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/ProfileParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PluginCatalogListResult"
+        }
+      }
+    },
+    {
       "name": "plugins.catalog.lookup",
       "summary": "One curated plugin-catalog entry by name, from the backend's live catalog (cached, with the in-tree fallback and kill list); backs hermes://plugin/install?catalog= deep links.",
       "params": [
@@ -27713,6 +27731,62 @@
           "key"
         ],
         "title": "PluginActivation",
+        "type": "object"
+      },
+      "PluginCatalogListEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "repo": {
+            "title": "Repo",
+            "type": "string"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          },
+          "subdir": {
+            "title": "Subdir",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "repo",
+          "sha",
+          "subdir",
+          "description"
+        ],
+        "title": "PluginCatalogListEntry",
+        "type": "object"
+      },
+      "PluginCatalogListResult": {
+        "additionalProperties": false,
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/PluginCatalogListEntry"
+            },
+            "title": "Entries",
+            "type": "array"
+          }
+        },
+        "required": [
+          "available",
+          "entries"
+        ],
+        "title": "PluginCatalogListResult",
         "type": "object"
       },
       "PluginCatalogLookupEntry": {

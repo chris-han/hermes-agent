@@ -7,6 +7,8 @@ import { SearchField } from '@/components/ui/search-field'
 import { SegmentedControl } from '@/components/ui/segmented-control'
 import { useI18n } from '@/i18n'
 
+import { useInventoryCards } from '../inventory'
+
 import { ConnectorRowCard } from './connector-row-card'
 import { cardKey, EMPTY_CONNECTORS_FILTER } from './derive'
 import { derivePage, showsAttentionFirst } from './derive-page'
@@ -183,6 +185,7 @@ function Group({
   where: string
 }) {
   const { t } = useI18n()
+  const cards = useInventoryCards()
   const copy = t.connectorsPage.group
 
   return (
@@ -197,7 +200,7 @@ function Group({
         {group.id === 'off' ? <Note>{copy.offNote}</Note> : null}
       </header>
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className={cards ? 'grid gap-3 sm:grid-cols-2' : 'grid gap-1'}>
         {group.cards.map(card => {
           const key = cardKey(card)
 
