@@ -105,6 +105,24 @@ def test_classify_network_failure_stays_generic():
     assert not isinstance(err, ResolutionConflict)
 
 
+def test_missing_core_build_tool_is_index_error_not_plugin_conflict():
+    from pm.workspace import ResolutionConflict, classify_uv_failure
+
+    diagnostics = [
+        ("No solution found when resolving: setuptools==83.0.0, wheel. "
+         "Because setuptools was not found in the package registry and you require "
+         "setuptools==83.0.0, we can conclude that your requirements are unsatisfiable."),
+        ("No solution found when resolving: setuptools==83.0.0, wheel. "
+         "Because setuptools was not found in the cache and you require "
+         "setuptools==83.0.0. Packages were unavailable because the network was disabled."),
+    ]
+    for output in diagnostics:
+        err = classify_uv_failure("sync", 1, output)
+        assert not isinstance(err, ResolutionConflict)
+        assert "package index or offline cache" in err.remedy
+        assert "setuptools==83.0.0" in str(err)
+
+
 def test_core_only_generation_carries_no_release_age_cutoff(layout):
     """A core-only install (hermes update) is a frozen sync: the cutoff there only gates the build
     tools uv fetches, and a mirror without upload times rejects every one of them (#135589)."""
