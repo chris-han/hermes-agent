@@ -26,6 +26,25 @@ it('remembers each tab view without losing the selected item', () => {
   expect(screen.getByTestId('inventory-items').getAttribute('data-view')).toBe('cards')
 })
 
+it('clamps a long toolset description once in cards while list keeps its compact subtitle', () => {
+  const description = 'A2A supports agent discovery and communication. '.repeat(30)
+
+  const view = render(
+    <CapabilityInventory tab="test-a2a-card-clamp">
+      <InventoryItems>
+        <InventoryRow active description={description} enabled onSelect={() => {}} subtitle={description} title="A2A" />
+      </InventoryItems>
+    </CapabilityInventory>
+  )
+
+  expect(screen.getAllByText(/A2A supports agent discovery/)).toHaveLength(1)
+  fireEvent.click(screen.getByRole('button', { name: 'Cards' }))
+  const summary = screen.getByText(/A2A supports agent discovery/)
+  expect(summary.className).toContain('line-clamp-2')
+  expect(screen.getAllByText(/A2A supports agent discovery/)).toHaveLength(1)
+  view.unmount()
+})
+
 it('uses one sliding Asimov selection indicator while preserving keyboard buttons', () => {
   const { container } = render(<CapabilityInventory tab="sliding-view"><span>Inventory</span></CapabilityInventory>)
   expect(container.querySelector('[data-slot="segmented-control-indicator"]')).not.toBeNull()
