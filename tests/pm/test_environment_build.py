@@ -820,3 +820,19 @@ def test_no_config_drops_bridged_index_settings_from_child_env(tmp_path):
     bridged = run()
     assert bridged.returncode == 1, "default path must keep the bridge"
     assert "UV_INDEX_URL" in bridged.stderr, bridged.stderr
+
+
+def test_explicit_offline_transport_survives_without_selecting_project_or_cache(tmp_path):
+    import io
+    from pm.environment import PythonEnvironment
+    child = ("import os,sys\n"
+             "assert os.environ.get('UV_OFFLINE')=='1'\n"
+             "assert 'UV_PROJECT' not in os.environ\n"
+             "assert os.environ['UV_CACHE_DIR']==sys.argv[1]\n")
+    for isolated in (False, True):
+        environment = PythonEnvironment(
+            uv=Path(sys.executable),python=Path(sys.executable),destination=tmp_path/'venv',
+            cache=tmp_path/'owned-cache',output=io.StringIO(),no_config=isolated,
+            env=dict(os.environ,UV_OFFLINE='1',UV_PROJECT='/poison/project',UV_CACHE_DIR='/poison/cache'))
+        result=environment._run(['-c',child,str(tmp_path/'owned-cache')],cwd=tmp_path,timeout=30)
+        assert result.returncode==0,result.stderr
