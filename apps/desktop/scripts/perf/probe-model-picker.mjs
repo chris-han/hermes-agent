@@ -2,7 +2,7 @@
 // the dropdown/dialog content paints, repeat. Run with --cpuprofile via the
 // harness runner once promoted; standalone for iteration.
 //   node scripts/perf/probe-model-picker.mjs [--port 9222] [--rounds 5]
-import { CDP } from './perf/lib/cdp.mjs'
+import { CDP } from './lib/cdp.mjs'
 
 const args = process.argv.slice(2)
 const flag = name => {
