@@ -81,13 +81,14 @@ interface SkillsTabProps {
   /** The (connection, profile) scope every read and write routes to. */
   profile: ProfileScope
   query: string
+  initialSelected?: string
   /** Page-level refresh: a saved skill edit reloads the same way the refresh
    *  hotkey does, counts and slash completions included. */
   onRefresh: () => void
 }
 
 /** The Skills tab: installed skills, official optional skills, and learned-skill editing. */
-export function SkillsTab({ onRefresh, profile, query, skills }: SkillsTabProps) {
+export function SkillsTab({ onRefresh, profile, query, skills, initialSelected }: SkillsTabProps) {
   const { t } = useI18n()
   const c = useInventoryCopy()
   const [source, setSource] = useState('all')
@@ -98,7 +99,7 @@ export function SkillsTab({ onRefresh, profile, query, skills }: SkillsTabProps)
   const [bulkBusy, setBulkBusy] = useState(false)
   const pendingWrites = useRef(new Set<string>())
   const [pending, setPending] = useState<Set<string>>(new Set())
-  const [selectedSkill, setSelectedSkill] = useState<string | null>(null)
+  const [selectedSkill, setSelectedSkill] = useState<string | null>(initialSelected ?? null)
   const [selectedOfficial, setSelectedOfficial] = useState<string | null>(null)
 
   const { data: officialData } = useQuery({

@@ -13,15 +13,17 @@ import { openCatalogPluginInstall } from '@/store/plugin-catalog-install'
 export function NativePluginCatalog({
   request,
   profile,
-  connectionId
+  connectionId,
+  initialQuery = ''
 }: {
+  initialQuery?: string
   request: GatewayRequest
   profile: string | null
   connectionId?: string
 }) {
   const { t } = useI18n()
   const c = useInventoryCopy()
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(initialQuery)
 
   const catalog = useQuery(
     {

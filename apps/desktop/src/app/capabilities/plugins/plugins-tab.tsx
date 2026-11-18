@@ -520,9 +520,11 @@ function PackageRow({
 export const PluginsTab = memo(function PluginsTab({
   profile,
   scopeSelector,
-  scopeLabel
+  scopeLabel,
+  initialQuery = ''
 }: {
   profile: ProfileScope
+  initialQuery?: string
   /** The Capabilities profile selector; rendered in the Agent column header so
    *  it visibly governs only that column. */
   scopeSelector?: ReactNode
@@ -532,7 +534,7 @@ export const PluginsTab = memo(function PluginsTab({
   const { t } = useI18n()
   const p = t.skills.plugins
   const d = t.settings.plugins
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(initialQuery)
   const [configuring, setConfiguring] = useState<AgentPluginRow | null>(null)
   const { requestGateway: ambientRequest } = useGatewayRequest()
   const cards = useInventoryCards()
@@ -827,6 +829,7 @@ export const PluginsTab = memo(function PluginsTab({
         )}
         <NativePluginCatalog
           connectionId={typeof profile === 'object' && profile ? (profile.connectionId ?? undefined) : undefined}
+          initialQuery={initialQuery}
           profile={scope}
           request={requestGateway}
         />

@@ -38,18 +38,19 @@ interface ToolsetsTabProps {
   /** The (connection, profile) scope every read and write routes to. */
   profile: ProfileScope
   query: string
+  initialSelected?: string
 }
 
 /** THE Tools tab: the toolset list with its usage badges, and the inspector
  *  that mounts each toolset's settings panels. */
-export function ToolsetsTab({ profile, query, toolsets }: ToolsetsTabProps) {
+export function ToolsetsTab({ profile, query, toolsets, initialSelected }: ToolsetsTabProps) {
   const { t } = useI18n()
   const toolsetsSortDesc = useStore($toolsetsSortDesc)
   const toolCalls = useToolCalls(profile)
   const [bulkBusy, setBulkBusy] = useState(false)
   const pendingWrites = useRef(new Set<string>())
   const [pending, setPending] = useState<Set<string>>(new Set())
-  const [selectedToolset, setSelectedToolset] = useState<string | null>(null)
+  const [selectedToolset, setSelectedToolset] = useState<string | null>(initialSelected ?? null)
 
   // Optimistic write-through against the scoped Tools key: toggles repaint
   // instantly; the next background refetch reconciles.

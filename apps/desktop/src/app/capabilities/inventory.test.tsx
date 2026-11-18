@@ -25,3 +25,11 @@ it('remembers each tab view without losing the selected item', () => {
   tab('test-skills')
   expect(screen.getByTestId('inventory-items').getAttribute('data-view')).toBe('cards')
 })
+
+it('uses one sliding Asimov selection indicator while preserving keyboard buttons', () => {
+  const { container } = render(<CapabilityInventory tab="sliding-view"><span>Inventory</span></CapabilityInventory>)
+  expect(container.querySelector('[data-slot="segmented-control-indicator"]')).not.toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Cards' }))
+  expect(screen.getByRole('button', { name: 'Cards' }).getAttribute('aria-pressed')).toBe('true')
+  expect(container.querySelectorAll('[data-slot="segmented-control-indicator"]')).toHaveLength(1)
+})

@@ -42,10 +42,12 @@ const toolsListKey = (card: ConnectorCardModel) => (card.residency === 'local' ?
 
 export interface ConnectorsTabProps {
   gateway: HermesGateway | null
+  query?: string
+  initialSelected?: string
   profile: ProfileScope
 }
 
-export function ConnectorsTab({ gateway, profile }: ConnectorsTabProps) {
+export function ConnectorsTab({ gateway, profile, query = '', initialSelected }: ConnectorsTabProps) {
   const { t } = useI18n()
   const copy = t.connectorsPage
 
@@ -54,8 +56,8 @@ export function ConnectorsTab({ gateway, profile }: ConnectorsTabProps) {
   const abandoned = useStore($abandonedConnects)
   const freeTier = useStore($freeTierStatus)
 
-  const [filter, setFilter] = useState<ConnectorsFilter>(EMPTY_CONNECTORS_FILTER)
-  const [openKey, setOpenKey] = useState<null | string>(null)
+  const [filter, setFilter] = useState<ConnectorsFilter>({ ...EMPTY_CONNECTORS_FILTER, query })
+  const [openKey, setOpenKey] = useState<null | string>(initialSelected ?? null)
 
   const hostedActions = useHostedActions(profile, hosted.accounts, {
     onStarted: card => setOpenKey(cardKey(card))

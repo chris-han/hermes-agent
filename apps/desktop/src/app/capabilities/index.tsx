@@ -1,5 +1,5 @@
 import type * as React from 'react'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 
 import { PageLoader } from '@/components/page-loader'
 import { Button } from '@/components/ui/button'
@@ -21,6 +21,7 @@ import { ConnectorsTab } from './connectors/connectors-tab'
 import { CapabilityInventory } from './inventory'
 import { PluginsTab } from './plugins/plugins-tab'
 import { CapabilityScopeSelector, useCapabilityScope } from './scope-selector'
+import { type CapabilitySearchHit, CapabilitySearchResults } from './search-results'
 import { MarketplaceTab } from './skills/marketplace-tab'
 import { SKILLS_QUERY_KEY, skillSearchTerms, useSkillsQuery } from './skills/skills-data'
 import { SkillsTab } from './skills/skills-tab'
@@ -73,6 +74,10 @@ export function CapabilitiesView({
   const gateway = useStoreSelector($gateway, g => (mode === 'connectors' ? g : null))
 
   const [query, setQuery] = useState('')
+  const [searchTarget, setSearchTarget] = useState<CapabilitySearchHit | null>(null)
+  const searchRoot = useRef<HTMLElement>(null)
+  const tabQuery = searchTarget?.name ?? ''
+  const searching = Boolean(query.trim()) && !searchTarget
 
   const scope = useCapabilityScope({ fixedConnection, fixedProfile })
 
@@ -129,22 +134,29 @@ export function CapabilitiesView({
   )
 
   const tabContent = {
-    marketplace: () => <MarketplaceTab key={scope.key} profile={scope.profile} query={query} />,
-    hub: () => <MarketplaceTab key={scope.key} profile={scope.profile} query={query} />,
+    marketplace: () => (
+      <MarketplaceTab initialSelected={searchTarget?.id} key={scope.key} profile={scope.profile} query={tabQuery} />
+    ),
+    hub: () => (
+      <MarketplaceTab initialSelected={searchTarget?.id} key={scope.key} profile={scope.profile} query={tabQuery} />
+    ),
     // The gateway instance backs ONLY the live `reload.mcp` RPC, and it is the
     // ACTIVE gateway's socket — for a scope pinned to a different backend that
     // (config edits still apply on that backend's next session).
     connectors: () => (
       <ConnectorsTab
         gateway={scope.crossBackend ? null : gateway}
+        initialSelected={searchTarget?.id}
         key={`connectors-${scope.key}`}
         profile={scope.profile}
+        query={tabQuery}
       />
     ),
     // Agent plugins for the scoped profile (selector in the section header),
     // app-level desktop plugins, and the docs catalog picker underneath.
     plugins: () => (
       <PluginsTab
+        initialQuery={tabQuery}
         key={`plugins-${scope.key}`}
         profile={scope.profile}
         scopeLabel={scope.label}
@@ -153,15 +165,22 @@ export function CapabilitiesView({
     ),
     skills: () => (
       <SkillsTab
+        initialSelected={searchTarget?.id}
         key={`skills-${scope.key}`}
         onRefresh={() => void refreshCapabilities()}
         profile={scope.profile}
-        query={query}
+        query={tabQuery}
         skills={skills ?? []}
       />
     ),
     toolsets: () => (
-      <ToolsetsTab key={`toolsets-${scope.key}`} profile={scope.profile} query={query} toolsets={toolsets ?? []} />
+      <ToolsetsTab
+        initialSelected={searchTarget?.id}
+        key={`toolsets-${scope.key}`}
+        profile={scope.profile}
+        query={tabQuery}
+        toolsets={toolsets ?? []}
+      />
     )
   } satisfies Record<CapabilityMode, () => React.ReactNode>
 
@@ -169,14 +188,18 @@ export function CapabilitiesView({
     <PageSearchShell
       {...props}
       activeTab={mode === 'hub' ? 'marketplace' : mode}
-      onSearchChange={setQuery}
-      onTabChange={id => setMode(id as CapabilityMode)}
-      // The Connectors directory owns its search field; plugins has its own list.
-      searchHidden={mode === 'connectors' || mode === 'plugins'}
-      searchHints={searchHints}
-      searchPlaceholder={
-        mode === 'skills' || mode === 'marketplace' || mode === 'hub' ? t.skills.searchSkills : t.skills.searchToolsets
-      }
+      onSearchChange={value => {
+        setQuery(value)
+        setSearchTarget(null)
+      }}
+      onTabChange={id => {
+        setMode(id as CapabilityMode)
+        setQuery('')
+        setSearchTarget(null)
+      }}
+      ref={searchRoot}
+      searchHints={query ? undefined : searchHints}
+      searchPlaceholder={copy.searchAll}
       searchValue={query}
       tabs={[
         { id: 'skills', label: t.skills.tabSkills, meta: skills?.length ?? null },
@@ -187,11 +210,41 @@ export function CapabilitiesView({
       ]}
     >
       <div className="flex h-full flex-col">
-        {mode !== 'plugins' && <CapabilityScopeSelector scope={scope} />}
+        {(searching || mode !== 'plugins') && <CapabilityScopeSelector scope={scope} />}
+        {searchTarget && (
+          <Button
+            className="self-start"
+            onClick={() => {
+              setSearchTarget(null)
+              requestAnimationFrame(() => searchRoot.current?.querySelector<HTMLInputElement>('input')?.focus())
+            }}
+            size="xs"
+            variant="text"
+          >
+            {copy.backToSearch}
+          </Button>
+        )}
         <div className="flex min-h-0 flex-1 flex-col">
-          <CapabilityInventory key={`${mode}:${scope.key}`} tab={mode === 'hub' ? 'marketplace' : mode}>
-            {loadGate ?? tabContent[mode]()}
-          </CapabilityInventory>
+          {searching ? (
+            <CapabilitySearchResults
+              key={scope.key}
+              onOpen={hit => {
+                setSearchTarget(hit)
+                setMode(hit.tab)
+              }}
+              onRetry={() => void refreshCapabilities()}
+              profile={scope.profile}
+              query={query}
+              skills={skills}
+              skillsFailed={skillsFailed}
+              toolsets={toolsets}
+              toolsetsFailed={toolsetsFailed}
+            />
+          ) : (
+            <CapabilityInventory key={`${mode}:${scope.key}`} tab={mode === 'hub' ? 'marketplace' : mode}>
+              {loadGate ?? tabContent[mode]()}
+            </CapabilityInventory>
+          )}
         </div>
       </div>
     </PageSearchShell>

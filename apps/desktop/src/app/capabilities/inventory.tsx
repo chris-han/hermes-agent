@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import { type ComponentProps, createContext, type ReactNode, useContext, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { SegmentedControl } from '@/components/ui/segmented-control'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { useInventoryCopy } from '@/i18n/capability-inventory'
@@ -53,22 +54,12 @@ export function CapabilityInventory({ tab, children }: { tab: string; children: 
           ref={inventoryRoot}
         >
           <div aria-label={c.view} className="flex shrink-0 justify-end gap-1 px-3 py-1" role="group">
-            <Button
-              aria-pressed={!cards}
-              onClick={() => atom.set(false)}
-              size="xs"
-              variant={cards ? 'ghost' : 'secondary'}
-            >
-              {c.list}
-            </Button>
-            <Button
-              aria-pressed={cards}
-              onClick={() => atom.set(true)}
-              size="xs"
-              variant={cards ? 'secondary' : 'ghost'}
-            >
-              {c.cards}
-            </Button>
+            <SegmentedControl
+              animated
+              onChange={view => atom.set(view === 'cards')}
+              options={[{ id: 'list', label: c.list }, { id: 'cards', label: c.cards }]}
+              value={cards ? 'cards' : 'list'}
+            />
           </div>
           {detailOpen && (
             <Button

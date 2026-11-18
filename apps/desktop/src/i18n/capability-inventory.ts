@@ -1,6 +1,10 @@
 import { useI18n } from './context'
 
 const en = {
+  searchAll: 'Search all skills and tools…',
+  searchResults: 'Search results',
+  backToSearch: 'Back to search results',
+  noMatches: 'No matches',
   archiveTitle: (name: string) => `Archive ${name}?`,
   archiveDescription: 'The skill is archived and can be restored with `hermes curator restore`.',
   list: 'List',
@@ -28,6 +32,10 @@ const en = {
 }
 
 const zh: typeof en = {
+  searchAll: '搜索全部技能与工具…',
+  searchResults: '搜索结果',
+  backToSearch: '返回搜索结果',
+  noMatches: '没有匹配项',
   archiveTitle: (name: string) => `归档 ${name}？`,
   archiveDescription: '归档后可通过 `hermes curator restore` 恢复此技能。',
   list: '列表',
@@ -56,6 +64,10 @@ const zh: typeof en = {
 
 const hant: typeof en = {
   ...zh,
+  searchAll: '搜尋全部技能與工具…',
+  searchResults: '搜尋結果',
+  backToSearch: '返回搜尋結果',
+  noMatches: '沒有符合項目',
   archiveTitle: (name: string) => `封存 ${name}？`,
   archiveDescription: '封存後可透過 `hermes curator restore` 還原此技能。',
   list: '列表',

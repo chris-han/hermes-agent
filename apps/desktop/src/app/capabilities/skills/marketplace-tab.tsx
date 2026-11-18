@@ -12,12 +12,12 @@ import { notifyError } from '@/store/notifications'
 import { DetailColumn, ListColumn, MasterDetail } from '../../master-detail'
 import { InventoryItems, InventoryRow, InventorySelect } from '../inventory'
 
-export function MarketplaceTab({ profile, query }: { profile: ProfileScope; query: string }) {
+export function MarketplaceTab({ profile, query, initialSelected }: { profile: ProfileScope; query: string; initialSelected?: string }) {
   const { t } = useI18n()
   const c = useInventoryCopy()
   const [search, setSearch] = useState(query)
   const [source, setSource] = useState('all')
-  const [selected, setSelected] = useState<string | null>(null)
+  const [selected, setSelected] = useState<string | null>(initialSelected ?? null)
   const [busy, setBusy] = useState<string | null>(null)
   const [completed, setCompleted] = useState<Set<string>>(new Set())
   const lock = useRef(false)

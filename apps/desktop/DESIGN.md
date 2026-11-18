@@ -783,3 +783,9 @@ Semantier Cloud Composer selections belong to the current draft or live session.
 ### Semantier Billing navigation
 
 Semantier-owned Billing, package, top-up, order and readiness links open in the existing Browser Pane, scoped to the initiating profile/session/runtime. Settings closes through its normal return callback after opening a task. Signup/login and same-origin redirects stay in that pane. The Browser Pane toolbar retains explicit external navigation. Billing entry metadata is presentation only; it cannot select an account or grant device access. A fixed same-origin return hash closes only the visible originating pane and focuses its chat, without activation, credential installation or automatic navigation. Workspace Billing returns to Workspace Chat.
+
+### Capability discovery controls
+
+Skills & Tools uses the shared `SegmentedControl` with `animated` for the Asimov List/Cards group. Its one active primary-colored indicator slides within the group; reduced motion settles immediately, and native button focus/pressed state remain intact. Other segmented-control callers retain their existing appearance by default.
+
+The page search returns scoped Skills, Toolsets, installed/catalog Plugins, Connectors and Marketplace matches together in labeled groups. It composes the existing read/catalog owners; unavailable sources retain their own error/retry and do not hide installed matches. Selecting a match opens its existing tab/inspector; Back to search restores the query and search focus. Navigation does not install or enable anything.

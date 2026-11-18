@@ -456,3 +456,18 @@ describe('CapabilitiesView toolset management', { timeout: 60_000 }, () => {
     )
   })
 })
+
+it('searches all five tabs together from the shared search field', async () => {
+  await renderSkills()
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'web' } })
+  expect(await screen.findByRole('region', { name: 'Search all skills and tools…' })).toBeTruthy()
+
+  for (const name of ['Skills', 'Tools', 'Plugins', 'Connectors', 'Skill Marketplace']) {
+    expect(screen.getByRole('region', { name })).toBeTruthy()
+  }
+  fireEvent.click(screen.getByRole('button', { name: 'Web Search' }))
+  expect(screen.queryByRole('region', { name: 'Search all skills and tools…' })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Back to search results' }))
+  expect(screen.getByRole('textbox').getAttribute('value')).toBe('web')
+  await waitFor(() => expect(screen.getByRole('textbox')).toBe(window.document.activeElement))
+})
