@@ -58,3 +58,14 @@ test('a linked custody marker fails closed without touching its target', async (
     expect(await readFile(outside, 'utf8')).toBe('preserve')
   } finally { await rm(root, { recursive: true, force: true }) }
 })
+
+
+test('version directory cache binds all four package version components', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'channel-version-cache-'))
+  try {
+    const versioned = {...binding, buildId:'1.2.131.4', version:'1.2.131.4'}
+    const first = await prepareChannelArtifactCache(root, versioned)
+    expect(await prepareChannelArtifactCache(root, versioned)).toBe(first)
+    await expect(prepareChannelArtifactCache(root, {...versioned, version:'1.2.131.5'})).rejects.toThrow('binding')
+  } finally {await rm(root, {recursive:true, force:true})}
+})

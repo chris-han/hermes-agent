@@ -16,7 +16,7 @@ test('production wiring preserves cloud metadata and permits standard OSS HTTPS'
   expect(system).toHaveBeenCalledTimes(1)
 })
 
-test('Channel 1 packages use an isolated direct session, never the metadata proxy transport', async () => {
+test.each([url, 'https://assets.semantier.cn/releases/channel-builds/1.2.131.4/SemantierAgent.msix'])('Channel 1 packages use an isolated direct session (%s)', async (url) => {
   const fallback = vi.fn(async () => new Response(null, { status: 421 }))
   const direct = { setProxy: vi.fn(async () => undefined), fetch: vi.fn(async () => new Response('package')) }
   const create = vi.fn(() => direct)

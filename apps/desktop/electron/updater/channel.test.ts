@@ -10,7 +10,7 @@ import feedContract from '../../update-feed.cjs'
 
 import { ChannelResolver } from './channel'
 import type { ChannelBuild, ChannelManifest, ChannelRecord, RetiredChannel } from './channel-protocol'
-import { decodeChannelManifest, decodeChannelRecord, decodeNativePackageGraph, sameChannelIdentity } from './channel-protocol'
+import { buildPrefix, decodeChannelManifest, decodeChannelRecord, decodeNativePackageGraph, sameChannelIdentity } from './channel-protocol'
 import { ChannelStrategy } from './channel-strategy'
 import { createNativeUriAppInstallerStrategy } from './channel-windows-host'
 
@@ -1119,9 +1119,10 @@ test('bundled schema2 resolves one large native MSIX without descriptor or full 
   expect(() => decodeNativePackageGraph(JSON.stringify({...graph, objects:[{...object, references:[object.key]}]}), decoded.request, decoded.packages[0])).toThrow()
 })
 
- test('OSS native origin is exact and separate from cloud metadata', async () => {
+ test.each(['a'.repeat(32), '1.2.131.4'])('OSS native origin is exact and separate from cloud metadata (%s)', async (buildId) => {
   const f = await fixture()
   const request = {...f.manifest.request, publicBase:'https://cloud.semantier.cn', channel:'semantier-acceptance', repository:'chris-han/hermes-agent'}
+  Object.assign(request, {buildId}, buildId.includes('.') ? {windowsVersion:buildId, version:buildId.split('.').slice(0,3).join('.'), semantierScope:'semantier-windows-x64/v1'} : {})
   const prefix = `releases/channel-builds/${request.buildId}/`
 
   const native = {schema:2, packageBase:'https://assets.semantier.cn', api:'PackageManager.AddPackageByUriAsync',
@@ -1147,3 +1148,9 @@ test('bundled schema2 resolves one large native MSIX without descriptor or full 
   expect(() => decode(native.packageBase, 1)).toThrow('package origin')
   expect(() => decode(native.packageBase, 2, 'https://download.semantier.cn')).toThrow('package origin')
 })
+
+
+test.each(['01.2.3.4','1.2.3','1.2.3.65536','65536.2.3.4','1.2.3.4/../x'])(
+  'version namespace rejects malformed or out-of-range components (%s)', (value) => {
+    expect(() => buildPrefix(value)).toThrow('buildId')
+  })
