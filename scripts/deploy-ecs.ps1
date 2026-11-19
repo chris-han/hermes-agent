@@ -351,7 +351,7 @@ function Assert-QualifiedToolingSource($Q,[string]$OperatorPath) {
   if($errors){throw 'Qualified recovery source unavailable.'}
   $current=[Management.Automation.Language.Parser]::ParseFile($OperatorPath,[ref]$null,[ref]$errors)
   if($errors){throw 'Current tooling parse failed.'}
-  foreach($name in @('Restore-OwnedSourceResidue','Get-ResidueInventory','Assert-ResidueBindings','Initialize-LocalBuildSource','Assert-RegisteredSource','Assert-SourceOwner','Assert-StageInactive')){
+  foreach($name in @('Restore-OwnedSourceResidue','Get-PinnedResidueJunction','Get-ResidueInventory','Assert-ResidueBindings','Initialize-LocalBuildSource','Assert-RegisteredSource','Assert-SourceOwner','Assert-StageInactive')){
     $a=$old.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name},$true)
     $b=$current.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name},$true)
     if(!$a -or !$b -or $a.Extent.Text.Replace("`r`n","`n") -cne $b.Extent.Text.Replace("`r`n","`n")){throw ('Qualified recovery contract changed: '+$name)}
@@ -362,8 +362,8 @@ function Assert-ToolingQualificationIdentity($Q) {
      $Q.applicationCommit -cne '4891d1b294a8c1d78aa98fc746bbd91d4de2ec6b' -or
      $Q.applicationRuntime -cne 'ea33018bb024f1e445cd592153bfe68a4f90ae2a' -or
      $Q.originalOperatorSha256 -cne '409eebcb740bd127cd997dc271d920834f70ebc060f1046d002b0f1c9fa50976' -or
-     $Q.recoveryCommit -cne '03341a9501f53ac7a1e668710268b31de0f9e226' -or
-     $Q.recoveryOperatorSha256 -cne '29f4ca416606d8094afd575b903de88761a0b3d271be5012b92ff19c76e33768' -or
+     $Q.recoveryCommit -cne '07172caece63d2a8fb6e3f6cefcb5b0527e485c7' -or
+     $Q.recoveryOperatorSha256 -cne 'f1fb1a9cf298ecfc7e789af169f40ecd6c8fd2b37974471d70ceae95a18cd506' -or
      $Q.version -cne '0.0.129' -or $Q.buildId -cne '8b19a2c012444a959b2370160324402a' -or
      $Q.run -cne $Output -or $Q.applicationCommit -cne $Commit -or $Q.buildId -cne $BuildId -or
      $Q.toolingCommit -cnotmatch '^[a-f0-9]{40}$' -or $Q.operatorSha256 -cnotmatch '^[a-f0-9]{64}$'){

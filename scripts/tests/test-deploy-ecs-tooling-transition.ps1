@@ -68,7 +68,7 @@ try {
     $script:qualifiedTooling=[pscustomobject]@{contract='semantier-tooling-transition-v1';applicationCommit=$Commit;
       applicationRuntime='ea33018bb024f1e445cd592153bfe68a4f90ae2a';run=$Output;version='0.0.129';buildId=$BuildId;
       originalOperatorSha256=$old.operator;toolingCommit=('7'*40);operatorSha256=$new.operator;
-      recoveryCommit='03341a9501f53ac7a1e668710268b31de0f9e226';recoveryOperatorSha256='29f4ca416606d8094afd575b903de88761a0b3d271be5012b92ff19c76e33768';
+      recoveryCommit='07172caece63d2a8fb6e3f6cefcb5b0527e485c7';recoveryOperatorSha256='f1fb1a9cf298ecfc7e789af169f40ecd6c8fd2b37974471d70ceae95a18cd506';
       originalInputs=$record.inputs;reservationSha256=(Hash $VersionState);requestSha256=(Hash $record.request);
       checkpointPrefixLength=(Get-Item $statusLog).Length;checkpointPrefixSha256=(Hash $statusLog)}
     $script:qualificationBytes=[Text.Encoding]::UTF8.GetBytes(($script:qualifiedTooling | ConvertTo-Json -Compress))
