@@ -71,6 +71,7 @@ param(
   [string]$OssRuntimeRoot = '/home/chris/repo/semantier-runtime',
   [string]$OssWslDistro = 'Ubuntu-22.04',
   [switch]$OssSetupQualification,
+  [switch]$OssCacheOnlyRecovery,
   [string]$UserProfile = "$env:LOCALAPPDATA\hermes-semantier-acceptance",
   [string]$Output = ('D:\repo\deliverables\work\ecs-deploy-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0,8)),
   [string]$SetupExe = 'D:\repo\deliverables\cache\ecs-setup\semantier-setup-ch1.exe',
@@ -115,6 +116,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+if($OssCacheOnlyRecovery -and (!$OssSetupQualification -or !$NativePublishOnly -or !$SkipLocalInstall -or $Commit -or $ResumeSigned -or $BuildMode -cne 'Prod' -or !$PSBoundParameters.ContainsKey('Output'))){throw 'Cache-only recovery requires the original explicit fixed-input Prod OSS publish-only run'}
 if($OssSetupQualification -and $VerifyPublicDownload){throw 'The one full OSS transfer is owned by Setup; standalone full download is forbidden.'}
 $identity = 'Semantier.Agent.Acceptance'
 $publisher = 'CN=Semantier Technology, O=Semantier Technology'
@@ -981,6 +983,75 @@ function Write-RunEvent($Event) {
       Start-Sleep -Milliseconds 50
     }
   }
+}
+function Invoke-RetainedSetupVerifiers([string]$Setup,[string]$File) {
+  # Execute the verifier embedded in the original signed Setup. No downloader,
+  # package deployment, external code, or network package request is invoked.
+  $program=[Reflection.Assembly]::LoadFrom($Setup).GetType('Program',$true)
+  $flags=[Reflection.BindingFlags]'NonPublic,Static'
+  $identity=$program.GetMethod('VerifyIdentity',$flags)
+  $signature=$program.GetMethod('VerifySignature',$flags)
+  if(!$identity -or !$signature){throw 'Pinned Setup verification methods unavailable'}
+  $modules=$env:PSModulePath
+  try {
+    $env:PSModulePath=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\Modules'
+    $null=$identity.Invoke($null,@($File,$null))
+    $null=$signature.Invoke($null,@($File))
+  } finally {$env:PSModulePath=$modules}
+}
+function Confirm-OssCachedDownload([string]$Package,[string]$Metadata,$PriorOutcome) {
+  if(!$OssCacheOnlyRecovery -or !$OssSetupQualification -or !$NativePublishOnly -or !$SkipLocalInstall -or $BuildMode -cne 'Prod'){
+    throw 'Cache-only qualification requires explicit Prod no-install authorization'
+  }
+  if(!$script:checkpoints.ContainsKey('oss-setup-transfer-started') -or $receipt.ossFullTransferCount -ne 1){
+    throw 'Original single Setup attempt is not recorded; no download permitted'
+  }
+  $folder=Join-Path $Output 'setup-download';$download=Join-Path $folder 'SemantierAgent.msix'
+  $proof=Join-Path $folder 'download-receipt.json'
+  foreach($path in @($Package,$Metadata,$download,$SetupExe,$proof)){Assert-NoReparseAncestor $path}
+  $lease=[IO.File]::Open((Join-Path $Output '.oss-cache-recovery.lock'),'OpenOrCreate','ReadWrite','None')
+  try {
+    $manifest=(Get-Content -LiteralPath $Metadata -Raw|ConvertFrom-Json).manifest
+    $artifact=$manifest.packages[0].artifact
+    if($PriorOutcome.result -cnotin @('FAIL','STOP') -or $PriorOutcome.ossFullTransferCount -ne 1 -or
+      $PriorOutcome.sha256 -cne $receipt.sha256 -or $PriorOutcome.plan.sourceCommit -cne $SourceCommit -or
+      $PriorOutcome.plan.buildId -cne $BuildId -or $PriorOutcome.plan.version -cne $Version -or
+      $manifest.request.buildId -cne $BuildId -or $manifest.request.commit -cne $SourceCommit -or
+      $manifest.request.windowsVersion -cne $Version -or $artifact.sha256 -cne $receipt.sha256 -or
+      (Get-Item -LiteralPath $download).Length -ne $artifact.size -or
+      (Hash $download) -cne $receipt.sha256 -or (Hash $Package) -cne $receipt.sha256 -or
+      (Hash $SetupExe) -cne $PriorOutcome.setupTransport.sha256){throw 'Retained cache/source/build/hash/Setup mismatch; no download permitted'}
+    Require-Signature $SetupExe
+    $manifestHash=Get-OssManifestHash $Metadata
+    $binding=@{source=$SourceCommit;build=$BuildId;version=$Version;sha256=$receipt.sha256;
+      manifestSha256=$manifestHash;channelSha256=$ExpectedChannelSha256;setupSha256=(Hash $SetupExe);
+      originalAttemptAt=$script:checkpoints['oss-setup-transfer-started']}
+    # Preserve the actual failure before any recovery result is written.
+    Write-RunEvent @{type='oss-cache-recovery-verification';at=[DateTime]::UtcNow.ToString('o');binding=$binding;previousOutcome=$PriorOutcome}
+    Invoke-RetainedSetupVerifiers $SetupExe $download
+    if(Test-Path -LiteralPath $proof){
+      $result=Get-Content -LiteralPath $proof -Raw|ConvertFrom-Json
+      if($result.qualificationMode -cne 'CACHE_ONLY_RECOVERY' -or $result.sha256 -cne $receipt.sha256 -or
+        $result.manifestSha256 -cne $manifestHash -or $result.channelSha256 -cne $ExpectedChannelSha256 -or
+        $result.buildId -cne $BuildId -or $result.setupSha256 -cne $binding.setupSha256){throw 'Conflicting cached qualification receipt'}
+    } else {
+      $result=[ordered]@{status='DOWNLOADED_VERIFIED_NOT_INSTALLED';selection='PINNED_STAGED_CANDIDATE';
+        qualificationMode='CACHE_ONLY_RECOVERY';originalTransferOutcome='FAILED_POST_DOWNLOAD';
+        producedAt=[DateTime]::UtcNow.ToString('o');originalAttemptAt=$binding.originalAttemptAt;
+        manifestSha256=$manifestHash;channelSha256=$ExpectedChannelSha256;buildId=$BuildId;version=$Version;
+        sha256=$receipt.sha256;sourceCommit=$SourceCommit;setupSha256=$binding.setupSha256;
+        uri=('https://assets.semantier.cn/releases/channel-builds/'+$BuildId+'/SemantierAgent.msix');
+        origin='https://assets.semantier.cn';signature='PINNED_SIGNER_VALID';
+        # DownloadCore appends every successful body read exactly once. This is
+        # reconstructed payload-byte evidence, not an original counter receipt.
+        ossResponseBytes=[long]$artifact.size;cacheFileBytes=[long]$artifact.size;
+        bodyByteEvidence='RECONSTRUCTED_APPEND_ONLY_OUTPUT_LENGTH';originalCounterReceipt='NOT_WRITTEN';
+        responses=$null;protocol=$null;additionalPackageNetworkReads=0;fullTransferAttempts=1}
+      Save-Json $result $proof
+    }
+    $receipt.ossSetupQualification=$result
+    Complete-Checkpoint 'oss-setup-qualified'
+  } finally {$lease.Dispose()}
 }
 function Read-RunCheckpoint([string]$Path) {
   $last=$null
@@ -2563,6 +2634,7 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output);let app;const err
   $receipt.remoteStage=$stage
   Complete-Checkpoint 'upload-prepared'
   Report-Status 'Publishing verified immutable bytes and committing current channel metadata atomically.'
+  if($OssCacheOnlyRecovery -and !$script:checkpoints.ContainsKey('oss-setup-qualified')){Confirm-OssCachedDownload $signed (Join-Path $Output 'channel1-metadata.json') $priorOutcome}
   $receipt.publication=Publish-Channel1Artifacts -Signed $signed -Root $RemoteRoot -Stage $stage -PackageSha256 $hash -Metadata (Join-Path $Output 'channel1-metadata.json')
   Save-Json $receipt (Join-Path $Output 'result.json')
   Complete-Checkpoint 'published'
