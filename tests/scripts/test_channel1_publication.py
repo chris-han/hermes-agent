@@ -22,7 +22,7 @@ def package(stage, sequence):
         'sequence': sequence, 'repository': 'chris-han/hermes-agent', 'commit': 'a'*40,
         'controllerCommit': 'a'*40, 'sourceVersion': '0.0.0', 'version': f'0.0.{sequence}',
         'windowsVersion': f'0.0.{sequence}.0', 'releaseTag': f'v0.0.{sequence}',
-        'publicBase': 'https://download.semantier.cn',
+        'publicBase': 'https://cloud.semantier.cn',
         'bundleEnv': {'HERMES_HOME': None, 'HERMES_DATA_DIR_SUFFIX': '-semantier-acceptance'},
         'identity': {'token': 'b0fdc2a7e4b08d16', 'displayName': 'Semantier Agent Acceptance',
                      'appId': 'com.semantier.agent.acceptance', 'appNamePascal': 'SemantierAgentAcceptance',
@@ -737,7 +737,16 @@ def test_oss_package_origin_rejects_noncanonical_hosts(tmp_path, origin):
 def test_legacy_native_schema_cannot_smuggle_package_origin(tmp_path):
     package(tmp_path/'candidate', 131)
     manifest = json.loads((tmp_path/'candidate/channel1-metadata.json').read_bytes())['manifest']
+    manifest['packages'][0]['native']['schema'] = 1
     manifest['packages'][0]['native']['packageBase'] = 'https://evil.example'
     record = channel1._record(manifest, None, protocol)
     with pytest.raises(protocol.ChannelError, match='package origin'):
         protocol.validate_manifest(manifest, record, channel1.BASE, allow_native=True)
+
+
+def test_prepared_release_emits_cloud_metadata_and_separate_oss_origin(tmp_path):
+    package(tmp_path/'candidate', 131)
+    manifest = json.loads((tmp_path/'candidate/channel1-metadata.json').read_bytes())['manifest']
+    assert manifest['request']['publicBase'] == 'https://cloud.semantier.cn'
+    assert manifest['packages'][0]['native']['schema'] == 2
+    assert manifest['packages'][0]['native']['packageBase'] == 'https://assets.semantier.cn'

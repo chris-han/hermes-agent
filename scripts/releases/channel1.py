@@ -21,7 +21,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
 
-BASE = 'https://download.semantier.cn'
+BASE = 'https://cloud.semantier.cn'
 CHANNEL = 'semantier-acceptance'
 POINTER = 'releases/channels/' + CHANNEL + '.json'
 
@@ -76,7 +76,7 @@ def prepare(package, output, *, expected_sha256, source_commit, windows_version,
     row = {'platform': 'win32', 'arch': 'x64', 'variant': 'bundled', 'version': windows_version,
            'identity': native['Name'], 'publisher': native['Publisher'], 'artifact': artifact,
            'feed': {'key': descriptor['key'], 'channel': 'stable'},
-           'native': {'schema': 1, 'api': 'PackageManager.AddPackageByUriAsync',
+           'native': {'schema': 2, 'packageBase': 'https://assets.semantier.cn', 'api': 'PackageManager.AddPackageByUriAsync',
                       'digestMethod': 'IAppxDigestProvider.GetDigest', 'digestEncoding': 'base64', 'graph': descriptor}}
     manifest = {'schema': 2, 'request': request, 'packages': [row]}
     record = _record(manifest, None, protocol)
