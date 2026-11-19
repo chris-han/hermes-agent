@@ -240,10 +240,13 @@ function Invoke-OssByteOperation([string]$Mode,[string]$Artifact,[string]$Metada
   $publisher=Join-Path $Repository 'scripts/releases/channel1.py'
   $protocol=Join-Path $Repository 'hermes_cli/release_channels.py'
   $code=@'
-import hashlib,importlib.util,json,sys
+import hashlib,importlib.util,json,os,sys
 from pathlib import Path
 root,mode,artifact,metadata,output,core_sha,publisher_sha,protocol_sha=sys.argv[1:]
 root=Path(root)
+cli=Path.home()/'.local/bin/aliyun'
+if not cli.is_file() or not os.access(cli,os.X_OK):raise ValueError('Existing WSL account CLI unavailable')
+os.environ['PATH']=str(cli.parent)+os.pathsep+os.environ.get('PATH','')
 def normalized(path):return hashlib.sha256(path.read_text(encoding='utf-8-sig').encode()).hexdigest()
 for path,wanted in [(root/'src/agents/client_operations/oss_release.py',core_sha),(root/'hermes-agent/scripts/releases/channel1.py',publisher_sha),(root/'hermes-agent/hermes_cli/release_channels.py',protocol_sha)]:
  if normalized(path)!=wanted:raise ValueError('WSL OSS owner source hash differs from the native pinned source')
