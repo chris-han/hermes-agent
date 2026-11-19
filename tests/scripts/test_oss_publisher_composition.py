@@ -172,3 +172,35 @@ def test_bridge_selects_existing_cli_without_interactive_shell_path(tmp_path,mon
     assert shutil.which('aliyun')==str(cli)
     assert [c[0] for c in calls]==['put','head','small-get']
     assert result.is_file()
+
+
+def test_oss_publish_only_does_not_require_profile_mutation_prerequisites(tmp_path):
+    pwsh=shutil.which('pwsh')
+    if not pwsh:
+        pytest.skip('PowerShell required')
+    script=tmp_path/'options.ps1'
+    script.write_text(r'''
+param($Source)
+$ErrorActionPreference='Stop';Set-StrictMode -Version Latest
+$ast=[Management.Automation.Language.Parser]::ParseFile($Source,[ref]$null,[ref]$null)
+$f=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Assert-NativeReleaseOptions'},$true)
+. ([scriptblock]::Create($f.Extent.Text))
+$NativeUpdateFrom='0.0.130.0';$NativePublishOnly=$true;$BuildMode='Prod';$SkipLocalInstall=$true;$OssSetupQualification=$true
+$Latest=$false;$BuildOnly=$false;$LocalOnly=$false;$DesktopOnly=$false;$SetupOnly=$false;$LocalSetup=$false;$UpdateSetup=$false;$PreflightOnly=$true
+$Commit='b'*40;$SourceCommit='b'*40;$ExpectedChannelSha256='a'*64;$ExpectedVersion='0.0.131.0';$RecoveryMsix='pinned-signed-baseline.msix'
+$NativeUserData='';$ProfileSampleManifest='';$CriticalFileManifest='';$ChannelRecoveryMsix=''
+Assert-NativeReleaseOptions
+# ENTRY_GUARD
+$PreflightOnly=$false;Assert-NativeReleaseOptions
+foreach($negative in @('install','no-recovery','legacy')){
+ $SkipLocalInstall=$negative -cne 'install';$RecoveryMsix=if($negative -ceq 'no-recovery'){''}else{'pinned-signed-baseline.msix'};$OssSetupQualification=$negative -cne 'legacy'
+ $refused=$false;try{Assert-NativeReleaseOptions}catch{$refused=$true}
+ if(!$refused){throw ('Unsafe release options accepted: '+$negative)}
+}
+'PASS: read-only OSS preflight and no-install publication accepted; installation, missing recovery and legacy profile bypass refused'
+''')
+    entry=(ROOT/'scripts/deploy-ecs.ps1').read_text().split('if($NativeUpdateFrom){Assert-NativeReleaseOptions}',1)[1].split('Initialize-ReleasePaths',1)[0]
+    script.write_text(script.read_text().replace('# ENTRY_GUARD',entry))
+    result=subprocess.run([pwsh,'-NoProfile','-NonInteractive','-File',str(script),str(ROOT/'scripts/deploy-ecs.ps1')],capture_output=True,text=True,timeout=30,check=False)
+    assert result.returncode==0,result.stderr
+    assert result.stdout.startswith('PASS: read-only OSS preflight')

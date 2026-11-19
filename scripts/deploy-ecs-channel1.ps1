@@ -63,15 +63,22 @@ function Test-NativeReleasePreflight {
   Require-Signature $RecoveryMsix
   $signature=Get-PackageSignatureHash $RecoveryMsix
   if((Hash (Join-Path $package[0].InstallLocation 'AppxSignature.p7x')) -cne $signature){throw 'Recovery package does not match installed baseline signature'}
-  . (Join-Path $Repository 'apps/desktop/scripts/native-package-update.ps1')
-  $journalReadiness=Get-NativeUpdateJournalReadiness -Directory (Join-Path $NativeUserData 'updates') -ExpectedPackageFullName $package[0].PackageFullName -ExpectedSignatureSha256 $signature
-  if($journalReadiness.result -cne 'PASS'){throw ('Local native journal readiness STOP: '+$journalReadiness.reason)}
+  if($OssSetupQualification -and $NativePublishOnly -and $SkipLocalInstall){
+    # This path never starts a package deployment or touches the installed profile.
+    $journalReadiness=@{result='NOT_RUN_PUBLISH_ONLY_NO_INSTALL'}
+    $samples=@();$gateway=@{result='NOT_RUN_PUBLISH_ONLY_NO_INSTALL'};$window=$null;$profileManifests=$null
+  } else {
+    . (Join-Path $Repository 'apps/desktop/scripts/native-package-update.ps1')
+    $journalReadiness=Get-NativeUpdateJournalReadiness -Directory (Join-Path $NativeUserData 'updates') -ExpectedPackageFullName $package[0].PackageFullName -ExpectedSignatureSha256 $signature
+    if($journalReadiness.result -cne 'PASS'){throw ('Local native journal readiness STOP: '+$journalReadiness.reason)}
+    $samples=Get-NativeProfileSamples
+    $gateway=Test-NativeGateway $package[0] $UserProfile
+    $window=Get-NativeWindow $package[0] -AllowStopped:$NativePublishOnly
+    $profileManifests=@{samples=(Hash $ProfileSampleManifest);critical=(Hash $CriticalFileManifest)}
+  }
   foreach($tool in @($SignTool,$BuildPython,$Node)){if(!(Test-Path -LiteralPath $tool -PathType Leaf)){throw 'Required native release tool unavailable'}}
   & $BuildPython -B -c 'import curl_cffi'
   if($LASTEXITCODE -ne 0){throw 'Existing curl_cffi environment unavailable'}
-  $samples=Get-NativeProfileSamples
-  $gateway=Test-NativeGateway $package[0] $UserProfile
-  $window=Get-NativeWindow $package[0] -AllowStopped:$NativePublishOnly
   $dirty=& git.exe -C $Repository status --porcelain
   if($LASTEXITCODE -ne 0 -or $dirty){throw 'Native release source must be committed and clean'}
   $applicationCommit=if($Commit){$Commit}else{$SourceCommit}
@@ -111,7 +118,7 @@ print(json.dumps({'pointerSha256':expected,'record':r,'manifest':manifest,'packa
     journalReadiness=$journalReadiness;baseline=$NativeUpdateFrom;target=$ExpectedVersion;family=$package[0].PackageFamilyName;signature=$signature;
     recoveryMsix=$RecoveryMsix;recoverySha256=(Hash $RecoveryMsix);channelRecovery=$channelRecovery;remote=$remote;gateway=$gateway;files=$samples;
     visibleWindow=$(if($window){'PRESENT'}else{'NOT_OBSERVED_NO_UI_ACCEPTANCE'});
-    public=$public;profileManifests=@{samples=(Hash $ProfileSampleManifest);critical=(Hash $CriticalFileManifest)};llmCalls=0}
+    public=$public;profileManifests=$profileManifests;llmCalls=0}
 }
 function Test-NativeCompletedRelease {
   $path=Join-Path $Output 'result.json'

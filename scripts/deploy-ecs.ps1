@@ -34,6 +34,8 @@
   split packages, bundles, ZIPs, or CH2/R2 operations.
   -BuildOnly with -Commit stops after the unsigned package build: no signing, install or publication.
   -SkipLocalInstall signs and publishes without touching the installed app/profile; local acceptance is explicitly skipped.
+  -PreflightOnly with the pinned OSS publish-only options checks release readiness
+  without reserving a version, building, signing, uploading or installing.
   -ChannelRecoveryMsix binds the signed ECS predecessor separately when a local pilot is newer than the published channel.
   -ToolingQualification <signed JSON> allows only the versioned same-run v129 tooling transition.
   The detached <JSON>.p7s must be signed by the pinned release authority; saved inputs stay immutable.
@@ -131,13 +133,13 @@ $script:qualifiedTooling=$null
 function Assert-NativeReleaseOptions {
   if(!$NativeUpdateFrom){if($ChannelRecoveryMsix){throw 'ChannelRecoveryMsix requires native publish-only mode'};return}
   if(!$NativePublishOnly -or $BuildMode -cne 'Prod' -or !$SkipLocalInstall -or $Latest -or $BuildOnly -or $LocalOnly -or
-     $DesktopOnly -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly){
+     $DesktopOnly -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or ($PreflightOnly -and !$OssSetupQualification)){
     throw 'Native release requires NativePublishOnly, explicit Prod, SkipLocalInstall and exact source; incompatible release modes are forbidden.'
   }
   if(($Commit -cnotmatch '^[a-f0-9]{40}$' -and (!$NativePublishOnly -or $SourceCommit -cnotmatch '^[a-f0-9]{40}$')) -or $ExpectedChannelSha256 -cnotmatch '^[a-f0-9]{64}$' -or
      $NativeUpdateFrom -cnotmatch '^\d+\.\d+\.\d+\.0$' -or $ExpectedVersion -cnotmatch '^\d+\.\d+\.\d+\.0$' -or
-     [Version]$ExpectedVersion -le [Version]$NativeUpdateFrom -or !$RecoveryMsix -or !$NativeUserData -or
-     !$ProfileSampleManifest -or !$CriticalFileManifest){throw 'Native release requires bound baseline/target, pointer SHA256, recovery package, user data and profile manifests.'}
+     [Version]$ExpectedVersion -le [Version]$NativeUpdateFrom -or !$RecoveryMsix -or
+     (!$OssSetupQualification -and (!$NativeUserData -or !$ProfileSampleManifest -or !$CriticalFileManifest))){throw 'Native release requires bound baseline/target, pointer SHA256, recovery package, user data and profile manifests.'}
 }
 function Get-ProfileFileHolders([string[]]$Files) {
   if(-not ('SemantierProfileLocks' -as [type])) {
@@ -2140,7 +2142,7 @@ if($Latest){
   $Commit=Sync-GitHubLatestSource $runtime $PSCommandPath
 }
 if($BuildOnly -and (!$Commit -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly)){throw '-BuildOnly requires -Commit and cannot be combined with Setup or preflight modes.'}
-if($SkipLocalInstall -and ($BuildOnly -or $LocalOnly -or $DesktopOnly -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly)){throw '-SkipLocalInstall is for MSIX publication only.'}
+if($SkipLocalInstall -and ($BuildOnly -or $LocalOnly -or $DesktopOnly -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or ($PreflightOnly -and !($NativeUpdateFrom -and $OssSetupQualification)))){throw '-SkipLocalInstall is for MSIX publication only.'}
 $script:explicitOutput=$PSBoundParameters.ContainsKey('Output')
 Initialize-ReleasePaths
 if($NativeUpdateFrom -and !$WhatIfPreference){
@@ -2150,6 +2152,12 @@ if($NativeUpdateFrom -and !$WhatIfPreference){
   if(!(Get-EcsSshPassword $CredentialsEnv)){$script:sshOptions+=@('-o','BatchMode=yes')}
   if(Test-NativeCompletedRelease){return}
   $script:nativePreflight=Test-NativeReleasePreflight
+  if($PreflightOnly){
+    if(!(Test-Path -LiteralPath $Output)){New-Item -ItemType Directory -Path $Output|Out-Null}
+    Save-Json $script:nativePreflight (Join-Path $Output 'native-preflight.json')
+    Report-Status 'Read-only OSS release preflight passed; no version reservation, build, signing, upload or installation.'
+    return
+  }
 }
 if($Commit){
   if(!$NewRun -and !$script:explicitOutput){
