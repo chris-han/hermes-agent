@@ -15,7 +15,8 @@ NATIVE_TABLES = ('schema_version','system_prompts','sessions','messages','sessio
     'compression_locks','session_turn_leases','async_delegations','semantier_session_branches','delivery_obligations')
 
 
-SNAPSHOT_FAMILIES = {'hosted_rooms': ROOM_TABLES, 'sessions': NATIVE_TABLES, 'api_runs': ('run_idempotency',),
+SNAPSHOT_FAMILIES = {'projects': ('projects','project_folders','project_meta','discovered_repos'),
+    'hosted_rooms': ROOM_TABLES, 'sessions': NATIVE_TABLES, 'api_runs': ('run_idempotency',),
     'api_responses': ('responses','conversations','response_keys','response_admissions','response_output_order'),
     'cron': ('executions','cron_incidents'), 'cron_notes': ('cron_notepad',), 'cron_delivery': ('deliveries','delivery_tombstones'), 'kanban': ('tasks','task_links','task_comments','task_events','task_runs','task_attachments','kanban_notify_subs'), 'hosted_rooms_marker': ('hosted_room_legacy_imports',)}
 
