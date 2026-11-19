@@ -121,8 +121,9 @@ export class AppInstallerStrategy {
 
   async apply(): Promise<UpdaterApplyResultWire> {
     if (this.deps.nativeUri) {
-      if (!newerWindowsVersion(this.deps.nativeUri.version, this.deps.appVersion))
-        {return { ok: true, mechanism: this.mechanism }}
+      if (!newerWindowsVersion(this.deps.nativeUri.version, this.deps.appVersion)) {
+        return { ok: true, mechanism: this.mechanism }
+      }
 
       return applyPackagedHandoff(
         {

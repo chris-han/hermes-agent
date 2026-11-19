@@ -186,6 +186,7 @@ it('a guarded canonical model switch asks; yes re-sends once with the owner toke
     const sends = request.mock.calls
       .filter(([method]) => method === 'session.mutate')
       .map(([, params]) => params.payload)
+
     expect(sends).toEqual(accept ? [{ model: 'pricey' }, { model: 'pricey', confirm: 'tok-1' }] : [{ model: 'pricey' }])
     expect(getUiState().info?.model).toBe(accept ? 'pricey' : 'old')
   }

@@ -75,7 +75,14 @@ export function createPrimaryRemoteConnection<State extends object>(
     remoteKind: remote.remoteKind,
     remoteHermesVersion: remote.remoteHermesVersion,
     ...(remote.connectionId ? { connectionId: remote.connectionId } : {}),
-    ...(remote.transport === 'semantier-workspace-http' ? { transport: remote.transport, workspaceScope: remote.workspaceScope, profile: remote.profile, registryScoped: remote.registryScoped } : {}),
+    ...(remote.transport === 'semantier-workspace-http'
+      ? {
+          transport: remote.transport,
+          workspaceScope: remote.workspaceScope,
+          profile: remote.profile,
+          registryScoped: remote.registryScoped
+        }
+      : {}),
     ...(remote.ssh ? { ssh: remote.ssh } : {}),
     // fetchJsonForBackend reads descriptor.headers for every REST call; the
     // WebSocket header store is keyed by exact URL and cannot stand in for it.

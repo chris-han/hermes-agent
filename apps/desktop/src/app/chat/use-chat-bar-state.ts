@@ -56,8 +56,15 @@ export function useChatBarState({
         gateway: gateway || undefined,
         ownerConnectionId: modelOptionsOwnerConnectionId,
         profile,
-        request: requestModelOptionsForOwner ?? (<T,>(method: string, params?: Record<string, unknown>) =>
-          requestGatewayForAgent<T>(modelOptionsOwnerConnectionId ?? connection?.connectionId ?? null, profile, method, params)),
+        request:
+          requestModelOptionsForOwner ??
+          (<T>(method: string, params?: Record<string, unknown>) =>
+            requestGatewayForAgent<T>(
+              modelOptionsOwnerConnectionId ?? connection?.connectionId ?? null,
+              profile,
+              method,
+              params
+            )),
         sessionId: activeSessionId
       }),
     enabled: gatewayOpen && !!ownerKey

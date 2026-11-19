@@ -5,7 +5,14 @@ import {
   requestPopoutPreviewAct,
   requestPopoutPreviewRead
 } from '@/app/chat/right-rail/preview-popout-bridge'
-import { activePreviewBinding, activePreviewCommittedEpoch, bindingStatus, isActivePreviewLoading, type PreviewBinding, readActivePreview } from '@/app/chat/right-rail/preview-reader'
+import {
+  activePreviewBinding,
+  activePreviewCommittedEpoch,
+  bindingStatus,
+  isActivePreviewLoading,
+  type PreviewBinding,
+  readActivePreview
+} from '@/app/chat/right-rail/preview-reader'
 import {
   abortPreviewTyping,
   releasePreviewTyping,
@@ -532,12 +539,15 @@ const boundOwnerFor = (sessionId: string, expected?: PreviewBinding): PreviewOwn
 
 const previewFailure = (request: ScopedServerRequest, error: unknown) => {
   const message = error instanceof Error ? error.message : ''
-  const code = ['WRONG_OWNER', 'STALE_TARGET', 'PANE_UNAVAILABLE', 'USER_INTENT_REQUIRED'].includes(message) ? message : 'PANE_UNAVAILABLE'
+  const code = ['WRONG_OWNER', 'STALE_TARGET', 'PANE_UNAVAILABLE', 'USER_INTENT_REQUIRED'].includes(message)
+    ? message
+    : 'PANE_UNAVAILABLE'
   answerValue(request, { success: false, code, error: code })
 }
 
 const previewRequestIsCurrent = (deps: ServerRequestContext['deps'], sessionId: string) =>
-  !deps.sessionInterrupted(sessionId) && requestNamesActiveSession({
+  !deps.sessionInterrupted(sessionId) &&
+  requestNamesActiveSession({
     activeSessionId: deps.activeSessionIdRef.current,
     sessionId,
     storedIdForRuntimeId: id => deps.sessionStateByRuntimeIdRef.current.get(id)?.storedSessionId ?? undefined
@@ -553,11 +563,16 @@ const previewContext: Handler = ({ request, sessionId }) => {
     return
   }
 
-  void requestPopoutPreviewRead({ binding_only: true }, owner).then(result => {
-    answerValue(request, result?.binding
-      ? { success: true, binding: result.binding, live_verified: false, selection_provenance: 'renderer_selection' }
-      : { success: false, code: 'PANE_UNAVAILABLE', error: 'PANE_UNAVAILABLE' })
-  }).catch(error => previewFailure(request, error))
+  void requestPopoutPreviewRead({ binding_only: true }, owner)
+    .then(result => {
+      answerValue(
+        request,
+        result?.binding
+          ? { success: true, binding: result.binding, live_verified: false, selection_provenance: 'renderer_selection' }
+          : { success: false, code: 'PANE_UNAVAILABLE', error: 'PANE_UNAVAILABLE' }
+      )
+    })
+    .catch(error => previewFailure(request, error))
 }
 
 const previewReconnect: Handler = ({ deps, request, sessionId, isActiveSession }) => {
@@ -565,9 +580,15 @@ const previewReconnect: Handler = ({ deps, request, sessionId, isActiveSession }
   const owner = previewOwnerFor(sessionId)
   const candidate = activePreviewBinding(owner)
 
-  if (!isActiveSession || !expected || !candidate || !expected.profile_id ||
-      candidate.session_id !== expected.session_id || candidate.window_id !== expected.window_id ||
-      candidate.profile_id !== expected.profile_id) {
+  if (
+    !isActiveSession ||
+    !expected ||
+    !candidate ||
+    !expected.profile_id ||
+    candidate.session_id !== expected.session_id ||
+    candidate.window_id !== expected.window_id ||
+    candidate.profile_id !== expected.profile_id
+  ) {
     previewFailure(request, new Error('WRONG_OWNER'))
 
     return
@@ -579,13 +600,15 @@ const previewReconnect: Handler = ({ deps, request, sessionId, isActiveSession }
     return
   }
 
-  void readActivePreview({ require_live: true, expected_binding: candidate }, owner).then(result => {
-    if (!previewRequestIsCurrent(deps, sessionId) || bindingStatus(candidate, false, owner)) {
-      throw new Error('STALE_TARGET')
-    }
+  void readActivePreview({ require_live: true, expected_binding: candidate }, owner)
+    .then(result => {
+      if (!previewRequestIsCurrent(deps, sessionId) || bindingStatus(candidate, false, owner)) {
+        throw new Error('STALE_TARGET')
+      }
 
-    answerValue(request, { ...result, success: true, live_verified: true, explicit_user_selection: true })
-  }).catch(error => previewFailure(request, error))
+      answerValue(request, { ...result, success: true, live_verified: true, explicit_user_selection: true })
+    })
+    .catch(error => previewFailure(request, error))
 }
 
 const previewOpen: Handler = ({ deps, request, sessionId, isActiveSession }) => {
@@ -601,12 +624,17 @@ const previewOpen: Handler = ({ deps, request, sessionId, isActiveSession }) => 
 
   const signal = trackPreviewTyping(request.id)
 
-  const initialPages = new Map(previewTabsFor(owner).map(tab => {
-    const tabOwner = { ...owner, tabId: tab.id }
-    const binding = activePreviewBinding(tabOwner, true)
+  const initialPages = new Map(
+    previewTabsFor(owner).map(tab => {
+      const tabOwner = { ...owner, tabId: tab.id }
+      const binding = activePreviewBinding(tabOwner, true)
 
-    return [tab.id, { binding, committed: binding ? activePreviewCommittedEpoch(tabOwner, binding.guest_id) : undefined }]
-  }))
+      return [
+        tab.id,
+        { binding, committed: binding ? activePreviewCommittedEpoch(tabOwner, binding.guest_id) : undefined }
+      ]
+    })
+  )
 
   void (async () => {
     const code = expected ? bindingStatus(expected, false, owner, true) : null
@@ -621,7 +649,10 @@ const previewOpen: Handler = ({ deps, request, sessionId, isActiveSession }) => 
 
     const tabId = openPreview(
       { kind: 'url', url, label: str(request.params.label), source: 'agent' },
-      owner.sessionId, owner.runtimeId, owner.profile, expected?.tab_id
+      owner.sessionId,
+      owner.runtimeId,
+      owner.profile,
+      expected?.tab_id
     )
 
     if (!tabId) {
@@ -648,7 +679,9 @@ const previewOpen: Handler = ({ deps, request, sessionId, isActiveSession }) => 
 
         const status = expected ? bindingStatus(expected, true, selectedOwner, true) : null
 
-        if (status) { throw new Error(status) }
+        if (status) {
+          throw new Error(status)
+        }
         beforeRead = activePreviewBinding(selectedOwner, true)
 
         if (beforeRead && observedGuest !== undefined && beforeRead.guest_id !== observedGuest) {
@@ -659,30 +692,40 @@ const previewOpen: Handler = ({ deps, request, sessionId, isActiveSession }) => 
         const result = await readActivePreview({ require_live: true }, selectedOwner)
         const binding = result?.binding
 
-        if (signal.aborted || !previewRequestIsCurrent(deps, sessionId) ||
-          !previewTabsFor(selectedOwner).some(tab => tab.id === tabId && tab.target.url === url)) {
+        if (
+          signal.aborted ||
+          !previewRequestIsCurrent(deps, sessionId) ||
+          !previewTabsFor(selectedOwner).some(tab => tab.id === tabId && tab.target.url === url)
+        ) {
           throw new Error('STALE_TARGET')
         }
 
         if (expected) {
           const currentStatus = bindingStatus(expected, true, selectedOwner, true)
 
-          if (currentStatus) { throw new Error(currentStatus) }
+          if (currentStatus) {
+            throw new Error(currentStatus)
+          }
         }
 
         if (binding) {
           const liveStatus = bindingStatus(binding, false, selectedOwner)
 
-          if (liveStatus) { throw new Error(liveStatus) }
+          if (liveStatus) {
+            throw new Error(liveStatus)
+          }
 
-          if (observedGuest !== undefined && binding.guest_id !== observedGuest) { throw new Error('STALE_TARGET') }
+          if (observedGuest !== undefined && binding.guest_id !== observedGuest) {
+            throw new Error('STALE_TARGET')
+          }
           observedGuest ??= binding.guest_id
         }
 
         const committed = binding ? activePreviewCommittedEpoch(selectedOwner, binding.guest_id) : undefined
 
-        const changed = !initialBinding || (initialPage?.committed !== undefined && committed !== undefined &&
-          committed !== initialPage.committed)
+        const changed =
+          !initialBinding ||
+          (initialPage?.committed !== undefined && committed !== undefined && committed !== initialPage.committed)
 
         if (binding && !result.url.startsWith('about:') && (result.url === url || changed)) {
           answerValue(request, result)
@@ -690,21 +733,30 @@ const previewOpen: Handler = ({ deps, request, sessionId, isActiveSession }) => 
           return
         }
       } catch (error) {
-        if (!(error instanceof Error)) { throw error }
+        if (!(error instanceof Error)) {
+          throw error
+        }
 
         if (error.message !== 'PANE_UNAVAILABLE') {
           const afterRead = activePreviewBinding(selectedOwner, true)
 
-          const frameTransition = /\b(?:STALE_FRAME|PREVIEW_FRAME_UNAVAILABLE)\b|Session with given id not found/.test(error.message)
+          const frameTransition = /\b(?:STALE_FRAME|PREVIEW_FRAME_UNAVAILABLE)\b|Session with given id not found/.test(
+            error.message
+          )
           const epochChanged = beforeRead && afterRead && beforeRead.page_epoch !== afterRead.page_epoch
 
-          const racedNavigation = beforeRead && afterRead && beforeRead.guest_id === afterRead.guest_id &&
+          const racedNavigation =
+            beforeRead &&
+            afterRead &&
+            beforeRead.guest_id === afterRead.guest_id &&
             (observedGuest === undefined || afterRead.guest_id === observedGuest) &&
             previewTabsFor(selectedOwner).some(tab => tab.id === tabId && tab.target.url === url) &&
             ((error.message === 'STALE_TARGET' && epochChanged) ||
               (frameTransition && (epochChanged || isActivePreviewLoading(selectedOwner, afterRead.guest_id))))
 
-          if (!racedNavigation) { throw error }
+          if (!racedNavigation) {
+            throw error
+          }
         }
         // Retry a missing guest or a read interrupted by navigation in the same guest.
       }
@@ -713,7 +765,9 @@ const previewOpen: Handler = ({ deps, request, sessionId, isActiveSession }) => 
     }
 
     throw new Error('PANE_UNAVAILABLE')
-  })().catch(error => previewFailure(request, error)).finally(() => releasePreviewTyping(request.id, signal))
+  })()
+    .catch(error => previewFailure(request, error))
+    .finally(() => releasePreviewTyping(request.id, signal))
 }
 
 const previewClose: Handler = ({ deps, request, sessionId, isActiveSession }) => {
@@ -727,18 +781,21 @@ const previewClose: Handler = ({ deps, request, sessionId, isActiveSession }) =>
   }
 
   const signal = trackPreviewTyping(request.id)
-  void readActivePreview({ require_live: true, expected_binding: expected }, owner).then(result => {
-    if (signal.aborted || !previewRequestIsCurrent(deps, sessionId)) {
-      throw new Error('STALE_TARGET')
-    }
+  void readActivePreview({ require_live: true, expected_binding: expected }, owner)
+    .then(result => {
+      if (signal.aborted || !previewRequestIsCurrent(deps, sessionId)) {
+        throw new Error('STALE_TARGET')
+      }
 
-    if (!result?.binding || result.binding.tab_id !== expected.tab_id) {
-      throw new Error('WRONG_OWNER')
-    }
+      if (!result?.binding || result.binding.tab_id !== expected.tab_id) {
+        throw new Error('WRONG_OWNER')
+      }
 
-    closeRightRailTab(expected.tab_id)
-    answerValue(request, { success: true, closed: true, binding: result.binding })
-  }).catch(error => previewFailure(request, error)).finally(() => releasePreviewTyping(request.id, signal))
+      closeRightRailTab(expected.tab_id)
+      answerValue(request, { success: true, closed: true, binding: result.binding })
+    })
+    .catch(error => previewFailure(request, error))
+    .finally(() => releasePreviewTyping(request.id, signal))
 }
 
 const previewRead: Handler = ({ request, sessionId }) => {
@@ -748,8 +805,14 @@ const previewRead: Handler = ({ request, sessionId }) => {
   // first; a null (no pop-out answered) falls back to the legacy local read.
   // A local read sees only the tabs the requesting session can see.
   const expected = request.params.expected_binding as PreviewBinding | undefined
-  const opts = { count: num(request.params.count), start: num(request.params.start),...(request.params.require_live===true?{require_live:true}:{}),...(request.params.refresh_binding===true?{refresh_binding:true}:{}),...(expected?{expected_binding:expected}:{}) }
-  const owner = boundOwnerFor(sessionId,expected)
+  const opts = {
+    count: num(request.params.count),
+    start: num(request.params.start),
+    ...(request.params.require_live === true ? { require_live: true } : {}),
+    ...(request.params.refresh_binding === true ? { refresh_binding: true } : {}),
+    ...(expected ? { expected_binding: expected } : {})
+  }
+  const owner = boundOwnerFor(sessionId, expected)
 
   void (async () => {
     const result = hasLivePreviewSurface(owner)
@@ -757,7 +820,7 @@ const previewRead: Handler = ({ request, sessionId }) => {
       : ((await requestPopoutPreviewRead(opts, owner)) ?? (await readActivePreview(opts, owner)))
 
     answerValue(request, result)
-  })().catch(error => previewFailure(request,error))
+  })().catch(error => previewFailure(request, error))
 }
 
 const previewAct: Handler = ({ deps, isActiveSession, request, sessionId }) => {
@@ -780,7 +843,7 @@ const previewAct: Handler = ({ deps, isActiveSession, request, sessionId }) => {
   // The agent drives ITS session's page: with a tile focused, the primary's
   // agent must not reach into the tile's tabs (#73890).
   const expected = p.expected_binding as PreviewBinding | undefined
-  const owner = boundOwnerFor(sessionId,expected)
+  const owner = boundOwnerFor(sessionId, expected)
 
   // The keystroke loop has to be able to stop when this request is withdrawn
   // (tool timeout or turn interrupt). The local interrupted flag can flip
@@ -796,7 +859,7 @@ const previewAct: Handler = ({ deps, isActiveSession, request, sessionId }) => {
     : undefined
 
   const action = {
-    ...(expected ? {expectedBinding:expected}:{}),
+    ...(expected ? { expectedBinding: expected } : {}),
     allowShortcut: p.allow_shortcut === true,
     amount: p.amount as never,
     key: p.key as never,
@@ -831,8 +894,11 @@ const previewAct: Handler = ({ deps, isActiveSession, request, sessionId }) => {
 
       answerValue(request, result)
     } catch (error) {
-      if (expected) { previewFailure(request, error) }
-      else { answerValue(request, { error: error instanceof Error ? error.message : String(error), success: false }) }
+      if (expected) {
+        previewFailure(request, error)
+      } else {
+        answerValue(request, { error: error instanceof Error ? error.message : String(error), success: false })
+      }
     } finally {
       if (watch !== undefined) {
         clearInterval(watch)

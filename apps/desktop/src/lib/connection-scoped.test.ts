@@ -36,8 +36,11 @@ describe('connectionScopeSuffix', () => {
 })
 
 it('separates accounts and signed-out state on the same Semantier Workspace origin', () => {
-  const a = { ...remote('default'), transport: 'semantier-workspace-http' as const,
-    workspaceScope: { userId: 'a', workspaceId: 'wa', organizationId: 'org' } }
+  const a = {
+    ...remote('default'),
+    transport: 'semantier-workspace-http' as const,
+    workspaceScope: { userId: 'a', workspaceId: 'wa', organizationId: 'org' }
+  }
 
   const b = { ...a, workspaceScope: { userId: 'b', workspaceId: 'wb', organizationId: 'org' } }
   const signedOut = { ...a, workspaceScope: undefined }
@@ -47,10 +50,12 @@ it('separates accounts and signed-out state on the same Semantier Workspace orig
   expect(connectionScopeSuffix(signedOut)).not.toBe(connectionScopeSuffix(remote('default')))
 })
 
-
 it('loads account-owned persisted values only after that account is authenticated again', () => {
-  const a = { ...remote('default'), transport: 'semantier-workspace-http' as const,
-    workspaceScope: { userId: 'a', workspaceId: 'wa', organizationId: 'org' } }
+  const a = {
+    ...remote('default'),
+    transport: 'semantier-workspace-http' as const,
+    workspaceScope: { userId: 'a', workspaceId: 'wa', organizationId: 'org' }
+  }
 
   const b = { ...a, workspaceScope: { userId: 'b', workspaceId: 'wb', organizationId: 'org' } }
   const value = connectionScopedAtom<string[]>('account-isolation-fixture', [])

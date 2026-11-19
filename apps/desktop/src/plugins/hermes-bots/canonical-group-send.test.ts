@@ -20,15 +20,24 @@ test('uncertain sends reopen with exact identity and attachments, isolated by au
 
   const reopen = () => {
     const journal = preparedJournal(dir, 'http://localhost:5174')
-    vi.stubGlobal('window', { hermesDesktop: { preparedSubmissions: {
-      read: async () => JSON.stringify(journal.read()),
-      update: async (key: string, entry: string | null) => journal.update(key, entry === null ? null : JSON.parse(entry)),
-      compareAndSet: async (key: string, expected: string | null, entry: string | null) => {
-        const { applied, current } = journal.compareAndSet(key, expected && JSON.parse(expected), entry && JSON.parse(entry))
+    vi.stubGlobal('window', {
+      hermesDesktop: {
+        preparedSubmissions: {
+          read: async () => JSON.stringify(journal.read()),
+          update: async (key: string, entry: string | null) =>
+            journal.update(key, entry === null ? null : JSON.parse(entry)),
+          compareAndSet: async (key: string, expected: string | null, entry: string | null) => {
+            const { applied, current } = journal.compareAndSet(
+              key,
+              expected && JSON.parse(expected),
+              entry && JSON.parse(entry)
+            )
 
-        return { applied, current: current === null ? null : JSON.stringify(current) }
+            return { applied, current: current === null ? null : JSON.stringify(current) }
+          }
+        }
       }
-    } } })
+    })
   }
 
   try {
@@ -41,9 +50,15 @@ test('uncertain sends reopen with exact identity and attachments, isolated by au
     payload.attachments[0].path = '/mutated'
     reopen() // The server ACK was lost; no retirement has happened.
     expect(await readCanonicalGroupSend(binding)).toEqual(expected)
-    expect(await prepareCanonicalGroupSend(binding, { text: 'new draft must not replace uncertain input' })).toEqual(expected)
+    expect(await prepareCanonicalGroupSend(binding, { text: 'new draft must not replace uncertain input' })).toEqual(
+      expected
+    )
 
-    for (const other of [{ ...binding, profile: 'other' }, { ...binding, roomId: 'other' }, { ...binding, connectionId: 'other' }]) {
+    for (const other of [
+      { ...binding, profile: 'other' },
+      { ...binding, roomId: 'other' },
+      { ...binding, connectionId: 'other' }
+    ]) {
       expect(await readCanonicalGroupSend(other)).toBeUndefined()
     }
 
@@ -52,22 +67,33 @@ test('uncertain sends reopen with exact identity and attachments, isolated by au
     await retireCanonicalGroupSend(binding, expected.params.event_id)
     reopen()
     expect(await readCanonicalGroupSend(binding)).toBeUndefined()
-    expect((await prepareCanonicalGroupSend(binding, { text: 'fresh intent' })).params.event_id).not.toBe(expected.params.event_id)
-  } finally { fs.rmSync(dir, { recursive: true, force: true }) }
+    expect((await prepareCanonicalGroupSend(binding, { text: 'fresh intent' })).params.event_id).not.toBe(
+      expected.params.event_id
+    )
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('native journal acknowledgement gates send and a failed write cannot downgrade to browser storage', async () => {
   let acknowledge!: () => void
   let entered!: () => void
-  const writing = new Promise<void>(resolve => { entered = resolve })
-  const gate = new Promise<void>(resolve => { acknowledge = resolve })
+  const writing = new Promise<void>(resolve => {
+    entered = resolve
+  })
+  const gate = new Promise<void>(resolve => {
+    acknowledge = resolve
+  })
 
-  const native = { read: async () => '{}', compareAndSet: vi.fn(async (_key: string, _expected: string | null, entry: string | null) => {
-    entered()
-    await gate
+  const native = {
+    read: async () => '{}',
+    compareAndSet: vi.fn(async (_key: string, _expected: string | null, entry: string | null) => {
+      entered()
+      await gate
 
-    return { applied: true, current: entry }
-  }) }
+      return { applied: true, current: entry }
+    })
+  }
 
   const browserWrite = vi.fn()
   vi.stubGlobal('window', { hermesDesktop: { preparedSubmissions: native }, localStorage: { setItem: browserWrite } })

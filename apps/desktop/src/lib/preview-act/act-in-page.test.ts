@@ -797,7 +797,6 @@ describe('scroll', () => {
   })
 })
 
-
 describe('native browser rejection contract', () => {
   it('returns typed correction feedback without clicking an unknown target', () => {
     const holder = page('<button id="save">Save</button>')
@@ -805,7 +804,12 @@ describe('native browser rejection contract', () => {
     const clicked = vi.fn()
     document.getElementById('save')!.addEventListener('click', clicked)
     const result = actInPage(document, holder, { kind: 'click', ref: 'btn-unavailable' })
-    expect(result).toMatchObject({ success: false, code: 'INVALID_ELEMENT_REF', path: 'arguments.ref', recovery: { same_context: true, next_action: 'refresh_elements' } })
+    expect(result).toMatchObject({
+      success: false,
+      code: 'INVALID_ELEMENT_REF',
+      path: 'arguments.ref',
+      recovery: { same_context: true, next_action: 'refresh_elements' }
+    })
     expect(clicked).not.toHaveBeenCalled()
   })
 })

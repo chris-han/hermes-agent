@@ -172,10 +172,13 @@ function OAuthPicker({
   const isConnected = (p: OAuthProvider) => Boolean(p.status?.logged_in) && p.status?.free_tier !== true
 
   const cloud = ordered.find(p => p.id === FEATURED_ID)
+
   // A connected primary stays in Connected; it must not promote another account.
   const featured = cloud
-    ? isConnected(cloud) ? null : cloud
-    : ordered.find(p => p.id === 'nous' && !isConnected(p)) ?? null
+    ? isConnected(cloud)
+      ? null
+      : cloud
+    : (ordered.find(p => p.id === 'nous' && !isConnected(p)) ?? null)
 
   const rest = featured ? ordered.filter(p => p.id !== featured.id) : ordered
   // Keep connected accounts grouped and always visible; only the unconnected
@@ -201,9 +204,12 @@ function OAuthPicker({
       <p className="-mt-2 mb-1 text-[length:var(--conversation-caption-font-size)] leading-(--conversation-caption-line-height) text-(--ui-text-tertiary)">
         {p.intro}
       </p>
-      {featured && (featured.id === FEATURED_ID
-        ? <FeaturedProviderRow onSelect={select} provider={featured} />
-        : <ProviderRow onSelect={select} provider={featured} />)}
+      {featured &&
+        (featured.id === FEATURED_ID ? (
+          <FeaturedProviderRow onSelect={select} provider={featured} />
+        ) : (
+          <ProviderRow onSelect={select} provider={featured} />
+        ))}
 
       {connected.length > 0 && (
         <>
@@ -223,7 +229,13 @@ function OAuthPicker({
       <LocalEndpointRow onOpen={onWantLocalEndpoint} />
       {other.length > 0 && (
         <>
-          <Button aria-expanded={showOther} onClick={() => setShowOther(!showOther)} size="inline" type="button" variant="textStrong">
+          <Button
+            aria-expanded={showOther}
+            onClick={() => setShowOther(!showOther)}
+            size="inline"
+            type="button"
+            variant="textStrong"
+          >
             {showOther ? t.onboarding.collapse : t.onboarding.otherProviders}
           </Button>
           {showOther && other.map(provider => <ProviderRow key={provider.id} onSelect={select} provider={provider} />)}
@@ -342,7 +354,9 @@ function LocalEndpointRow({ onOpen }: { onOpen: (reason: null | string) => void 
       onClick={() => onOpen(null)}
     >
       <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="text-[length:var(--conversation-text-font-size)] font-semibold">{locale === 'zh' ? '添加服务商' : locale === 'zh-hant' ? '新增供應商' : 'Add Provider'}</span>
+        <span className="text-[length:var(--conversation-text-font-size)] font-semibold">
+          {locale === 'zh' ? '添加服务商' : locale === 'zh-hant' ? '新增供應商' : 'Add Provider'}
+        </span>
         <span className="truncate text-[length:var(--conversation-caption-font-size)] leading-5 text-muted-foreground">
           {copy.customDescription}
         </span>
