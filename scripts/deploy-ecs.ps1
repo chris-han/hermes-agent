@@ -35,6 +35,8 @@
   -BuildOnly with -Commit stops after the unsigned package build: no signing, install or publication.
   -SkipLocalInstall signs and publishes without touching the installed app/profile; local acceptance is explicitly skipped.
   -ChannelRecoveryMsix binds the signed ECS predecessor separately when a local pilot is newer than the published channel.
+  -ToolingQualification <signed JSON> allows only the versioned same-run v129 tooling transition.
+  The detached <JSON>.p7s must be signed by the pinned release authority; saved inputs stay immutable.
   -BuildSource must equal <selected Output>\source; detached worktrees share Hermes objects.
   -Latest commits Runtime changes, merges/pushes GitHub main and syncs pinned Hermes before building.
   Dirty Hermes changes are committed and pushed, then require separate qualification before the gitlink advances. Git conflicts stop without discarding work.
@@ -96,6 +98,7 @@ param(
   [string]$ProfileSampleManifest = '',
   [string]$CriticalFileManifest = '',
   [string]$Commit = '',
+  [string]$ToolingQualification = '',
   [string]$BuildCache = 'D:\repo\deliverables\cache\desktop-inputs',
   [string]$BuildPython = '',
   [string]$AcceptanceNodeModules = '',
@@ -118,6 +121,7 @@ $script:sourceOwner = $null
 $script:sourceRecreated = $false
 $script:nativePreflight=$null
 $script:SourceBinding=$null
+$script:qualifiedTooling=$null
 function Assert-NativeReleaseOptions {
   if(!$NativeUpdateFrom){if($ChannelRecoveryMsix){throw 'ChannelRecoveryMsix requires native publish-only mode'};return}
   if(!$NativePublishOnly -or $BuildMode -cne 'Prod' -or !$SkipLocalInstall -or $Latest -or $BuildOnly -or $LocalOnly -or
@@ -293,11 +297,152 @@ function Initialize-ReleasePaths {
     $link=& git.exe @runtimeGitArgs ls-tree HEAD hermes-agent
     if($LASTEXITCODE -ne 0 -or $link -notmatch '^160000 commit ([a-f0-9]{40})\s'){throw 'Cannot inspect recorded Hermes gitlink.'}
     $script:SourceBinding.runtimeHead=[string]$runtimeHead;$script:SourceBinding.hermesGitlink=$Matches[1]
-    if($Commit -and ($Commit -cne $script:SourceBinding.hermesGitlink -or $head -cne $Commit)){
+    Assert-ApplicationToolingBinding
+  }
+  if($ToolingQualification -and !$RuntimeRoot){throw 'Tooling qualification requires Runtime source ownership.'}
+  if($Commit -and !$RuntimeRoot){throw 'Commit builds require the Runtime checkout and its pinned Hermes gitlink.'}
+}
+function Read-ToolingQualification([string]$Path,[string]$Signer) {
+  Assert-NoReparseAncestor $Path
+  Assert-NoReparseAncestor ($Path+'.p7s')
+  $bytes=[IO.File]::ReadAllBytes($Path)
+  $signature=[IO.File]::ReadAllBytes(($Path+'.p7s'))
+  $cms=[Security.Cryptography.Pkcs.SignedCms]::new([Security.Cryptography.Pkcs.ContentInfo]::new($bytes),$true)
+  $cms.Decode($signature)
+  $cms.CheckSignature($true)
+  if($cms.SignerInfos.Count -ne 1 -or $cms.SignerInfos[0].Certificate.Thumbprint -cne $Signer){throw 'Tooling qualification signer is not the release authority.'}
+  $q=[Text.Encoding]::UTF8.GetString($bytes) | ConvertFrom-Json
+  if($q.contract -cne 'semantier-tooling-transition-v1'){throw 'Unknown tooling transition contract.'}
+  $script:qualificationBytes=$bytes;$script:qualificationSignature=$signature
+  return $q
+}
+function Assert-ApplicationToolingBinding {
+  if(!$ToolingQualification){
+    if($Commit -and ($Commit -cne $script:SourceBinding.hermesGitlink -or $script:SourceBinding.toolingHermesHead -cne $Commit)){
       throw 'Requested commit and actual Hermes HEAD must equal the Runtime gitlink; synchronize the pinned source first.'
     }
+    return
   }
-  if($Commit -and !$RuntimeRoot){throw 'Commit builds require the Runtime checkout and its pinned Hermes gitlink.'}
+  # The existing release signer qualifies exact bytes, not an arbitrary caller's certificate.
+  if(!$script:explicitOutput -or !$Commit -or $NewRun -or $Latest -or $BuildMode -cne 'Prod' -or !$LocalOnly -or
+    $DesktopOnly -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly -or $ResumeSigned -or $NativeUpdateFrom){
+    throw 'Tooling transition requires explicit retained Output, Commit, Prod and LocalOnly.'
+  }
+  $q=Read-ToolingQualification $ToolingQualification '57BF15739B4AA447842EAF388856A01B4E5029FF'
+  Assert-ToolingQualificationIdentity $q
+  Assert-QualifiedToolingSource $q $PSCommandPath
+  $script:qualifiedTooling=$q
+}
+function Assert-QualifiedToolingSource($Q,[string]$OperatorPath) {
+  if($q.toolingCommit -cne $script:SourceBinding.toolingHermesHead -or $q.toolingCommit -cne $script:SourceBinding.hermesGitlink -or
+     $q.operatorSha256 -cne (Hash $OperatorPath) -or [IO.Path]::GetFullPath($OperatorPath) -ine (Join-Path $Repository 'scripts/deploy-ecs.ps1')){
+    throw 'Qualified tooling does not match the committed Runtime gitlink and executing operator.'
+  }
+  foreach($path in @('scripts/deploy-ecs.ps1','scripts/bundles/desktop.py','apps/desktop/scripts/run-electron-builder.mjs','pm/lock.json')){
+    $blob=Get-SourceGit $Repository @('rev-parse',('HEAD:'+$path))
+    if((Get-SourceGit $Repository @('hash-object','--path',$path,(Join-Path $Repository $path))) -cne $blob){throw 'Uncommitted tooling input.'}
+  }
+  $link=Get-SourceGit $RuntimeRoot @('ls-tree',$q.applicationRuntime,'hermes-agent')
+  if($link -cnotmatch ('^160000 commit '+$Commit+'\s')){throw 'Frozen application Runtime/gitlink mismatch.'}
+  # The previously qualified residue implementation must remain byte-for-byte equivalent.
+  $baseline=(Get-SourceGit $Repository @('show',($q.recoveryCommit+':scripts/deploy-ecs.ps1'))).Replace("`r`n","`n")
+  $errors=$null
+  $old=[Management.Automation.Language.Parser]::ParseInput($baseline,[ref]$null,[ref]$errors)
+  if($errors){throw 'Qualified recovery source unavailable.'}
+  $current=[Management.Automation.Language.Parser]::ParseFile($OperatorPath,[ref]$null,[ref]$errors)
+  if($errors){throw 'Current tooling parse failed.'}
+  foreach($name in @('Restore-OwnedSourceResidue','Get-ResidueInventory','Assert-ResidueBindings','Initialize-LocalBuildSource','Assert-RegisteredSource','Assert-SourceOwner','Assert-StageInactive')){
+    $a=$old.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name},$true)
+    $b=$current.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name},$true)
+    if(!$a -or !$b -or $a.Extent.Text.Replace("`r`n","`n") -cne $b.Extent.Text.Replace("`r`n","`n")){throw ('Qualified recovery contract changed: '+$name)}
+  }
+}
+function Assert-ToolingQualificationIdentity($Q) {
+  if($Q.contract -cne 'semantier-tooling-transition-v1' -or
+     $Q.applicationCommit -cne '4891d1b294a8c1d78aa98fc746bbd91d4de2ec6b' -or
+     $Q.applicationRuntime -cne 'ea33018bb024f1e445cd592153bfe68a4f90ae2a' -or
+     $Q.originalOperatorSha256 -cne '409eebcb740bd127cd997dc271d920834f70ebc060f1046d002b0f1c9fa50976' -or
+     $Q.recoveryCommit -cne '03341a9501f53ac7a1e668710268b31de0f9e226' -or
+     $Q.recoveryOperatorSha256 -cne '29f4ca416606d8094afd575b903de88761a0b3d271be5012b92ff19c76e33768' -or
+     $Q.version -cne '0.0.129' -or $Q.buildId -cne '8b19a2c012444a959b2370160324402a' -or
+     $Q.run -cne $Output -or $Q.applicationCommit -cne $Commit -or $Q.buildId -cne $BuildId -or
+     $Q.toolingCommit -cnotmatch '^[a-f0-9]{40}$' -or $Q.operatorSha256 -cnotmatch '^[a-f0-9]{64}$'){
+    throw 'Tooling qualification is outside the authorized frozen v129 scope.'
+  }
+}
+function Confirm-ToolingTransition($Record,[string]$Inputs) {
+  if(!$ToolingQualification){
+    if($Record.inputs -cne $Inputs){throw 'Saved source/toolchain configuration changed; preserve the reservation and use a fresh run.'}
+    return
+  }
+  $q=$script:qualifiedTooling
+  if(!$q){throw 'Tooling qualification has not been authenticated.'}
+  Assert-ToolingQualificationIdentity $q
+  $authenticated=[Text.Encoding]::UTF8.GetString($script:qualificationBytes) | ConvertFrom-Json
+  if(($authenticated | ConvertTo-Json -Depth 8 -Compress) -cne ($q | ConvertTo-Json -Depth 8 -Compress)){throw 'Authenticated qualification changed.'}
+  if($q.originalInputs -cne $Record.inputs){throw 'Original inputs differ from signed qualification.'}
+  $old=$Record.inputs | ConvertFrom-Json
+  $new=$Inputs | ConvertFrom-Json
+  if($old.operator -cne $q.originalOperatorSha256 -or $new.operator -cne $q.operatorSha256){throw 'Incorrect old/new tooling hash.'}
+  if(($old.PSObject.Properties.Name -join ',') -cne 'python,node,driver,runner,operator,lock' -or
+     ($new.PSObject.Properties.Name -join ',') -cne 'python,node,driver,runner,operator,lock'){throw 'Unknown tooling inputs schema.'}
+  foreach($name in @('python','node','driver','runner','lock')){
+    if($old.$name -cnotmatch '^[a-f0-9]{64}$' -or $old.$name -cne $new.$name){throw ('Incompatible frozen input: '+$name)}
+  }
+  $leases=[Collections.Generic.List[IDisposable]]::new()
+  try {
+    foreach($path in @((Join-Path $Output '.source.lock'),(Join-Path $BuildCache '.desktop-build.lock'))){
+      Assert-NoReparseAncestor $path
+      $lease=[IO.File]::Open($path,'OpenOrCreate','ReadWrite','None');$leases.Add($lease)
+      $lease.Lock(0,1)
+    }
+    # Re-read after locking; a prior reader cannot authorize a concurrent writer's new state.
+    $locked=Read-CommitBuild $script:statusLog
+    if(($locked | ConvertTo-Json -Depth 32 -Compress) -cne ($Record | ConvertTo-Json -Depth 32 -Compress)){throw 'Build changed before transition lock.'}
+    $owner=Read-SourceOwner
+    Assert-SourceOwner $owner $BuildSource $Commit
+    Assert-StageInactive $owner
+    Assert-NoReparseAncestor $VersionState
+    Assert-NoReparseAncestor $script:statusLog
+    if($IsWindows -and (Get-Acl -LiteralPath $Output).GetOwner([Security.Principal.SecurityIdentifier]).Value -cne
+      [Security.Principal.WindowsIdentity]::GetCurrent().User.Value){throw 'Foreign run ownership.'}
+    $ledger=Get-Content -LiteralPath $VersionState -Raw | ConvertFrom-Json
+    $request=Get-Content -LiteralPath $Record.request -Raw | ConvertFrom-Json
+    if($ledger.kind -cne 'semantier-windows-build-version-v1' -or $ledger.sourceCommit -cne $Commit -or $ledger.version -cne $q.version -or
+       $Record.commit -cne $Commit -or $Record.version -cne $q.version -or $Record.source -cne $BuildSource -or $Record.cache -cne $BuildCache -or
+       $request.commit -cne $Commit -or $request.version -cne $q.version -or $request.buildId -cne $q.buildId -or
+       $request.sequence -ne 129 -or $request.publicBase -cne $Record.publicBase){throw 'Frozen reservation/build request mismatch.'}
+    $evidence=[ordered]@{contract=$q.contract;run=$Output;applicationCommit=$Commit;applicationRuntime=$q.applicationRuntime;
+      version=$q.version;buildId=$q.buildId;originalInputs=$Record.inputs;originalOperatorSha256=$old.operator;
+      toolingCommit=$q.toolingCommit;operatorSha256=$new.operator;recoveryCommit=$q.recoveryCommit;recoveryOperatorSha256=$q.recoveryOperatorSha256;
+      reservationSha256=(Hash $VersionState);requestSha256=(Hash $Record.request);
+      qualification=[Convert]::ToBase64String($script:qualificationBytes);
+      signature=[Convert]::ToBase64String($script:qualificationSignature)}
+    $binding=$evidence | ConvertTo-Json -Depth 8 -Compress
+    $bytes=[IO.File]::ReadAllBytes($script:statusLog)
+    if($q.reservationSha256 -cne $evidence.reservationSha256 -or $q.requestSha256 -cne $evidence.requestSha256 -or
+       $q.checkpointPrefixLength -le 0 -or $q.checkpointPrefixLength -gt $bytes.Length){throw 'Signed frozen run evidence changed.'}
+    $qualifiedPrefix=[byte[]]::new($q.checkpointPrefixLength);[Array]::Copy($bytes,$qualifiedPrefix,$qualifiedPrefix.Length)
+    if([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($qualifiedPrefix)).ToLowerInvariant() -cne $q.checkpointPrefixSha256){throw 'Signed checkpoint prefix changed.'}
+    $found=$false
+    foreach($line in [Text.Encoding]::UTF8.GetString($bytes) -split "`n"){
+      if(!$line.Trim()){continue}
+      try{$event=$line | ConvertFrom-Json -ErrorAction Stop}catch{continue} # Incomplete append is inert; retain its bytes.
+      if($event.type -cne 'tooling-transition'){continue}
+      if($found -or $event.contract -cne $q.contract -or $event.sequence -ne 1 -or $event.binding -cne $binding -or
+         $event.prefixLength -lt 0 -or $event.prefixLength -ge $bytes.Length){throw 'Conflicting tooling transition.'}
+      $prefix=[byte[]]::new($event.prefixLength);[Array]::Copy($bytes,$prefix,$prefix.Length)
+      if([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($prefix)).ToLowerInvariant() -cne $event.prefixSha256){throw 'Historical checkpoint prefix changed.'}
+      $found=$true
+    }
+    if(!$found){ # Revalidation never duplicates a completed transition.
+      if($Record.stage -cne 'reserved'){throw 'Initial tooling transition requires the retained interrupted reservation.'}
+      Write-RunEvent @{type='tooling-transition';contract=$q.contract;sequence=1;at=[DateTime]::UtcNow.ToString('o');binding=$binding;
+        prefixLength=$bytes.Length;prefixSha256=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()}
+    }
+    $durable=[IO.File]::Open($script:statusLog,'Open','Write','Read')
+    try{$durable.Flush($true)}finally{$durable.Dispose()}
+  } finally {foreach($lease in $leases){$lease.Dispose()}}
 }
 function Initialize-ReactCompilerCache([string]$Source) {
   # The admitted Vite config already keys compiled output by module text,
@@ -1707,11 +1852,13 @@ function Build-CommitPackage {
       if($record.($entry.Key) -ine (Join-Path $Output $entry.Value)){throw 'Saved build output escaped the selected run.'}
       Assert-NoReparseAncestor $record.($entry.Key)
     }
-    if(!$record.PSObject.Properties['inputs'] -or $record.inputs -cne $inputs){throw 'Saved source/toolchain configuration changed; preserve the reservation and use a fresh run.'}
+    if(!$record.PSObject.Properties['inputs']){throw 'Saved input identity missing.'}
+    Confirm-ToolingTransition $record $inputs
   }
   if($record -and $record.stage -eq 'cancelled'){
     throw 'This tooling-only version reservation was cancelled. Resume the application source commit and its original run instead.'
   }
+  if($ToolingQualification -and !$record){throw 'Tooling transition cannot create a reservation.'}
   $source=if($record){[string]$record.source}else{$BuildSource}
   $null=Assert-LocalWindowsPath $source
   Initialize-LocalBuildSource $source $Commit
