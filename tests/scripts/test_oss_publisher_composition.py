@@ -142,3 +142,33 @@ if(!$refused){throw 'Historical signed run silently adopted the OSS contract'}
                           capture_output=True,text=True,timeout=30,check=False)
     assert result.returncode==0,result.stderr
     assert result.stdout.startswith('PASS: bound OSS resume')
+
+
+def test_bridge_selects_existing_cli_without_interactive_shell_path(tmp_path,monkeypatch):
+    import hashlib
+    import sys
+    from agents.client_operations import oss_release
+    runtime=Path(oss_release.__file__).resolve().parents[3]
+    home=tmp_path/'home';cli=home/'.local/bin/aliyun';cli.parent.mkdir(parents=True)
+    cli.write_text('#!/bin/sh\nexit 99\n');cli.chmod(0o700)
+    monkeypatch.setenv('HOME',str(home));monkeypatch.setenv('PATH','/usr/bin')
+    package=tmp_path/'signed-setup.exe';package.write_bytes(b'bounded signed-Setup fixture')
+    result=tmp_path/'result.json';calls=[]
+    class Objects:
+        def __init__(self,credentials):pass
+        def put_once(self,key,path,sha,**kwargs):calls.append(('put',key))
+        def head_identity(self,key,sha,size):calls.append(('head',key))
+        def verify(self,key,sha,size):calls.append(('small-get',key))
+    monkeypatch.setattr(oss_release,'assume_role',lambda role:None)
+    monkeypatch.setattr(oss_release,'ReleaseObjects',Objects)
+    files=['src/agents/client_operations/oss_release.py','hermes-agent/scripts/releases/channel1.py','hermes-agent/hermes_cli/release_channels.py']
+    hashes=[hashlib.sha256((runtime/f).read_text(encoding='utf-8-sig').encode()).hexdigest() for f in files]
+    monkeypatch.setattr(sys,'argv',['bridge',str(runtime),'setup',str(package),'-',str(result),*hashes])
+    source=(ROOT/'scripts/deploy-ecs-channel1.ps1').read_text()
+    code=source.split('function Invoke-OssByteOperation(',1)[1].split("$code=@'\n",1)[1].split("\n'@",1)[0]
+    previous=sys.path[:]
+    try:exec(code,{})
+    finally:sys.path[:]=previous
+    assert shutil.which('aliyun')==str(cli)
+    assert [c[0] for c in calls]==['put','head','small-get']
+    assert result.is_file()
