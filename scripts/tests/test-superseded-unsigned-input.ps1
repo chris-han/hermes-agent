@@ -17,6 +17,7 @@ try {
  $prior=@{result='STOP';publication='NOT_STARTED';ossFullTransferCount=1;sha256=(Hash $signed);unsignedSha256=(Hash $unsigned);plan=@{version='0.0.131.0';sourceCommit=('a'*40)}}
  $resultPath=Join-Path $root 'result.json';$prior|ConvertTo-Json|Set-Content $resultPath
  $owner=@{kind='native-git-worktree-v1';run=$root;source=(Join-Path $root 'source');repository=$Repository;cache=$BuildCache;commit=('a'*40);pid=99999999;started='2000-01-01T00:00:00.0000000Z'}
+ foreach($name in @('run','source','repository','cache')){$owner[$name]=$owner[$name].Replace('\','\\')}
  @{type='source-owner';owner=$owner}|ConvertTo-Json -Compress|Set-Content (Join-Path $root 'checkpoints.jsonl')
  $original=[IO.File]::ReadAllText($resultPath)
  $prior.publication='PUBLISHED';$prior|ConvertTo-Json|Set-Content $resultPath;Reject {Remove-SupersededUnsignedInput $root};[IO.File]::WriteAllText($resultPath,$original)

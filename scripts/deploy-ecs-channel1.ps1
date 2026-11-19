@@ -125,7 +125,7 @@ function Test-NativeCompletedRelease {
   $path=Join-Path $Output 'result.json'
   if(!(Test-Path -LiteralPath $path)){return $false}
   $saved=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
-  if($NativePublishOnly -and $saved.result -cin @('OSS_PUBLISHED_SETUP_VERIFIED_NATIVE_NOT_RUN')){
+  if($NativePublishOnly -and $saved.result -cin @('OSS_PUBLISHED_SETUP_VERIFIED_NATIVE_NOT_RUN','OSS_PUBLISHED_RETENTION_PENDING')){
     $applicationCommit=if($Commit){$Commit}else{$SourceCommit}
     if($saved.plan.sourceCommit -cne $applicationCommit -or $saved.plan.version -cne $ExpectedVersion -or
       $saved.signedMsix -ine (Join-Path $Output 'SemantierAgent.msix') -or (Hash $saved.signedMsix) -cne $saved.sha256){throw 'Completed publication binding changed'}
@@ -144,6 +144,19 @@ function Test-NativeCompletedRelease {
     $saved | Add-Member -NotePropertyName nativeAcceptance -NotePropertyValue 'NOT_RUN_OWNER_MANUAL' -Force
     $saved | Add-Member -NotePropertyName nativePublicAfterPointer -NotePropertyValue $public -Force
     $saved | Add-Member -NotePropertyName revalidatedAt -NotePropertyValue ([DateTime]::UtcNow.ToString('o')) -Force
+    Save-Json $saved $path
+    if(!$SupersededBuildOutput -and $saved.plan.PSObject.Properties['supersededBuildOutput']){$SupersededBuildOutput=[string]$saved.plan.supersededBuildOutput}
+    try {
+      $retention=Invoke-OssByteOperation 'retention' $saved.signedMsix (Join-Path $Output 'channel1-metadata.json') (Join-Path $Output 'oss-retention.json')
+      $saved | Add-Member -NotePropertyName ossRetention -NotePropertyValue $retention -Force
+      $saved.result='OSS_PUBLISHED_SETUP_VERIFIED_NATIVE_NOT_RUN'
+    } catch {
+      $saved.result='OSS_PUBLISHED_RETENTION_PENDING'
+      $saved | Add-Member -NotePropertyName retentionError -NotePropertyValue $_.Exception.Message -Force
+      Save-Json $saved $path
+      Write-Warning 'Verified active head preserved; OSS retention pending. No full transfer retry.'
+      return $true
+    }
     Save-Json $saved $path
     Report-Status 'PASS: ECS publication revalidated; native update remains manual. No allocation, signing, upload or installation.'
     return $true
@@ -245,13 +258,19 @@ function Invoke-OssByteOperation([string]$Mode,[string]$Artifact,[string]$Metada
     if($LASTEXITCODE -ne 0 -or $metadataOutput.Count -ne 1){throw 'Cannot resolve pinned metadata path'}
     $linuxMetadata=([string]$metadataOutput[0]).Trim()
   }
+  $linuxSuperseded='-'
+  if($Mode -ceq 'retention' -and $SupersededBuildOutput){
+    $converted=@(& $wsl -d $OssWslDistro --exec wslpath -u $SupersededBuildOutput)
+    if($LASTEXITCODE -ne 0 -or $converted.Count -ne 1){throw 'Cannot bind superseded release for retention'}
+    $linuxSuperseded=([string]$converted[0]).Trim()
+  }
   $core=Join-Path $script:RuntimeRoot 'src/agents/client_operations/oss_release.py'
   $publisher=Join-Path $Repository 'scripts/releases/channel1.py'
   $protocol=Join-Path $Repository 'hermes_cli/release_channels.py'
   $code=@'
 import hashlib,importlib.util,json,os,sys
 from pathlib import Path
-root,mode,artifact,metadata,output,core_sha,publisher_sha,protocol_sha,previous_setup_sha=sys.argv[1:]
+root,mode,artifact,metadata,output,core_sha,publisher_sha,protocol_sha,previous_setup_sha,superseded=sys.argv[1:]
 root=Path(root)
 cli=Path.home()/'.local/bin/aliyun'
 if not cli.is_file() or not os.access(cli,os.X_OK):raise ValueError('Existing WSL account CLI unavailable')
@@ -266,6 +285,7 @@ path=root/'hermes-agent/scripts/releases/channel1.py'
 spec=importlib.util.spec_from_file_location('oss_channel1_owner',path);owner=importlib.util.module_from_spec(spec);spec.loader.exec_module(owner)
 artifact=Path(artifact);output=Path(output)
 if mode=='msix':result=owner.stage_oss(artifact,metadata,output,release_bytes=True)
+elif mode=='retention':result=owner.retire_oss_previous(artifact,metadata,output,None if superseded=='-' else superseded)
 else:
  if not artifact.is_file() or artifact.is_symlink() or not 0<artifact.stat().st_size<=2097152:raise ValueError('Small signed Setup required')
  with artifact.open('rb') as stream:sha=hashlib.file_digest(stream,'sha256').hexdigest()
@@ -282,10 +302,12 @@ print(json.dumps(result,separators=(',',':')))
   $entry="import base64;exec(base64.b64decode('$encoded'))"
   Report-Status ('Scoped WSL OSS operation: '+$Mode+'; no active pointer write')
   $previousSetup=if($Mode -ceq 'setup' -and $OssPreviousSetupSha256){$OssPreviousSetupSha256}else{'-'}
-  $body=& $wsl -d $OssWslDistro --exec ("$OssRuntimeRoot/.venv/bin/python") -B -c $entry $OssRuntimeRoot $Mode $linuxArtifact $linuxMetadata $linuxResult (Get-OssSourceHash $core) (Get-OssSourceHash $publisher) (Get-OssSourceHash $protocol) $previousSetup
+  $body=& $wsl -d $OssWslDistro --exec ("$OssRuntimeRoot/.venv/bin/python") -B -c $entry $OssRuntimeRoot $Mode $linuxArtifact $linuxMetadata $linuxResult (Get-OssSourceHash $core) (Get-OssSourceHash $publisher) (Get-OssSourceHash $protocol) $previousSetup $linuxSuperseded
   if($LASTEXITCODE -ne 0){throw 'Scoped WSL OSS byte operation failed; no credential or authority fallback'}
   $result=($body -join "`n")|ConvertFrom-Json
-  if($result.state -cnotin @('OSS_BYTES_STAGED_NOT_ACTIVE','OSS_SETUP_OBJECT_VERIFIED_NOT_SELECTED')){throw 'Unexpected OSS byte operation result'}
+  if($Mode -ceq 'retention'){
+    if($result.result -cne 'ONE_ACTIVE_MSIX_AND_SETUP'){throw 'OSS retention is incomplete'}
+  }elseif($result.state -cnotin @('OSS_BYTES_STAGED_NOT_ACTIVE','OSS_SETUP_OBJECT_VERIFIED_NOT_SELECTED')){throw 'Unexpected OSS byte operation result'}
   return $result
 }
 function Get-OssManifestHash([string]$Metadata) {

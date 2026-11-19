@@ -954,3 +954,65 @@ def test_direct_oss_version_path_uses_real_prepared_metadata_without_private_rol
     assert result['key']=='releases/channel-builds/1.2.132.4/SemantierAgent.msix'
     assert result['storagePolicy']=='DIRECT_PUBLISH' and roles==['publish']
     assert [method for method,key in calls]==['PUT','HEAD']
+
+
+def test_post_success_oss_retention_keeps_active_and_deletes_only_bound_previous(tmp_path,monkeypatch):
+    from agents.client_operations import oss_release
+    from contextlib import contextmanager
+    old=tmp_path/'old';package(old,131,version='1.2.131.4')
+    current=tmp_path/'current';request,_,_=package(current,132,version='1.2.132.4')
+    data=json.loads((current/'channel1-metadata.json').read_bytes());manifest=data['manifest'];active=manifest['packages'][0]['artifact']
+    prior=json.loads((old/'channel1-metadata.json').read_bytes())['manifest']
+    record=channel1._record(prior,None,protocol)
+    proof={'status':'DOWNLOADED_VERIFIED_NOT_INSTALLED','sha256':active['sha256'],
+           'manifestSha256':hashlib.sha256(protocol.canonical_json(manifest)).hexdigest(),'buildId':request['buildId']}
+    receipt={'publicationVerification':'PASS','ossFullTransferCount':1,'ossSetupQualification':proof,
+             'nativePreflight':{'remote':{'manifest':prior,'record':record}},
+             'publication':json.dumps({'buildId':request['buildId'],'manifestSha256':proof['manifestSha256'],'channelSha256':'a'*64}),
+             'plan':{'ssh':'root@123.57.184.194','remoteRoot':'/opt/semantier-client-distribution/channel1-storage-root/releases'}}
+    (current/'result.json').write_text(json.dumps(receipt))
+    obsolete=prior['packages'][0]['artifact'];objects={obsolete['key']:obsolete,active['key']:active}
+    calls=[];locked=[];account=[oss_release.ACCOUNT]
+    @contextmanager
+    def guard(target,root,head):
+        assert head['buildId']==request['buildId'];locked.append(True)
+        try:yield types.SimpleNamespace(poll=lambda:None)
+        finally:locked.pop()
+    monkeypatch.setattr(channel1,'_oss_retention_lock',guard)
+    monkeypatch.setattr(channel1,'_verify_oss_head',lambda row:None)
+    def api(args,**kwargs):
+        if args[1:]==['sts','GetCallerIdentity']:
+            return types.SimpleNamespace(returncode=0,stdout=json.dumps({'AccountId':account[0]}),stderr='')
+        assert locked,'Delete/readback outside publisher lock'
+        if 'get-bucket-versioning' in args:
+            return types.SimpleNamespace(returncode=0,stdout='<VersioningConfiguration/>',stderr='')
+        if 'list-multipart-uploads' in args:
+            return types.SimpleNamespace(returncode=0,stdout='<ListMultipartUploadsResult><Bucket>'+oss_release.BUCKET+'</Bucket><IsTruncated>false</IsTruncated></ListMultipartUploadsResult>',stderr='')
+        key=args[-1]
+        if 'head-object' in args:
+            row=objects.get(key)
+            if row is None:return types.SimpleNamespace(returncode=1,stdout='',stderr='NoSuchKey')
+            return types.SimpleNamespace(returncode=0,stdout=json.dumps({'Header':{'X-Oss-Meta-Sha256':[row['sha256']],'Content-Length':[str(row['size'])]}}),stderr='')
+        if 'delete-object' in args:
+            calls.append(key);objects.pop(key)
+            return types.SimpleNamespace(returncode=0,stdout='{}',stderr='')
+        return types.SimpleNamespace(returncode=0,stdout=json.dumps({'complete':True,'items':[{'key':active['key']},{'key':'releases/installers/semantier-setup-ch1.exe'}]}),stderr='')
+    monkeypatch.setattr(channel1.subprocess,'run',api)
+    output=current/'oss-retention.json'
+    account[0]='foreign'
+    with pytest.raises(ValueError,match='account'):channel1.retire_oss_previous(current/'SemantierAgent.msix',current/'channel1-metadata.json',output)
+    account[0]=oss_release.ACCOUNT
+    objects[obsolete['key']]={**obsolete,'sha256':'c'*64}
+    with pytest.raises(ValueError,match='identity'):channel1.retire_oss_previous(current/'SemantierAgent.msix',current/'channel1-metadata.json',output)
+    assert not calls and active['key'] in objects
+    objects[obsolete['key']]=obsolete
+    value=channel1.retire_oss_previous(current/'SemantierAgent.msix',current/'channel1-metadata.json',output)
+    assert value['result']=='ONE_ACTIVE_MSIX_AND_SETUP' and calls==[obsolete['key']]
+    assert active['key'] in objects
+    receipt['publication']=['sftp> progress',receipt['publication']]
+    (current/'result.json').write_text(json.dumps(receipt))
+    assert channel1.retire_oss_previous(current/'SemantierAgent.msix',current/'channel1-metadata.json',output)==value
+    assert calls==[obsolete['key']]
+    receipt['publicationVerification']='PENDING';(current/'result.json').write_text(json.dumps(receipt))
+    with pytest.raises(ValueError,match='qualification'):channel1.retire_oss_previous(current/'SemantierAgent.msix',current/'channel1-metadata.json',output)
+    assert calls==[obsolete['key']]

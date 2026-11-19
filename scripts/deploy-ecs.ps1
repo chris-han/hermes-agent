@@ -690,7 +690,7 @@ function Assert-StageInactive($Owner) {
 function Remove-SupersededUnsignedInput([string]$Run) {
   # Only the obsolete unsigned input is disposable. Signed/cache/history stay.
   $Run=[IO.Path]::GetFullPath($Run)
-  if($Run -ine $SupersededBuildOutput -or $Run -ieq $Output -or
+  if($Run -ine [IO.Path]::GetFullPath($SupersededBuildOutput) -or $Run -ieq [IO.Path]::GetFullPath($Output) -or
      (Split-Path -Parent $Run) -ine 'D:\repo\deliverables\work' -or
      (Split-Path -Leaf $Run) -cnotmatch '^ecs-deploy-[0-9]{8}-[0-9]{6}-[a-f0-9]{8}$'){
     throw 'Explicit superseded native build run required'
@@ -709,9 +709,12 @@ function Remove-SupersededUnsignedInput([string]$Run) {
     $event=$line|ConvertFrom-Json
     if($event.type -ceq 'source-owner'){$owner=$event.owner}
   }
+  if($owner){
+    foreach($name in @('run','source','repository','cache')){$owner.$name=[IO.Path]::GetFullPath([string]$owner.$name)}
+  }
   if(!$owner -or $owner.kind -cne 'native-git-worktree-v1' -or $owner.run -ine $Run -or
-     $owner.source -ine (Join-Path $Run 'source') -or $owner.repository -ine $Repository -or
-     $owner.cache -ine $BuildCache -or $owner.commit -cne $prior.plan.sourceCommit){throw 'Superseded source owner differs'}
+     $owner.source -ine (Join-Path $Run 'source') -or $owner.repository -ine [IO.Path]::GetFullPath($Repository) -or
+     $owner.cache -ine [IO.Path]::GetFullPath($BuildCache) -or $owner.commit -cne $prior.plan.sourceCommit){throw 'Superseded source owner differs'}
   $leases=[Collections.Generic.List[IDisposable]]::new()
   try {
     foreach($path in @((Join-Path $Run '.source.lock'),(Join-Path $BuildCache '.desktop-build.lock'))){
@@ -2099,7 +2102,7 @@ function Build-CommitPackage {
     [ordered]@{commit=$Commit;builder='existing scripts/bundles/desktop.py --prepare-only / --prepared';
       version='reserve next version using existing next-windows-build-version.ps1; reuse on resume';
       source=$script:SourceBinding;localBuildSource=$BuildSource;credentialsEnv=$CredentialsEnv;python=$BuildPython;node=$Node;
-      mode=$BuildMode;verification=($(if($BuildMode -eq 'Beta'){'SKIPPED_BETA'}else{'REQUIRED_PROD'}));cache=$BuildCache;output=$Output;publish=(!$LocalOnly -and !$BuildOnly);unsignedOnly=[bool]$BuildOnly} | ConvertTo-Json
+      supersededBuildOutput=$SupersededBuildOutput;mode=$BuildMode;verification=($(if($BuildMode -eq 'Beta'){'SKIPPED_BETA'}else{'REQUIRED_PROD'}));cache=$BuildCache;output=$Output;publish=(!$LocalOnly -and !$BuildOnly);unsignedOnly=[bool]$BuildOnly} | ConvertTo-Json
     return
   }
   if(!(Test-Path -LiteralPath $BuildPython -PathType Leaf)){throw 'Existing build Python is unavailable; specify -BuildPython.'}
@@ -2382,7 +2385,7 @@ $plan = [ordered]@{input=$Msix;version=$Version;sourceCommit=$SourceCommit;ssh=$
   buildId=$BuildId;
   remoteRoot=$RemoteRoot;fixedMsixUrl="$PublicBase/releases/SemantierAgent.msix";
   profileBackup=(Join-Path $Output 'profile-backup');output=$Output;
-  mode=$BuildMode;verification=($(if($BuildMode -eq 'Beta'){'SKIPPED_BETA'}else{'REQUIRED_PROD'}));stages=@('verify existing input','sign one MSIX','check independently published Setup',
+  supersededBuildOutput=$SupersededBuildOutput;mode=$BuildMode;verification=($(if($BuildMode -eq 'Beta'){'SKIPPED_BETA'}else{'REQUIRED_PROD'}));stages=@('verify existing input','sign one MSIX','check independently published Setup',
     'back up profile','install and observe Electron/real PTY','SFTP reput upload with progress to unpublished directory',
     'verify remote hash','atomic replace stable MSIX and commit current channel metadata',
     $(if($VerifyPublicDownload){'explicit full public H3 download and hash'}else{'lightweight public H3 HEAD; no package body download'}),
@@ -2729,7 +2732,19 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output);let app;const err
     $receipt.publicReadback='OSS bounded Range bytes and retained single Setup full download match signed package; cloud metadata closure verified'
     $receipt.nativeAcceptance='NOT_RUN_OWNER_MANUAL'
     $receipt.publicationStage='OSS_PUBLISHED_SETUP_VERIFIED_NATIVE_NOT_RUN'
-    $receipt.cleanup='RECOVERY_RETAINED_PENDING_ENTRYPOINT_CUTOVER_AND_LEGACY_HOST_RETIREMENT'
+    # Once old bytes may be retired, cleanup failure must preserve the verified head.
+    Save-Json $receipt (Join-Path $Output 'result.json')
+    try {
+      $receipt.ossRetention=Invoke-OssByteOperation 'retention' $signed (Join-Path $Output 'channel1-metadata.json') (Join-Path $Output 'oss-retention.json')
+      $receipt.cleanup='OSS_ONE_ACTIVE_MSIX_AND_SETUP_ECS_RECOVERY_RETAINED_PENDING_CUTOVER'
+      Complete-Checkpoint 'oss-retention'
+    } catch {
+      $receipt.result='OSS_PUBLISHED_RETENTION_PENDING';$receipt.retentionError=$_.Exception.Message
+      $receipt.cleanup='PENDING_VERIFIED_ACTIVE_HEAD_PRESERVED'
+      Save-Json $receipt (Join-Path $Output 'result.json')
+      Report-Status ('Verified release retained; OSS cleanup pending: '+$_.Exception.Message)
+      return
+    }
     $receipt.installedVersion=(Get-AppxPackage -Name $identity).Version.ToString()
     Complete-Checkpoint 'finished'
     return
