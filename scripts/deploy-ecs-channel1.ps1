@@ -222,12 +222,20 @@ function Invoke-OssByteOperation([string]$Mode,[string]$Artifact,[string]$Metada
      $OssRuntimeRoot -cnotmatch '^/home/[A-Za-z0-9_./-]+$' -or $OssRuntimeRoot.Contains('/../') -or
      $OssWslDistro -cnotmatch '^[A-Za-z0-9_.-]+$'){throw 'Invalid pinned WSL OSS owner configuration'}
   $wsl=Join-Path $env:SystemRoot 'System32/wsl.exe'
-  $linuxArtifact=(& $wsl -d $OssWslDistro -- wslpath -u $Artifact).Trim()
-  if($LASTEXITCODE -ne 0){throw 'Cannot resolve signed artifact in the selected WSL owner'}
-  $linuxResult=(& $wsl -d $OssWslDistro -- wslpath -u $ResultPath).Trim()
-  if($LASTEXITCODE -ne 0){throw 'Cannot resolve OSS result path'}
+  # --exec bypasses the default Linux shell, preserving Windows backslashes
+  # and the Python program as literal argv rather than reparsing shell text.
+  $artifactOutput=@(& $wsl -d $OssWslDistro --exec wslpath -u $Artifact)
+  if($LASTEXITCODE -ne 0 -or $artifactOutput.Count -ne 1){throw 'Cannot resolve signed artifact in the selected WSL owner'}
+  $linuxArtifact=([string]$artifactOutput[0]).Trim()
+  $resultOutput=@(& $wsl -d $OssWslDistro --exec wslpath -u $ResultPath)
+  if($LASTEXITCODE -ne 0 -or $resultOutput.Count -ne 1){throw 'Cannot resolve OSS result path'}
+  $linuxResult=([string]$resultOutput[0]).Trim()
   $linuxMetadata='-'
-  if($Metadata){$linuxMetadata=(& $wsl -d $OssWslDistro -- wslpath -u $Metadata).Trim();if($LASTEXITCODE -ne 0){throw 'Cannot resolve pinned metadata path'}}
+  if($Metadata){
+    $metadataOutput=@(& $wsl -d $OssWslDistro --exec wslpath -u $Metadata)
+    if($LASTEXITCODE -ne 0 -or $metadataOutput.Count -ne 1){throw 'Cannot resolve pinned metadata path'}
+    $linuxMetadata=([string]$metadataOutput[0]).Trim()
+  }
   $core=Join-Path $script:RuntimeRoot 'src/agents/client_operations/oss_release.py'
   $publisher=Join-Path $Repository 'scripts/releases/channel1.py'
   $protocol=Join-Path $Repository 'hermes_cli/release_channels.py'
@@ -261,7 +269,7 @@ print(json.dumps(result,separators=(',',':')))
   $encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($code))
   $entry="import base64;exec(base64.b64decode('$encoded'))"
   Report-Status ('Scoped WSL OSS operation: '+$Mode+'; no active pointer write')
-  $body=& $wsl -d $OssWslDistro -- ("$OssRuntimeRoot/.venv/bin/python") -B -c $entry $OssRuntimeRoot $Mode $linuxArtifact $linuxMetadata $linuxResult (Get-OssSourceHash $core) (Get-OssSourceHash $publisher) (Get-OssSourceHash $protocol)
+  $body=& $wsl -d $OssWslDistro --exec ("$OssRuntimeRoot/.venv/bin/python") -B -c $entry $OssRuntimeRoot $Mode $linuxArtifact $linuxMetadata $linuxResult (Get-OssSourceHash $core) (Get-OssSourceHash $publisher) (Get-OssSourceHash $protocol)
   if($LASTEXITCODE -ne 0){throw 'Scoped WSL OSS byte operation failed; no credential or authority fallback'}
   $result=($body -join "`n")|ConvertFrom-Json
   if($result.state -cnotin @('OSS_BYTES_STAGED_NOT_ACTIVE','OSS_SETUP_OBJECT_VERIFIED_NOT_SELECTED')){throw 'Unexpected OSS byte operation result'}
