@@ -37,7 +37,7 @@ function Test-NativeGateway($Package,[string]$ProfileHome) {
   return @{pid=$process.ProcessId;birth=$process.CreationDate.ToUniversalTime().ToString('o');home=$ProfileHome;executable=$process.ExecutablePath;sid=$sid;session=$process.SessionId}
 }
 function Test-NativeChannelRecovery($Remote,[string]$Path) {
-  if($Path -ine $RecoveryMsix){Require-Signature $Path}
+  if($OssSetupQualification -or $Path -ine $RecoveryMsix){Require-Signature $Path}
   if((Hash $Path) -cne $Remote.packageSha256){throw 'Signed channel recovery and ECS baseline package mismatch'}
   $archive=[IO.Compression.ZipFile]::OpenRead($Path)
   try{[xml]$manifest=Read-ZipText $archive 'AppxManifest.xml'}finally{$archive.Dispose()}
@@ -48,6 +48,15 @@ function Test-NativeChannelRecovery($Remote,[string]$Path) {
   }
   if([Version]$ExpectedVersion -le [Version]$version){throw 'Native target must advance both installed and published baselines'}
   return @{path=$Path;version=$version;sha256=$Remote.packageSha256}
+}
+function Get-NativeLocalRecovery($Package) {
+  if($BuildMode -ceq 'Prod' -and $OssSetupQualification -and $NativePublishOnly -and $SkipLocalInstall){
+    return @{result='NOT_RUN_PUBLISH_ONLY_NO_INSTALL';path=$null;signature=$null;sha256=$null}
+  }
+  Require-Signature $RecoveryMsix
+  $signature=Get-PackageSignatureHash $RecoveryMsix
+  if((Hash (Join-Path $Package.InstallLocation 'AppxSignature.p7x')) -cne $signature){throw 'Recovery package does not match installed baseline signature'}
+  return @{result='VERIFIED_LOCAL_RECOVERY';path=$RecoveryMsix;signature=$signature;sha256=(Hash $RecoveryMsix)}
 }
 function Test-NativeReleasePreflight {
   if($RemoteRoot -cnotmatch '^/opt/[A-Za-z0-9_/-]+/releases$' -or $RemoteRoot.Contains('/../') -or
@@ -60,9 +69,8 @@ function Test-NativeReleasePreflight {
     $package[0].Architecture.ToString() -ine 'X64'){throw 'Installed baseline identity/version/status mismatch'}
   $certificate=Get-Item ('Cert:/CurrentUser/My/'+$Thumbprint)
   if(!$certificate.HasPrivateKey -or $certificate.Subject -cne $publisher -or $certificate.NotAfter.ToUniversalTime() -le [DateTime]::UtcNow){throw 'Native release signer unavailable'}
-  Require-Signature $RecoveryMsix
-  $signature=Get-PackageSignatureHash $RecoveryMsix
-  if((Hash (Join-Path $package[0].InstallLocation 'AppxSignature.p7x')) -cne $signature){throw 'Recovery package does not match installed baseline signature'}
+  $localRecovery=Get-NativeLocalRecovery $package[0]
+  $signature=$localRecovery.signature
   if($OssSetupQualification -and $NativePublishOnly -and $SkipLocalInstall){
     # This path never starts a package deployment or touches the installed profile.
     $journalReadiness=@{result='NOT_RUN_PUBLISH_ONLY_NO_INSTALL'}
@@ -92,6 +100,7 @@ function Test-NativeReleasePreflight {
   }
   elseif($saved){if(($saved.version+'.0') -cne $ExpectedVersion){throw 'Saved reservation differs from requested version'}}
   elseif(([Version]($ledger.version+'.0')).Build+1 -ne ([Version]$ExpectedVersion).Build){throw 'Next version reservation differs from explicit target'}
+  if($SupersededBuildOutput -and !$PreflightOnly -and (Get-PSDrive ([IO.Path]::GetPathRoot($Output).Substring(0,1))).Free -lt 12GB){$null=Remove-SupersededUnsignedInput $SupersededBuildOutput}
   if((Get-PSDrive ([IO.Path]::GetPathRoot($Output).Substring(0,1))).Free -lt 12GB){throw 'Insufficient native build space'}
   $code=@'
 import hashlib,json,pathlib,sys
@@ -102,10 +111,15 @@ r=json.loads(body);h=r['nativeHead'];m=root/h['manifestKey'];b=m.read_bytes()
 assert hashlib.sha256(b).hexdigest()==h['sha256'];manifest=json.loads(b)
 assert manifest['request']['identity']['msixAppIdWithOrg']==identity and r['state']=='active'
 row=manifest['packages'][0];a=root/row['artifact']['key']
-with a.open('rb') as stream:assert hashlib.file_digest(stream,'sha256').hexdigest()==row['artifact']['sha256']
-assert a.samefile(root/'releases/SemantierAgent.msix')
+if row.get('native',{}).get('schema')==2:
+ assert row['native']['packageBase']=='https://assets.semantier.cn'
+ assert row['artifact']['key']=='releases/channel-builds/'+h['buildId']+'/SemantierAgent.msix'
+ assert not a.exists(),'OSS release must not have an ECS package body'
+else:
+ with a.open('rb') as stream:assert hashlib.file_digest(stream,'sha256').hexdigest()==row['artifact']['sha256']
+ assert a.samefile(root/'releases/SemantierAgent.msix')
+ assert (root/'releases/installers/semantier-setup-ch1.exe').is_file()
 assert (root/row['feed']['key']).is_file()
-assert (root/'releases/installers/semantier-setup-ch1.exe').is_file()
 print(json.dumps({'pointerSha256':expected,'record':r,'manifest':manifest,'packageSha256':row['artifact']['sha256'],
  'caddySha256':hashlib.sha256(pathlib.Path('/opt/semantier-cloud-live-v1/Caddyfile').read_bytes()).hexdigest()}))
 '@
@@ -113,10 +127,11 @@ print(json.dumps({'pointerSha256':expected,'record':r,'manifest':manifest,'packa
   $remote=Ssh "printf '%s' '$encoded' | base64 -d | python3 - '$RemoteRoot' '$ExpectedChannelSha256' '$identity'"
   $remote=$remote | ConvertFrom-Json
   $channelRecovery=Test-NativeChannelRecovery $remote $(if($ChannelRecoveryMsix){$ChannelRecoveryMsix}else{$RecoveryMsix})
-  $public=Test-NativePublic $remote.manifest $channelRecovery.path -Active -LegacyBaseline
-  return @{result='PASS';stage='READ_ONLY_PREFLIGHT';producedAt=[DateTime]::UtcNow.ToString('o');source=$script:SourceBinding;
+  $legacyBaseline=$remote.manifest.packages[0].native.schema -ne 2
+  $public=Test-NativePublic $remote.manifest $channelRecovery.path -Active -LegacyBaseline:$legacyBaseline
+  return @{result='PASS';stage=$(if($PreflightOnly){'READ_ONLY_PREFLIGHT'}else{'PREPUBLICATION_PREFLIGHT'});producedAt=[DateTime]::UtcNow.ToString('o');source=$script:SourceBinding;
     journalReadiness=$journalReadiness;baseline=$NativeUpdateFrom;target=$ExpectedVersion;family=$package[0].PackageFamilyName;signature=$signature;
-    recoveryMsix=$RecoveryMsix;recoverySha256=(Hash $RecoveryMsix);channelRecovery=$channelRecovery;remote=$remote;gateway=$gateway;files=$samples;
+    localBaselineRecovery=$localRecovery.result;recoveryMsix=$localRecovery.path;recoverySha256=$localRecovery.sha256;channelRecovery=$channelRecovery;remote=$remote;gateway=$gateway;files=$samples;
     visibleWindow=$(if($window){'PRESENT'}else{'NOT_OBSERVED_NO_UI_ACCEPTANCE'});
     public=$public;profileManifests=$profileManifests;llmCalls=0}
 }
@@ -124,7 +139,7 @@ function Test-NativeCompletedRelease {
   $path=Join-Path $Output 'result.json'
   if(!(Test-Path -LiteralPath $path)){return $false}
   $saved=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
-  if($NativePublishOnly -and $saved.result -cin @('OSS_PUBLISHED_SETUP_VERIFIED_NATIVE_NOT_RUN')){
+  if($NativePublishOnly -and $saved.result -cin @('OSS_PUBLISHED_SETUP_VERIFIED_NATIVE_NOT_RUN','OSS_PUBLISHED_RETENTION_PENDING')){
     $applicationCommit=if($Commit){$Commit}else{$SourceCommit}
     if($saved.plan.sourceCommit -cne $applicationCommit -or $saved.plan.version -cne $ExpectedVersion -or
       $saved.signedMsix -ine (Join-Path $Output 'SemantierAgent.msix') -or (Hash $saved.signedMsix) -cne $saved.sha256){throw 'Completed publication binding changed'}
@@ -143,6 +158,19 @@ function Test-NativeCompletedRelease {
     $saved | Add-Member -NotePropertyName nativeAcceptance -NotePropertyValue 'NOT_RUN_OWNER_MANUAL' -Force
     $saved | Add-Member -NotePropertyName nativePublicAfterPointer -NotePropertyValue $public -Force
     $saved | Add-Member -NotePropertyName revalidatedAt -NotePropertyValue ([DateTime]::UtcNow.ToString('o')) -Force
+    Save-Json $saved $path
+    if(!$SupersededBuildOutput -and $saved.plan.PSObject.Properties['supersededBuildOutput']){$SupersededBuildOutput=[string]$saved.plan.supersededBuildOutput}
+    try {
+      $retention=Invoke-OssByteOperation 'retention' $saved.signedMsix (Join-Path $Output 'channel1-metadata.json') (Join-Path $Output 'oss-retention.json')
+      $saved | Add-Member -NotePropertyName ossRetention -NotePropertyValue $retention -Force
+      $saved.result='OSS_PUBLISHED_SETUP_VERIFIED_NATIVE_NOT_RUN'
+    } catch {
+      $saved.result='OSS_PUBLISHED_RETENTION_PENDING'
+      $saved | Add-Member -NotePropertyName retentionError -NotePropertyValue $_.Exception.Message -Force
+      Save-Json $saved $path
+      Write-Warning 'Verified active head preserved; OSS retention pending. No full transfer retry.'
+      return $true
+    }
     Save-Json $saved $path
     Report-Status 'PASS: ECS publication revalidated; native update remains manual. No allocation, signing, upload or installation.'
     return $true
@@ -226,7 +254,7 @@ function Get-OssSourceHash([string]$Path) {
   try{return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text)))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
 }
 function Invoke-OssByteOperation([string]$Mode,[string]$Artifact,[string]$Metadata,[string]$ResultPath) {
-  if($Mode -cnotin @('msix','setup') -or !$script:RuntimeRoot -or
+  if($Mode -cnotin @('msix','setup','retention') -or !$script:RuntimeRoot -or
      $OssRuntimeRoot -cnotmatch '^/home/[A-Za-z0-9_./-]+$' -or $OssRuntimeRoot.Contains('/../') -or
      $OssWslDistro -cnotmatch '^[A-Za-z0-9_.-]+$'){throw 'Invalid pinned WSL OSS owner configuration'}
   $wsl=Join-Path $env:SystemRoot 'System32/wsl.exe'
@@ -244,13 +272,19 @@ function Invoke-OssByteOperation([string]$Mode,[string]$Artifact,[string]$Metada
     if($LASTEXITCODE -ne 0 -or $metadataOutput.Count -ne 1){throw 'Cannot resolve pinned metadata path'}
     $linuxMetadata=([string]$metadataOutput[0]).Trim()
   }
+  $linuxSuperseded='-'
+  if($Mode -ceq 'retention' -and $SupersededBuildOutput){
+    $converted=@(& $wsl -d $OssWslDistro --exec wslpath -u $SupersededBuildOutput)
+    if($LASTEXITCODE -ne 0 -or $converted.Count -ne 1){throw 'Cannot bind superseded release for retention'}
+    $linuxSuperseded=([string]$converted[0]).Trim()
+  }
   $core=Join-Path $script:RuntimeRoot 'src/agents/client_operations/oss_release.py'
   $publisher=Join-Path $Repository 'scripts/releases/channel1.py'
   $protocol=Join-Path $Repository 'hermes_cli/release_channels.py'
   $code=@'
 import hashlib,importlib.util,json,os,sys
 from pathlib import Path
-root,mode,artifact,metadata,output,core_sha,publisher_sha,protocol_sha=sys.argv[1:]
+root,mode,artifact,metadata,output,core_sha,publisher_sha,protocol_sha,previous_setup_sha,superseded=sys.argv[1:]
 root=Path(root)
 cli=Path.home()/'.local/bin/aliyun'
 if not cli.is_file() or not os.access(cli,os.X_OK):raise ValueError('Existing WSL account CLI unavailable')
@@ -265,11 +299,17 @@ path=root/'hermes-agent/scripts/releases/channel1.py'
 spec=importlib.util.spec_from_file_location('oss_channel1_owner',path);owner=importlib.util.module_from_spec(spec);spec.loader.exec_module(owner)
 artifact=Path(artifact);output=Path(output)
 if mode=='msix':result=owner.stage_oss(artifact,metadata,output,release_bytes=True)
+elif mode=='retention':
+ try:result=owner.retire_oss_previous(artifact,metadata,output,None if superseded=='-' else superseded)
+ except ValueError as error:
+  if str(error)=='Verified active Setup qualification required before retention':
+   print(json.dumps({'state':'OSS_RETENTION_UNQUALIFIED'},separators=(',',':')));raise SystemExit(2)
+  raise
 else:
  if not artifact.is_file() or artifact.is_symlink() or not 0<artifact.stat().st_size<=2097152:raise ValueError('Small signed Setup required')
  with artifact.open('rb') as stream:sha=hashlib.file_digest(stream,'sha256').hexdigest()
  objects=oss_release.ReleaseObjects(oss_release.assume_role('publish'));key='releases/installers/semantier-setup-ch1.exe'
- objects.put_once(key,artifact,sha,content_type='application/octet-stream');objects.head_identity(key,sha,artifact.stat().st_size)
+ objects.put_once(key,artifact,sha,content_type='application/octet-stream',expected_previous_sha256=None if previous_setup_sha=='-' else previous_setup_sha);objects.head_identity(key,sha,artifact.stat().st_size)
  objects.verify(key,sha,artifact.stat().st_size)
  result={'state':'OSS_SETUP_OBJECT_VERIFIED_NOT_SELECTED','key':key,'sha256':sha,'size':artifact.stat().st_size}
  encoded=(json.dumps(result,sort_keys=True,separators=(',',':'))+chr(10)).encode()
@@ -280,10 +320,16 @@ print(json.dumps(result,separators=(',',':')))
   $encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($code))
   $entry="import base64;exec(base64.b64decode('$encoded'))"
   Report-Status ('Scoped WSL OSS operation: '+$Mode+'; no active pointer write')
-  $body=& $wsl -d $OssWslDistro --exec ("$OssRuntimeRoot/.venv/bin/python") -B -c $entry $OssRuntimeRoot $Mode $linuxArtifact $linuxMetadata $linuxResult (Get-OssSourceHash $core) (Get-OssSourceHash $publisher) (Get-OssSourceHash $protocol)
-  if($LASTEXITCODE -ne 0){throw 'Scoped WSL OSS byte operation failed; no credential or authority fallback'}
+  $previousSetup=if($Mode -ceq 'setup' -and $OssPreviousSetupSha256){$OssPreviousSetupSha256}else{'-'}
+  $body=& $wsl -d $OssWslDistro --exec ("$OssRuntimeRoot/.venv/bin/python") -B -c $entry $OssRuntimeRoot $Mode $linuxArtifact $linuxMetadata $linuxResult (Get-OssSourceHash $core) (Get-OssSourceHash $publisher) (Get-OssSourceHash $protocol) $previousSetup $linuxSuperseded
+  if($LASTEXITCODE -ne 0){
+    if($Mode -ceq 'retention' -and ($body -join '') -ceq '{"state":"OSS_RETENTION_UNQUALIFIED"}'){throw 'OSS_RETENTION_UNQUALIFIED'}
+    throw 'Scoped WSL OSS byte operation failed; no credential or authority fallback'
+  }
   $result=($body -join "`n")|ConvertFrom-Json
-  if($result.state -cnotin @('OSS_BYTES_STAGED_NOT_ACTIVE','OSS_SETUP_OBJECT_VERIFIED_NOT_SELECTED')){throw 'Unexpected OSS byte operation result'}
+  if($Mode -ceq 'retention'){
+    if($result.result -cne 'ONE_ACTIVE_MSIX_AND_SETUP'){throw 'OSS retention is incomplete'}
+  }elseif($result.state -cnotin @('OSS_BYTES_STAGED_NOT_ACTIVE','OSS_SETUP_OBJECT_VERIFIED_NOT_SELECTED')){throw 'Unexpected OSS byte operation result'}
   return $result
 }
 function Get-OssManifestHash([string]$Metadata) {

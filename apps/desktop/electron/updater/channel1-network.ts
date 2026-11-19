@@ -1,3 +1,4 @@
+import { isChannelBuildId } from './channel-protocol'
 import { nativeUpdateFetch } from './network'
 
 /** Metadata keeps OS proxy policy; canonical OSS bytes use isolated HTTPS. */
@@ -29,8 +30,9 @@ export function channel1ArtifactFetch(fallback: typeof fetch, create: () => Dire
 
     if (url.origin !== 'https://assets.semantier.cn') { return fallback(input, init) }
 
-    if (url.username || url.password || url.search || url.hash ||
-        !/^\/releases\/channel-builds\/[a-f0-9]{32}\/SemantierAgent\.msix$/.test(url.pathname)) {
+    const buildId = url.pathname.split('/')[3] || ''
+    if (url.username || url.password || url.search || url.hash || !isChannelBuildId(buildId) ||
+        url.pathname !== `/releases/channel-builds/${buildId}/SemantierAgent.msix`) {
       throw new Error('Invalid Channel 1 pinned package URL')
     }
 

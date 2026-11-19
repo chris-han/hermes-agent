@@ -385,7 +385,7 @@ def _apply_route(path, body):
 
 
 def _native_route_body(before, old_id, new_id):
-    if not re.fullmatch('[a-f0-9]{32}', old_id) or old_id == new_id:
+    if not re.fullmatch(r'(?:[a-f0-9]{32}|(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3})', old_id) or old_id == new_id:
         raise ValueError('Invalid route baseline')
     text = before.decode()
     for name in ('SemantierAgent.msix', 'build.json', 'native-graph.json'):
@@ -466,7 +466,7 @@ def _verify_oss_head(row):
     artifact = row['artifact']
     if (row.get('native', {}).get('schema') != 2
             or row['native'].get('packageBase') != 'https://assets.semantier.cn'
-            or not re.fullmatch(r'releases/channel-builds/[a-f0-9]{32}/SemantierAgent\.msix', artifact['key'])):
+            or not re.fullmatch(r'releases/channel-builds/(?:[a-f0-9]{32}|(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3})/SemantierAgent\.msix', artifact['key'])):
         raise ValueError('OSS release origin invalid')
     connection = http.client.HTTPSConnection('assets.semantier.cn', timeout=30)
     try:
@@ -749,7 +749,7 @@ def retire_package(root, *, build_id, package_sha256, expected_previous_sha256,
     """
     from contextlib import nullcontext
     root = Path(root).absolute()
-    if not re.fullmatch('[0-9a-f]{32}', build_id) or not re.fullmatch('[0-9a-f]{64}', package_sha256):
+    if not re.fullmatch(r'(?:[a-f0-9]{32}|(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3})', build_id) or not re.fullmatch('[0-9a-f]{64}', package_sha256):
         raise ValueError('Explicit immutable package identity required')
     _safe(root.parent, root.name)
     with _lock(root) if apply else nullcontext():
@@ -831,7 +831,7 @@ def retire_package(root, *, build_id, package_sha256, expected_previous_sha256,
             _safe(root.parent, relative)
             owner = relative.parts[0]
             known = (path == package or (active_oss and path == stable) or path == root/'releases/.channel1-restore.tmp'
-                     or re.fullmatch(r'\.channel1-recovery-[0-9a-f]{32}', owner)
+                     or re.fullmatch(r'\.channel1-recovery-(?:[a-f0-9]{32}|(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3})', owner)
                      or re.fullmatch(r'\.semantier-stage-[0-9a-f]{32}', owner)
                      or re.fullmatch(r'\.msix-rollback-\d+-[A-Za-z0-9TZ]+', owner))
             if not known:
@@ -894,10 +894,14 @@ def stage_oss(package, metadata, output, signature_package=None, release_bytes=F
     from agents.client_operations.oss_release import candidate_from_manifest, stage, Objects, assume_role
     package = Path(package).resolve()
     # Fail before cloud writes if the required scoped identity is unavailable.
-    credentials = assume_role('upload')
+    credentials = None if release_bytes else assume_role('upload')
     promotion_credentials = assume_role('publish') if release_bytes else None
     m = json.loads(Path(metadata).read_text())
-    candidate_from_manifest(m['manifest'])  # Validate ASCII pins before constructing the native command.
+    if release_bytes:
+        from hermes_cli import release_channels as protocol
+        protocol.validate_manifest(m['manifest'], _record(m['manifest'], None, protocol), BASE, allow_native=True)
+    else:
+        candidate_from_manifest(m['manifest'])  # Validate ASCII pins before constructing the native command.
     windows_path = subprocess.check_output(['wslpath', '-w', str(Path(signature_package).resolve() if signature_package else package)], text=True).strip()
     escaped = windows_path.replace("'", "''")
     script = ("$ErrorActionPreference='Stop';$p='"+escaped+"';"
@@ -920,7 +924,7 @@ def stage_oss(package, metadata, output, signature_package=None, release_bytes=F
     if release_bytes:
         from agents.client_operations.oss_release import stage_release_bytes, ReleaseObjects
         result = stage_release_bytes(package, {'buildId': request['buildId'], **row['artifact']},
-                                     Objects(credentials), ReleaseObjects(promotion_credentials))
+                                     None, ReleaseObjects(promotion_credentials))
         output = Path(output)
         encoded = (json.dumps(result, sort_keys=True, separators=(',', ':'))+'\n').encode()
         if output.exists() and output.read_bytes() != encoded:
@@ -930,6 +934,131 @@ def stage_oss(package, metadata, output, signature_package=None, release_bytes=F
         return result
     candidate = candidate_from_manifest(m['manifest'])
     return stage(package, candidate, output, Objects(credentials))
+
+
+@contextmanager
+def _oss_retention_lock(target, root, head):
+    """Hold the existing ECS publication lock while scoped WSL account IO runs."""
+    import select
+    import shlex
+    if target != 'root@123.57.184.194' or root != '/opt/semantier-client-distribution/channel1-storage-root/releases':
+        raise ValueError('Unexpected retention owner')
+    code = '''import fcntl,hashlib,json,pathlib,select,sys
+root=pathlib.Path(sys.argv[1]);wanted=json.loads(sys.argv[2])
+assert not root.is_symlink() and not root.parent.is_symlink()
+with (root.parent/'.channel1-publication.lock').open('a+b') as lock:
+ fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+ body=(root/'releases/channels/semantier-acceptance.json').read_bytes();record=json.loads(body)
+ assert hashlib.sha256(body).hexdigest()==wanted['channelSha256']
+ current=record['nativeHead'];assert current['buildId']==wanted['buildId'] and current['sha256']==wanted['manifestSha256']
+ assert current['manifestKey']=='releases/channel-builds/'+wanted['buildId']+'/build.json'
+ assert hashlib.sha256((root/current['manifestKey']).read_bytes()).hexdigest()==wanted['manifestSha256']
+ print('RETENTION_LOCKED',flush=True)
+ assert select.select([sys.stdin],[],[],600)[0] and sys.stdin.readline().strip()=='DONE'
+ assert hashlib.sha256((root/'releases/channels/semantier-acceptance.json').read_bytes()).hexdigest()==wanted['channelSha256']
+'''
+    command = 'python3 -c '+shlex.quote(code)+' '+shlex.quote(root)+' '+shlex.quote(json.dumps(head))
+    process = subprocess.Popen(['ssh','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes',
+        '-o','ConnectTimeout=15',target,command], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True)
+    try:
+        if not select.select([process.stdout],[],[],30)[0] or process.stdout.readline().strip() != 'RETENTION_LOCKED':
+            raise ValueError('Publication lock/current pointer not verified')
+        yield process
+        process.communicate('DONE\n', timeout=15)
+        if process.returncode:
+            raise ValueError('Retention pointer readback failed')
+    finally:
+        if process.poll() is None:
+            process.kill();process.communicate(timeout=15)
+
+
+def retire_oss_previous(package, metadata, output, superseded=None):
+    """Post-verification retention in the maintained publisher; never downloads MSIX."""
+    from hermes_cli import release_channels as protocol
+    from agents.client_operations import oss_release
+    package=Path(package);output=Path(output)
+    receipt=json.loads((package.parent/'result.json').read_text(encoding='utf-8-sig'))
+    data=json.loads(Path(metadata).read_text(encoding='utf-8-sig'))
+    manifest=data['manifest'];request=manifest['request'];active=manifest['packages'][0]['artifact']
+    manifest_sha=hashlib.sha256(protocol.canonical_json(manifest)).hexdigest()
+    proof=receipt.get('ossSetupQualification',{})
+    if (receipt.get('publicationVerification')!='PASS' or receipt.get('ossFullTransferCount')!=1
+            or proof.get('status')!='DOWNLOADED_VERIFIED_NOT_INSTALLED' or proof.get('sha256')!=active['sha256']
+            or proof.get('manifestSha256')!=manifest_sha or proof.get('buildId')!=request['buildId']):
+        raise ValueError('Verified active Setup qualification required before retention')
+    protocol.validate_manifest(manifest,_record(manifest,None,protocol),BASE,allow_native=True)
+    previous=receipt['nativePreflight']['remote'];old=previous['manifest']
+    if hashlib.sha256(protocol.canonical_json(old)).hexdigest()!=previous['record']['nativeHead']['sha256']:
+        raise ValueError('Previous manifest binding changed')
+    candidates=[]
+    if old['packages'][0]['native'].get('schema')==2:
+        candidates.append((old['request']['windowsVersion'],dict(old['packages'][0]['artifact'])))
+    if superseded:
+        failed=json.loads((Path(superseded)/'result.json').read_text(encoding='utf-8-sig'))
+        staged=failed['ossStaging'];plan=failed['plan']
+        if (failed['result']!='STOP' or failed['publication']!='NOT_STARTED' or failed['ossFullTransferCount']!=1
+                or staged['sha256']!=failed['sha256'] or staged['buildId']!=plan['buildId']
+                or staged['key']!=protocol.build_prefix(plan['buildId'])+'SemantierAgent.msix'
+                or (staged.get('stagingKey') and staged['stagingKey']!=oss_release.PREFIX+plan['buildId']+'/SemantierAgent-'+staged['sha256']+'.msix')):
+            raise ValueError('Superseded candidate is still pending or changed')
+        candidates.append((plan['version'],{k:staged[k] for k in ('key','sha256','size')}))
+        if staged.get('stagingKey'):
+            candidates.append((plan['version'],{'key':staged['stagingKey'],'sha256':staged['sha256'],'size':staged['size']}))
+    for version,row in candidates:
+        if row['key'].startswith('releases/'):
+            build=row['key'].split('/')[2]
+            if row['key']!=protocol.build_prefix(build)+'SemantierAgent.msix' or ('.' in build and build!=version):
+                raise ValueError('Retirement version/key binding changed')
+        if (tuple(map(int,version.split('.')))>=tuple(map(int,request['windowsVersion'].split('.')))
+                or row['key']==active['key'] or not re.fullmatch(r'[a-f0-9]{64}',row['sha256'])
+                or not re.fullmatch(r'(?:releases/channel-builds/(?:[a-f0-9]{32}|[0-9.]+)/SemantierAgent\.msix|staging/windows-msix/[a-f0-9]{32}/SemantierAgent-[a-f0-9]{64}\.msix)',row['key'])):
+            raise ValueError('Active, future or unknown object cannot be retired')
+    def cli(arguments, *, xml=False):
+        result=subprocess.run(['aliyun',*arguments],capture_output=True,text=True,timeout=30,check=False)
+        if result.returncode:
+            if 'NoSuchKey' in result.stderr:return None
+            raise ValueError('Scoped OSS retention API failed')
+        if xml:return ET.fromstring(result.stdout)
+        return json.loads(result.stdout) if result.stdout.strip() else {}
+    if cli(['sts','GetCallerIdentity']).get('AccountId')!=oss_release.ACCOUNT:
+        raise ValueError('Retention account differs')
+    published=receipt['publication']
+    if isinstance(published,list):published=published[-1]
+    published=json.loads(published) if isinstance(published,str) else published
+    if published.get('buildId')!=request['buildId'] or published.get('manifestSha256')!=manifest_sha or not re.fullmatch(r'[a-f0-9]{64}',published.get('channelSha256','')):
+        raise ValueError('Publisher activation receipt changed')
+    head={'buildId':request['buildId'],'manifestSha256':manifest_sha,'channelSha256':published['channelSha256']}
+    deleted=[]
+    with _oss_retention_lock(receipt['plan']['ssh'],receipt['plan']['remoteRoot'],head) as lock:
+        _verify_oss_head(manifest['packages'][0])
+        versioning=cli(['ossutil','api','get-bucket-versioning','--bucket',oss_release.BUCKET],xml=True)
+        if versioning.tag.rsplit('}',1)[-1]!='VersioningConfiguration' or any(e.tag.rsplit('}',1)[-1]=='Status' for e in versioning.iter()):
+            raise ValueError('Version history requires separate exact-version retention')
+        uploads=cli(['ossutil','api','list-multipart-uploads','--bucket',oss_release.BUCKET,'--max-uploads','100'],xml=True)
+        if uploads.findtext('Bucket')!=oss_release.BUCKET or uploads.findtext('IsTruncated')!='false' or uploads.findall('Upload'):
+            raise ValueError('Pending or unknown multipart uploads must be retained')
+        for _,row in candidates:
+            if lock.poll() is not None:raise ValueError('Publication lock was lost')
+            info=cli(['ossutil','api','head-object','--bucket',oss_release.BUCKET,'--key',row['key']])
+            if info is None:continue
+            headers={k.lower():v[0] for k,v in info['Header'].items()}
+            if headers.get('x-oss-meta-sha256')!=row['sha256'] or headers.get('content-length')!=str(row['size']):
+                raise ValueError('Retirement object identity differs')
+            cli(['ossutil','api','delete-object','--bucket',oss_release.BUCKET,'--key',row['key']])
+            if cli(['ossutil','api','head-object','--bucket',oss_release.BUCKET,'--key',row['key']]) is not None:
+                raise ValueError('Retired object remains visible')
+            deleted.append(row['key'])
+        inventory=cli(['oss','ls','oss://'+oss_release.BUCKET+'/','--cli-output','json','--limited-num','100'])
+        if not inventory.get('complete') or {r['key'] for r in inventory['items']}!={active['key'],'releases/installers/semantier-setup-ch1.exe'}:
+            raise ValueError('Single active MSIX and Setup inventory not established')
+    result={'result':'ONE_ACTIVE_MSIX_AND_SETUP','buildId':request['buildId'],'channelSha256':head['channelSha256'],'deletedKeys':deleted}
+    if output.exists():
+        saved=json.loads(output.read_bytes())
+        if any(saved.get(k)!=result[k] for k in ('result','buildId','channelSha256')):raise ValueError('Retention receipt collision')
+        return saved
+    _atomic(output,protocol.canonical_json(result))
+    return result
 
 
 def main():

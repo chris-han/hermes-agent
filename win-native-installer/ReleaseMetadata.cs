@@ -36,15 +36,16 @@ internal sealed class ReleaseSelection {
     var channelIdentity=Field(channel,"identity","object");Require(Text(channelIdentity,"msixAppIdWithOrg")==Identity,"Unexpected channel identity.");
     var head=Field(channel,"nativeHead","object");
     string build=Text(head,"buildId"), manifestHash=Text(head,"sha256");
-    Match(build,"[a-f0-9]{32}","build ID");Match(manifestHash,"[a-f0-9]{64}","manifest hash");
+    Match(build,@"(?:[a-f0-9]{32}|(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3})","build ID");Match(manifestHash,"[a-f0-9]{64}","manifest hash");
     long sequence=Number(head,"sequence");Require(sequence>0 && sequence<=65535 && Number(channel,"nextSequence")>sequence,"Invalid release sequence.");
     Require(Text(head,"manifestKey")=="releases/channel-builds/"+build+"/build.json","Manifest outside current build.");
     if(candidateBuild!=null){
-      Match(candidateBuild,"[a-f0-9]{32}","candidate build ID");Match(candidateManifestHash,"[a-f0-9]{64}","candidate manifest hash");
+      Match(candidateBuild,@"(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3}","candidate version ID");Match(candidateManifestHash,"[a-f0-9]{64}","candidate manifest hash");
       Require(candidateSequence>sequence && candidateSequence>=131 && candidateSequence<=65535,"Candidate must advance the current release.");
       build=candidateBuild;manifestHash=candidateManifestHash;sequence=candidateSequence;
     }else Require(candidateManifestHash==null && candidateSequence==0 && sequence>=131,"Invalid active OSS release.");
-    string prefix="releases/channel-builds/"+build+"/",version="0.0."+sequence.ToString(System.Globalization.CultureInfo.InvariantCulture)+".0";
+    string prefix="releases/channel-builds/"+build+"/",version=build;
+    foreach(string part in version.Split('.'))Require(Int32.Parse(part,System.Globalization.CultureInfo.InvariantCulture)<=65535,"Windows version component out of range.");
     byte[] manifestBody=read(MetadataBase+"/"+prefix+"build.json");Require(Hash(manifestBody)==manifestHash,"Manifest SHA256 mismatch.");
     var manifest=Json(manifestBody);Require(Number(manifest,"schema")==2,"Expected native release manifest.");
     var request=Field(manifest,"request","object");string commit=Text(request,"commit");Match(commit,"[a-f0-9]{40}","source commit");

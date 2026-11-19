@@ -71,6 +71,9 @@ param(
   [string]$OssRuntimeRoot = '/home/chris/repo/semantier-runtime',
   [string]$OssWslDistro = 'Ubuntu-22.04',
   [switch]$OssSetupQualification,
+  [switch]$OssCacheOnlyRecovery,
+  [string]$OssPreviousSetupSha256 = '',
+  [string]$SupersededBuildOutput = '',
   [string]$UserProfile = "$env:LOCALAPPDATA\hermes-semantier-acceptance",
   [string]$Output = ('D:\repo\deliverables\work\ecs-deploy-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0,8)),
   [string]$SetupExe = 'D:\repo\deliverables\cache\ecs-setup\semantier-setup-ch1.exe',
@@ -115,6 +118,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+if($OssCacheOnlyRecovery -and (!$OssSetupQualification -or !$NativePublishOnly -or !$SkipLocalInstall -or $Commit -or $ResumeSigned -or $BuildMode -cne 'Prod' -or !$PSBoundParameters.ContainsKey('Output'))){throw 'Cache-only recovery requires the original explicit fixed-input Prod OSS publish-only run'}
 if($OssSetupQualification -and $VerifyPublicDownload){throw 'The one full OSS transfer is owned by Setup; standalone full download is forbidden.'}
 $identity = 'Semantier.Agent.Acceptance'
 $publisher = 'CN=Semantier Technology, O=Semantier Technology'
@@ -137,8 +141,8 @@ function Assert-NativeReleaseOptions {
     throw 'Native release requires NativePublishOnly, explicit Prod, SkipLocalInstall and exact source; incompatible release modes are forbidden.'
   }
   if(($Commit -cnotmatch '^[a-f0-9]{40}$' -and (!$NativePublishOnly -or $SourceCommit -cnotmatch '^[a-f0-9]{40}$')) -or $ExpectedChannelSha256 -cnotmatch '^[a-f0-9]{64}$' -or
-     $NativeUpdateFrom -cnotmatch '^\d+\.\d+\.\d+\.0$' -or $ExpectedVersion -cnotmatch '^\d+\.\d+\.\d+\.0$' -or
-     [Version]$ExpectedVersion -le [Version]$NativeUpdateFrom -or !$RecoveryMsix -or
+     $NativeUpdateFrom -cnotmatch '^(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3}$' -or $ExpectedVersion -cnotmatch '^(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3}$' -or
+     [Version]$ExpectedVersion -le [Version]$NativeUpdateFrom -or (!$RecoveryMsix -and (!$OssSetupQualification -or !$ChannelRecoveryMsix)) -or
      (!$OssSetupQualification -and (!$NativeUserData -or !$ProfileSampleManifest -or !$CriticalFileManifest))){throw 'Native release requires bound baseline/target, pointer SHA256, recovery package, user data and profile manifests.'}
 }
 function Get-ProfileFileHolders([string[]]$Files) {
@@ -471,25 +475,39 @@ function Confirm-ToolingTransition($Record,[string]$Inputs,[switch]$RequireExist
   } finally {foreach($lease in $leases){$lease.Dispose()}}
 }
 function Preserve-ToolingPreparationFailure($Previous) {
-  if(!$ToolingQualification -or !$script:qualifiedTooling){return $false}
   foreach($name in @('result','commit','signing','installation','publication')){
     if(!$Previous.PSObject.Properties[$name]){return $false}
   }
-  if($Previous.result -cnotin @('FAIL','STOP') -or $Previous.commit -cne $Commit -or
+  $application=if($Commit){$Commit}else{$SourceCommit}
+  if($Previous.result -cnotin @('FAIL','STOP') -or $Previous.commit -cne $application -or
      $Previous.signing -cne 'NOT_RUN' -or $Previous.installation -cne 'NOT_RUN' -or $Previous.publication -cne 'NOT_RUN'){
     return $false
   }
   foreach($name in @('sha256','signedMsix','unsignedSha256','plan')){
     if($Previous.PSObject.Properties[$name] -and $Previous.$name){return $false}
   }
+  $eventType='tooling-preparation-failure';$contract='semantier-tooling-transition-v1'
+  if(!$ToolingQualification -or !$script:qualifiedTooling){
+    # Input verification has already pinned the complete unsigned package. A
+    # retained preparation STOP is not an older signed release receipt.
+    if($Commit -or !$NativeUpdateFrom -or !$NativePublishOnly -or !$SkipLocalInstall -or !$OssSetupQualification){return $false}
+    $build=Read-CommitBuild $script:statusLog
+    if($Msix -ine (Join-Path $Output 'unsigned.msix') -or !$build -or $build.stage -cne 'built' -or $build.commit -cne $SourceCommit -or
+      ($build.version+'.0') -cne $Version -or $build.msix -ine $Msix -or
+      $build.request -ine (Join-Path $Output 'channel-request.json') -or
+      $build.sha256 -cne $ExpectedInputSha256 -or (Hash $Msix) -cne $ExpectedInputSha256){return $false}
+    $request=Get-Content -LiteralPath $build.request -Raw | ConvertFrom-Json
+    if($request.buildId -cne $BuildId -or $request.commit -cne $SourceCommit -or $request.version -cne $build.version){return $false}
+    $eventType='build-preparation-failure';$contract='semantier-built-package-resume-v1'
+  }
   $binding=$Previous | ConvertTo-Json -Depth 32 -Compress
-  foreach($line in [IO.File]::ReadLines($script:statusLog)){
+  foreach($line in [IO.File]::ReadAllLines($script:statusLog)){
     try{$event=$line | ConvertFrom-Json -ErrorAction Stop}catch{continue}
-    if(!$event -or !$event.PSObject.Properties['type'] -or $event.type -cne 'tooling-preparation-failure'){continue}
-    if($event.contract -cne 'semantier-tooling-transition-v1' -or $event.previous -cne $binding){throw 'Conflicting historical preparation failure.'}
+    if(!$event -or !$event.PSObject.Properties['type'] -or $event.type -cne $eventType){continue}
+    if($event.contract -cne $contract -or $event.previous -cne $binding){throw 'Conflicting historical preparation failure.'}
     return $true
   }
-  Write-RunEvent @{type='tooling-preparation-failure';contract='semantier-tooling-transition-v1';
+  Write-RunEvent @{type=$eventType;contract=$contract;
     at=[DateTime]::UtcNow.ToString('o');previous=$binding}
   return $true
 }
@@ -669,6 +687,59 @@ function Assert-StageInactive($Owner) {
     }
   }
 }
+function Remove-SupersededUnsignedInput([string]$Run) {
+  # Only the obsolete unsigned input is disposable. Signed/cache/history stay.
+  $Run=[IO.Path]::GetFullPath($Run)
+  if($Run -ine [IO.Path]::GetFullPath($SupersededBuildOutput) -or $Run -ieq [IO.Path]::GetFullPath($Output) -or
+     (Split-Path -Parent $Run) -ine 'D:\repo\deliverables\work' -or
+     (Split-Path -Leaf $Run) -cnotmatch '^ecs-deploy-[0-9]{8}-[0-9]{6}-[a-f0-9]{8}$'){
+    throw 'Explicit superseded native build run required'
+  }
+  foreach($name in @('result.json','checkpoints.jsonl','unsigned.msix','SemantierAgent.msix','setup-download\SemantierAgent.msix')){
+    Assert-NoReparseAncestor (Join-Path $Run $name)
+  }
+  $priorBytes=[IO.File]::ReadAllText((Join-Path $Run 'result.json'))
+  $prior=$priorBytes|ConvertFrom-Json
+  if($prior.result -cne 'STOP' -or $prior.publication -cne 'NOT_STARTED' -or $prior.ossFullTransferCount -ne 1 -or
+     [Version]$prior.plan.version -ge [Version]$ExpectedVersion -or $prior.unsignedSha256 -cnotmatch '^[a-f0-9]{64}$' -or
+     $prior.sha256 -cnotmatch '^[a-f0-9]{64}$') {throw 'Superseded run is not an unpublished failed candidate'}
+  $owner=$null
+  foreach($line in [IO.File]::ReadAllLines((Join-Path $Run 'checkpoints.jsonl'))){
+    if($line -notmatch '"type"\s*:\s*"source-owner"\s*[,}]'){continue}
+    $event=$line|ConvertFrom-Json
+    if($event.type -ceq 'source-owner'){$owner=$event.owner}
+  }
+  if($owner){
+    foreach($name in @('run','source','repository','cache')){$owner.$name=[IO.Path]::GetFullPath([string]$owner.$name)}
+  }
+  if(!$owner -or $owner.kind -cne 'native-git-worktree-v1' -or $owner.run -ine $Run -or
+     $owner.source -ine (Join-Path $Run 'source') -or $owner.repository -ine [IO.Path]::GetFullPath($Repository) -or
+     $owner.cache -ine [IO.Path]::GetFullPath($BuildCache) -or $owner.commit -cne $prior.plan.sourceCommit){throw 'Superseded source owner differs'}
+  $leases=[Collections.Generic.List[IDisposable]]::new()
+  try {
+    foreach($path in @((Join-Path $Run '.source.lock'),(Join-Path $BuildCache '.desktop-build.lock'))){
+      Assert-NoReparseAncestor $path
+      $lease=[IO.File]::Open($path,'OpenOrCreate','ReadWrite','None');$leases.Add($lease);$lease.Lock(0,1)
+    }
+    Assert-StageInactive $owner
+    if([IO.File]::ReadAllText((Join-Path $Run 'result.json')) -cne $priorBytes){throw 'Superseded receipt changed before retirement'}
+    foreach($path in @((Join-Path $Run 'SemantierAgent.msix'),(Join-Path $Run 'setup-download\SemantierAgent.msix'))){
+      if((Hash $path) -cne $prior.sha256){throw 'Required signed/cache recovery bytes differ'}
+      Require-Signature $path
+    }
+    $unsigned=Join-Path $Run 'unsigned.msix'
+    if(!(Test-Path -LiteralPath $unsigned -PathType Leaf)){return}
+    if((Hash $unsigned) -cne $prior.unsignedSha256){throw 'Obsolete unsigned input differs'}
+    $before=(Get-PSDrive D).Free
+    $event=@{type='superseded-unsigned-retirement';at=[DateTime]::UtcNow.ToString('o');path=$unsigned;sha256=$prior.unsignedSha256;replacementVersion=$ExpectedVersion;state='INTENT_SIGNED_AND_CACHE_PRESERVED'}
+    [IO.File]::AppendAllText((Join-Path $Run 'checkpoints.jsonl'),(($event|ConvertTo-Json -Compress)+"`n"),$utf8)
+    [IO.File]::Delete($unsigned)
+    $event.state='REMOVED';$event.freeBytesBefore=$before;$event.freeBytesAfter=(Get-PSDrive D).Free
+    [IO.File]::AppendAllText((Join-Path $Run 'checkpoints.jsonl'),(($event|ConvertTo-Json -Compress)+"`n"),$utf8)
+    return $event
+  } finally {foreach($lease in $leases){$lease.Dispose()}}
+}
+
 function Read-SourceOwner {
   $last=$null
   foreach($line in [IO.File]::ReadLines($script:statusLog)){
@@ -787,7 +858,7 @@ function Assert-ResidueBindings([string]$Source,[string]$Revision) {
   $request=Get-Content -LiteralPath $record.request -Raw | ConvertFrom-Json
   if($ledger.kind -cne 'semantier-windows-build-version-v1' -or $ledger.sourceCommit -cne $Revision -or
     $ledger.version -cne $record.version -or $request.commit -cne $Revision -or $request.version -cne $record.version -or
-    $request.publicBase -cne $record.publicBase -or $request.buildId -cnotmatch '^[a-f0-9]{32}$' -or
+    $request.publicBase -cne $record.publicBase -or $request.buildId -cnotmatch '^(?:[a-f0-9]{32}|(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3})$' -or
     $request.buildId -cne $BuildId -or $request.sequence -ne [int]($record.version.Split('.')[2])){throw 'Recovery reservation/request identity mismatch.'}
   $protected=[ordered]@{}
   foreach($path in @($VersionState,$record.request,$record.prepared,$record.msix,(Join-Path $Output 'result.json'),
@@ -968,6 +1039,91 @@ function Write-RunEvent($Event) {
     }
   }
 }
+function Invoke-RetainedSetupVerifiers([string]$Setup,[string]$File) {
+  # Execute the verifier embedded in the original signed Setup. No downloader,
+  # package deployment, external code, or network package request is invoked.
+  $program=[Reflection.Assembly]::LoadFrom($Setup).GetType('Program',$true)
+  $flags=[Reflection.BindingFlags]'NonPublic,Static'
+  $identity=$program.GetMethod('VerifyIdentity',$flags)
+  $signature=$program.GetMethod('VerifySignature',$flags)
+  if(!$identity -or !$signature){throw 'Pinned Setup verification methods unavailable'}
+  $modules=$env:PSModulePath
+  try {
+    $env:PSModulePath=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\Modules'
+    $null=$identity.Invoke($null,@($File,$null))
+    $null=$signature.Invoke($null,@($File))
+  } finally {$env:PSModulePath=$modules}
+}
+function Confirm-OssCachedDownload([string]$Package,[string]$Metadata,$PriorOutcome) {
+  if(!$OssCacheOnlyRecovery -or !$OssSetupQualification -or !$NativePublishOnly -or !$SkipLocalInstall -or $BuildMode -cne 'Prod'){
+    throw 'Cache-only qualification requires explicit Prod no-install authorization'
+  }
+  if(!$script:checkpoints.ContainsKey('oss-setup-transfer-started') -or $receipt.ossFullTransferCount -ne 1){
+    throw 'Original single Setup attempt is not recorded; no download permitted'
+  }
+  $folder=Join-Path $Output 'setup-download';$download=Join-Path $folder 'SemantierAgent.msix'
+  $proof=Join-Path $folder 'download-receipt.json'
+  foreach($path in @($Package,$Metadata,$download,$SetupExe,$proof)){Assert-NoReparseAncestor $path}
+  $lease=[IO.File]::Open((Join-Path $Output '.oss-cache-recovery.lock'),'OpenOrCreate','ReadWrite','None')
+  try {
+    $manifest=(Get-Content -LiteralPath $Metadata -Raw|ConvertFrom-Json).manifest
+    $artifact=$manifest.packages[0].artifact
+    if($PriorOutcome.result -cnotin @('FAIL','STOP') -or $PriorOutcome.ossFullTransferCount -ne 1 -or
+      $PriorOutcome.sha256 -cne $receipt.sha256 -or $PriorOutcome.plan.sourceCommit -cne $SourceCommit -or
+      $PriorOutcome.plan.buildId -cne $BuildId -or $PriorOutcome.plan.version -cne $Version -or
+      $manifest.request.buildId -cne $BuildId -or $manifest.request.commit -cne $SourceCommit -or
+      $manifest.request.windowsVersion -cne $Version -or $artifact.sha256 -cne $receipt.sha256 -or
+      (Get-Item -LiteralPath $download).Length -ne $artifact.size -or
+      (Hash $download) -cne $receipt.sha256 -or (Hash $Package) -cne $receipt.sha256 -or
+      (Hash $SetupExe) -cne $PriorOutcome.setupTransport.sha256){throw 'Retained cache/source/build/hash/Setup mismatch; no download permitted'}
+    Require-Signature $SetupExe
+    $manifestHash=Get-OssManifestHash $Metadata
+    $binding=@{source=$SourceCommit;build=$BuildId;version=$Version;sha256=$receipt.sha256;
+      manifestSha256=$manifestHash;channelSha256=$ExpectedChannelSha256;setupSha256=(Hash $SetupExe);
+      originalAttemptAt=$script:checkpoints['oss-setup-transfer-started']}
+    # Preserve the actual failure before any recovery result is written.
+    Write-RunEvent @{type='oss-cache-recovery-verification';at=[DateTime]::UtcNow.ToString('o');binding=$binding;previousOutcome=$PriorOutcome}
+    Invoke-RetainedSetupVerifiers $SetupExe $download
+    # Keep the earlier COPY-era receipt as history; the unchanged byte owner
+    # now writes a direct-publication receipt for the same immutable object.
+    $staged=Join-Path $Output 'oss-staged.json'
+    if(Test-Path -LiteralPath $staged){
+      Assert-NoReparseAncestor $staged
+      $legacy=Get-Content -LiteralPath $staged -Raw|ConvertFrom-Json
+      if(!$legacy.PSObject.Properties['storagePolicy']){
+        if($legacy.buildId -cne $BuildId -or $legacy.key -cne $artifact.key -or
+          $legacy.sha256 -cne $receipt.sha256 -or $legacy.size -ne $artifact.size){throw 'Legacy byte receipt differs from the retained candidate'}
+        $preserved=Join-Path $Output 'oss-staged-legacy.json'
+        Assert-NoReparseAncestor $preserved
+        if(Test-Path -LiteralPath $preserved){throw 'Conflicting legacy byte receipt history'}
+        Write-RunEvent @{type='oss-direct-publication-handoff';at=[DateTime]::UtcNow.ToString('o');previous=$legacy;preserved=$preserved}
+        Move-Item -LiteralPath $staged -Destination $preserved
+      }
+    }
+    if(Test-Path -LiteralPath $proof){
+      $result=Get-Content -LiteralPath $proof -Raw|ConvertFrom-Json
+      if($result.qualificationMode -cne 'CACHE_ONLY_RECOVERY' -or $result.sha256 -cne $receipt.sha256 -or
+        $result.manifestSha256 -cne $manifestHash -or $result.channelSha256 -cne $ExpectedChannelSha256 -or
+        $result.buildId -cne $BuildId -or $result.setupSha256 -cne $binding.setupSha256){throw 'Conflicting cached qualification receipt'}
+    } else {
+      $result=[ordered]@{status='DOWNLOADED_VERIFIED_NOT_INSTALLED';selection='PINNED_STAGED_CANDIDATE';
+        qualificationMode='CACHE_ONLY_RECOVERY';originalTransferOutcome='FAILED_POST_DOWNLOAD';
+        producedAt=[DateTime]::UtcNow.ToString('o');originalAttemptAt=$binding.originalAttemptAt;
+        manifestSha256=$manifestHash;channelSha256=$ExpectedChannelSha256;buildId=$BuildId;version=$Version;
+        sha256=$receipt.sha256;sourceCommit=$SourceCommit;setupSha256=$binding.setupSha256;
+        uri=('https://assets.semantier.cn/releases/channel-builds/'+$BuildId+'/SemantierAgent.msix');
+        origin='https://assets.semantier.cn';signature='PINNED_SIGNER_VALID';
+        # DownloadCore appends every successful body read exactly once. This is
+        # reconstructed payload-byte evidence, not an original counter receipt.
+        ossResponseBytes=[long]$artifact.size;cacheFileBytes=[long]$artifact.size;
+        bodyByteEvidence='RECONSTRUCTED_APPEND_ONLY_OUTPUT_LENGTH';originalCounterReceipt='NOT_WRITTEN';
+        responses=$null;protocol=$null;additionalPackageNetworkReads=0;fullTransferAttempts=1}
+      Save-Json $result $proof
+    }
+    $receipt.ossSetupQualification=$result
+    Complete-Checkpoint 'oss-setup-qualified'
+  } finally {$lease.Dispose()}
+}
 function Read-RunCheckpoint([string]$Path) {
   $last=$null
   foreach($line in [IO.File]::ReadLines($Path)) {
@@ -1057,7 +1213,7 @@ function ConvertTo-ReleasePayload([byte[]]$Bytes) {
   return $encoded
 }
 function Invoke-RollbackRetirement {
-  if($RetireRollbackBuild -cnotmatch '^[a-f0-9]{32}$' -or $RetireRollbackSha256 -cnotmatch '^[a-f0-9]{64}$' -or
+  if($RetireRollbackBuild -cnotmatch '^(?:[a-f0-9]{32}|(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3})$' -or $RetireRollbackSha256 -cnotmatch '^[a-f0-9]{64}$' -or
      $ExpectedChannelSha256 -cnotmatch '^[a-f0-9]{64}$' -or $BuildMode -cne 'Prod' -or
      $Latest -or $Commit -or $ResumeSigned -or $NewRun -or $BuildOnly -or $SetupOnly -or $LocalOnly -or $NativeUpdateFrom){
     throw 'Rollback retirement requires explicit Prod, immutable build/package/pointer hashes, and no build/publish/install modes.'
@@ -1946,7 +2102,7 @@ function Build-CommitPackage {
     [ordered]@{commit=$Commit;builder='existing scripts/bundles/desktop.py --prepare-only / --prepared';
       version='reserve next version using existing next-windows-build-version.ps1; reuse on resume';
       source=$script:SourceBinding;localBuildSource=$BuildSource;credentialsEnv=$CredentialsEnv;python=$BuildPython;node=$Node;
-      mode=$BuildMode;verification=($(if($BuildMode -eq 'Beta'){'SKIPPED_BETA'}else{'REQUIRED_PROD'}));cache=$BuildCache;output=$Output;publish=(!$LocalOnly -and !$BuildOnly);unsignedOnly=[bool]$BuildOnly} | ConvertTo-Json
+      supersededBuildOutput=$SupersededBuildOutput;mode=$BuildMode;verification=($(if($BuildMode -eq 'Beta'){'SKIPPED_BETA'}else{'REQUIRED_PROD'}));cache=$BuildCache;output=$Output;publish=(!$LocalOnly -and !$BuildOnly);unsignedOnly=[bool]$BuildOnly} | ConvertTo-Json
     return
   }
   if(!(Test-Path -LiteralPath $BuildPython -PathType Leaf)){throw 'Existing build Python is unavailable; specify -BuildPython.'}
@@ -2069,7 +2225,7 @@ function Publish-IndependentSetup {
   if(!$script:explicitOutput){
     $Output=Join-Path 'D:\repo\deliverables\work' ('ecs-setup-'+(Get-Date -Format 'yyyyMMdd-HHmmss')+'-'+[Guid]::NewGuid().ToString('N').Substring(0,8))
   }
-  $script:runBinding=([ordered]@{kind='setup';localSetup=[bool]$LocalSetup;signer=$Thumbprint;target=$SshTarget;root=$RemoteRoot;origin=$PublicBase;forceRebuild=[bool]$UpdateSetup;implementation='winhttp-framework-asimov-v2';contract='cloud-channel-oss-native-v3'} | ConvertTo-Json -Compress)
+  $script:runBinding=([ordered]@{kind='setup';localSetup=[bool]$LocalSetup;signer=$Thumbprint;target=$SshTarget;root=$RemoteRoot;origin=$PublicBase;forceRebuild=[bool]$UpdateSetup;previousSetupSha256=$OssPreviousSetupSha256;implementation='winhttp-framework-asimov-v2';contract='cloud-channel-oss-native-v3'} | ConvertTo-Json -Compress)
   if($WhatIfPreference){[ordered]@{kind='Setup only';output=$Output;update=[bool]$UpdateSetup;stages=$(if($LocalSetup){@('build signed offline Setup','verify signature and adjacent-file contract')}else{@('reuse or build signed Setup','verify signature and download contract','SFTP upload Setup only','activate Setup only')});msix='UNCHANGED';CH2='UNCHANGED'} | ConvertTo-Json;return}
   if(!$NewRun -and !$script:explicitOutput -and (Test-Path -LiteralPath (Split-Path -Parent $Output))){
     foreach($candidate in (Get-ChildItem 'D:\repo\deliverables\work' -Directory -Filter 'ecs-setup-*' | Sort-Object LastWriteTime -Descending)){
@@ -2094,7 +2250,12 @@ function Publish-IndependentSetup {
       foreach($property in $saved.receipt.PSObject.Properties){$receipt[$property.Name]=$property.Value}
     }
   }
+  $setupLease=$null
   try {
+    if($OssPreviousSetupSha256 -and ($LocalOnly -or $LocalSetup -or $OssPreviousSetupSha256 -cnotmatch '^[a-f0-9]{64}$')){throw 'Setup replacement requires an exact previous public Setup hash'}
+    $leasePath=Join-Path $BuildCache '.desktop-build.lock'
+    Assert-NoReparseAncestor $leasePath
+    $setupLease=[IO.File]::Open($leasePath,'OpenOrCreate','ReadWrite','None');$setupLease.Lock(0,1)
     Report-Status 'Independent Setup release; application version, MSIX and user profile remain unchanged.'
     $setup=Prepare-IndependentSetup
     if($LocalOnly){$receipt.result='SETUP_LOCAL_VERIFIED';Complete-Checkpoint 'finished';return}
@@ -2108,6 +2269,7 @@ function Publish-IndependentSetup {
   } catch {
     $receipt.result='FAIL';$receipt.error=$_.Exception.Message;Report-Status ('FAILED: '+$_.Exception.Message);throw
   } finally {
+    if($setupLease){$setupLease.Dispose()}
     $receipt.finishedAt=[DateTime]::UtcNow.ToString('o')
     Save-Json $receipt (Join-Path $Output 'result.json')
     [IO.File]::WriteAllText((Join-Path $Output 'release-note.md'),"Result: $($receipt.result)`nArtifact: Setup EXE`nSetup: $($receipt.setupExe)`nPublication: $($receipt.publication)`nMSIX: unchanged`nCH2: unchanged`n",$utf8)
@@ -2211,7 +2373,7 @@ if($Commit){
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'Run on native Windows.' }
 if ($SshTarget -cnotmatch '^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+$' -or
     $RemoteRoot -cnotmatch '^/opt/[A-Za-z0-9_/-]+/releases$' -or $RemoteRoot.Contains('/../') -or
-    $PublicBase -cne 'https://cloud.semantier.cn' -or $BuildId -cnotmatch '^[a-f0-9]{32}$' -or
+    $PublicBase -cne 'https://cloud.semantier.cn' -or $BuildId -cnotmatch '^(?:[a-f0-9]{32}|(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3})$' -or
     $SourceCommit -cnotmatch '^[a-f0-9]{40}$' -or $ExpectedInputSha256 -cnotmatch '^[a-f0-9]{64}$' -or
     $Version -cnotmatch '^\d+\.\d+\.\d+\.\d+$' -or $Thumbprint -cnotmatch '^[A-F0-9]{40}$') {
   throw 'Invalid release/SSH/path configuration. This script publishes CH1 only.'
@@ -2223,7 +2385,7 @@ $plan = [ordered]@{input=$Msix;version=$Version;sourceCommit=$SourceCommit;ssh=$
   buildId=$BuildId;
   remoteRoot=$RemoteRoot;fixedMsixUrl="$PublicBase/releases/SemantierAgent.msix";
   profileBackup=(Join-Path $Output 'profile-backup');output=$Output;
-  mode=$BuildMode;verification=($(if($BuildMode -eq 'Beta'){'SKIPPED_BETA'}else{'REQUIRED_PROD'}));stages=@('verify existing input','sign one MSIX','check independently published Setup',
+  supersededBuildOutput=$SupersededBuildOutput;mode=$BuildMode;verification=($(if($BuildMode -eq 'Beta'){'SKIPPED_BETA'}else{'REQUIRED_PROD'}));stages=@('verify existing input','sign one MSIX','check independently published Setup',
     'back up profile','install and observe Electron/real PTY','SFTP reput upload with progress to unpublished directory',
     'verify remote hash','atomic replace stable MSIX and commit current channel metadata',
     $(if($VerifyPublicDownload){'explicit full public H3 download and hash'}else{'lightweight public H3 HEAD; no package body download'}),
@@ -2319,7 +2481,7 @@ $invocationTooling=if($receipt.Contains('tooling')){$receipt.tooling}else{$null}
 if($NativeUpdateFrom -and (Test-Path -LiteralPath (Join-Path $Output 'result.json'))){
   $priorOutcome=Get-Content -LiteralPath (Join-Path $Output 'result.json') -Raw | ConvertFrom-Json
   if($priorOutcome.result -in @('FAIL','STOP')){
-    $receipt.previousFailure=@{result=$priorOutcome.result;error=$priorOutcome.error;finishedAt=$priorOutcome.finishedAt}
+    $receipt.previousFailure=@{result=$priorOutcome.result;error=$priorOutcome.error;finishedAt=$(if($priorOutcome.PSObject.Properties['finishedAt']){$priorOutcome.finishedAt}else{$null})}
   }
 }
 if($Commit -and $built.PSObject.Properties['tooling']){$receipt.tooling=$built.tooling}
@@ -2549,6 +2711,7 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output);let app;const err
   $receipt.remoteStage=$stage
   Complete-Checkpoint 'upload-prepared'
   Report-Status 'Publishing verified immutable bytes and committing current channel metadata atomically.'
+  if($OssCacheOnlyRecovery -and !$script:checkpoints.ContainsKey('oss-setup-qualified')){Confirm-OssCachedDownload $signed (Join-Path $Output 'channel1-metadata.json') $priorOutcome}
   $receipt.publication=Publish-Channel1Artifacts -Signed $signed -Root $RemoteRoot -Stage $stage -PackageSha256 $hash -Metadata (Join-Path $Output 'channel1-metadata.json')
   Save-Json $receipt (Join-Path $Output 'result.json')
   Complete-Checkpoint 'published'
@@ -2569,7 +2732,19 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output);let app;const err
     $receipt.publicReadback='OSS bounded Range bytes and retained single Setup full download match signed package; cloud metadata closure verified'
     $receipt.nativeAcceptance='NOT_RUN_OWNER_MANUAL'
     $receipt.publicationStage='OSS_PUBLISHED_SETUP_VERIFIED_NATIVE_NOT_RUN'
-    $receipt.cleanup='RECOVERY_RETAINED_PENDING_ENTRYPOINT_CUTOVER_AND_LEGACY_HOST_RETIREMENT'
+    # Once old bytes may be retired, cleanup failure must preserve the verified head.
+    Save-Json $receipt (Join-Path $Output 'result.json')
+    try {
+      $receipt.ossRetention=Invoke-OssByteOperation 'retention' $signed (Join-Path $Output 'channel1-metadata.json') (Join-Path $Output 'oss-retention.json')
+      $receipt.cleanup='OSS_ONE_ACTIVE_MSIX_AND_SETUP_ECS_RECOVERY_RETAINED_PENDING_CUTOVER'
+      Complete-Checkpoint 'oss-retention'
+    } catch {
+      $receipt.result='OSS_PUBLISHED_RETENTION_PENDING';$receipt.retentionError=$_.Exception.Message
+      $receipt.cleanup='PENDING_VERIFIED_ACTIVE_HEAD_PRESERVED'
+      Save-Json $receipt (Join-Path $Output 'result.json')
+      Report-Status ('Verified release retained; OSS cleanup pending: '+$_.Exception.Message)
+      return
+    }
     $receipt.installedVersion=(Get-AppxPackage -Name $identity).Version.ToString()
     Complete-Checkpoint 'finished'
     return

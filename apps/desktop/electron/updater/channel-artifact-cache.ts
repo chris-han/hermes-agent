@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto'
 import { lstat, mkdir, readdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
+import { isChannelBuildId } from './channel-protocol'
+
 export interface ChannelArtifactBinding {
   manifestSha256: string
   artifactSha256: string
@@ -17,7 +19,7 @@ const name = (binding: ChannelArtifactBinding): string => `.channel-artifact-${b
 
 function validRecord(record: CacheRecord): boolean {
   return !(!record || record.schema !== 1 || !['downloading', 'handoff'].includes(record.phase) ||
-      !/^[a-f0-9]{32}$/.test(record.buildId) || !/^\d+\.\d+\.\d+\.\d+$/.test(record.version) ||
+      !isChannelBuildId(record.buildId) || (record.buildId.includes('.') && record.buildId !== record.version) || !/^\d+\.\d+\.\d+\.\d+$/.test(record.version) ||
       !/^[a-f0-9]{64}$/.test(record.manifestSha256) || !/^[a-f0-9]{64}$/.test(record.artifactSha256) ||
       typeof record.identity !== 'string' || !record.identity || record.identity.length > 160 ||
       typeof record.publisher !== 'string' || !record.publisher || record.publisher.length > 512)

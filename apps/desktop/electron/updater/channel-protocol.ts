@@ -104,7 +104,7 @@ export interface ChannelManifest {
 
 const SHA256 = /^[a-f0-9]{64}$/
 const COMMIT = /^[a-f0-9]{40}$/
-const BUILD_ID = /^[a-f0-9]{32}$/
+const BUILD_ID = /^(?:[a-f0-9]{32}|(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3})$/
 
 const VERSION =
   /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/
@@ -252,8 +252,12 @@ export function channelKey(value: string): string {
   return value
 }
 
+export function isChannelBuildId(buildId: string): boolean {
+  return BUILD_ID.test(buildId) && (!buildId.includes('.') || buildId.split('.').every(part => Number(part) <= 65535))
+}
+
 export function buildPrefix(buildId: string): string {
-  if (!BUILD_ID.test(buildId)) {
+  if (!isChannelBuildId(buildId)) {
     throw new Error('Invalid channel buildId')
   }
 
@@ -436,15 +440,21 @@ function request(fields: Fields): ChannelRequest {
 
   const canaryRelease: boolean = /\+canary\./.test(releaseTag || '')
 
-  const windowsVersion = fields.text('windowsVersion', canaryRelease ? /^\d+\.\d+\.\d+\.\d+$/ : /^\d+\.\d+\.\d+\.0$/)
+  const buildId = fields.text('buildId', BUILD_ID)
+  buildPrefix(buildId)
+  const windowsVersion = fields.text('windowsVersion', canaryRelease || buildId.includes('.') ? /^\d+\.\d+\.\d+\.\d+$/ : /^\d+\.\d+\.\d+\.0$/)
 
   if (windowsVersion.split('.').some((part: string): boolean => Number(part) > 65535)) {
     throw new Error('Invalid Windows version')
   }
 
+  if (buildId.includes('.') && (buildId !== windowsVersion || fields.optional('semantierScope') !== 'semantier-windows-x64/v1')) {
+    throw new Error('Version directory does not match signed Windows version')
+  }
+
   return {
     schema: 1,
-    buildId: fields.text('buildId', BUILD_ID),
+    buildId,
     channel: validateChannelName(fields.text('channel')),
     sequence: fields.integer('sequence', 0xffffffff),
     repository: fields.text('repository', /^[A-Za-z0-9][A-Za-z0-9_-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/),
