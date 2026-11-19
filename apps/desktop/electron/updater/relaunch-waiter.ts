@@ -35,7 +35,8 @@ export const POWERSHELL_PATH = path.win32.join(
 )
 
 export interface NativeUpdateHandoff {
-  schema: 1
+  schema: 1 | 2
+  packageBase?: 'https://assets.semantier.cn'
   base: string
   graph: NativePackageGraph
   manifestSha256: string

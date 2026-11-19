@@ -707,3 +707,37 @@ def test_oss_stage_keeps_native_verified_metadata_snapshot(tmp_path,monkeypatch)
     result=channel1.stage_oss(stage_dir/'SemantierAgent.msix',metadata,tmp_path/'candidate.json')
     assert result==oss_release.candidate_from_manifest(original['manifest'])
     assert seen==[result]
+
+
+def test_oss_package_origin_is_bound_separately_from_metadata(tmp_path):
+    package(tmp_path/'candidate', 131)
+    manifest = json.loads((tmp_path/'candidate/channel1-metadata.json').read_bytes())['manifest']
+    manifest['request']['publicBase'] = 'https://cloud.semantier.cn'
+    native = manifest['packages'][0]['native']
+    native.update(schema=2, packageBase='https://assets.semantier.cn')
+    record = channel1._record(manifest, None, protocol)
+    assert protocol.validate_manifest(manifest, record, 'https://cloud.semantier.cn', allow_native=True) == manifest
+
+
+@pytest.mark.parametrize('origin', [
+    'https://evil.example', 'http://assets.semantier.cn', 'https://assets.semantier.cn.evil.example',
+    'https://assets.semantier.cn/path', 'https://assets.semantier.cn?token=secret',
+    'https://user@assets.semantier.cn', 'https://assets.semantier.cn:443',
+])
+def test_oss_package_origin_rejects_noncanonical_hosts(tmp_path, origin):
+    package(tmp_path/'candidate', 131)
+    manifest = json.loads((tmp_path/'candidate/channel1-metadata.json').read_bytes())['manifest']
+    manifest['request']['publicBase'] = 'https://cloud.semantier.cn'
+    manifest['packages'][0]['native'].update(schema=2, packageBase=origin)
+    record = channel1._record(manifest, None, protocol)
+    with pytest.raises(protocol.ChannelError, match='package origin'):
+        protocol.validate_manifest(manifest, record, 'https://cloud.semantier.cn', allow_native=True)
+
+
+def test_legacy_native_schema_cannot_smuggle_package_origin(tmp_path):
+    package(tmp_path/'candidate', 131)
+    manifest = json.loads((tmp_path/'candidate/channel1-metadata.json').read_bytes())['manifest']
+    manifest['packages'][0]['native']['packageBase'] = 'https://evil.example'
+    record = channel1._record(manifest, None, protocol)
+    with pytest.raises(protocol.ChannelError, match='package origin'):
+        protocol.validate_manifest(manifest, record, channel1.BASE, allow_native=True)

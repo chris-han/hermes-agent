@@ -82,7 +82,8 @@ export interface ChannelPackage {
   identity: string
   artifact: { key: string; sha256: string; size: number; chunks?: ArtifactChunks }
   native?: {
-    schema: 1
+    schema: 1 | 2
+    packageBase?: 'https://assets.semantier.cn'
     api: 'PackageManager.AddPackageByUriAsync'
     digestMethod: 'IAppxDigestProvider.GetDigest'
     digestEncoding: 'base64'
@@ -550,7 +551,15 @@ function packageEntry(value: unknown, schema: 1 | 2): ChannelPackage {
 
 function bindNativePackage(fields: Fields, result: ChannelPackage): void {
   const native = fields.object('native')
-  native.schema()
+  const schema = native.get('schema')
+
+  if (schema !== 1 && schema !== 2) {throw new Error('Unsupported native package origin schema')}
+
+  if ((schema === 1 && native.get('packageBase') !== undefined) ||
+      (schema === 2 && native.get('packageBase') !== 'https://assets.semantier.cn')) {
+    throw new Error('Invalid native package origin')
+  }
+
   const graph = native.object('graph')
 
   if (
@@ -566,7 +575,8 @@ function bindNativePackage(fields: Fields, result: ChannelPackage): void {
     {throw new Error('Unsupported native API/package contract')}
 
   result.native = {
-    schema: 1,
+    schema,
+    ...(schema === 2 ? {packageBase: 'https://assets.semantier.cn' as const} : {}),
     api: 'PackageManager.AddPackageByUriAsync',
     digestMethod: 'IAppxDigestProvider.GetDigest',
     digestEncoding: 'base64',
@@ -606,6 +616,16 @@ export function decodeChannelManifest(body: string): ChannelManifest {
   }
 
   const manifest: ChannelManifest = { schema, request: request(fields.object('request')), packages }
+
+  for (const pkg of packages) {
+    if (pkg.native?.schema === 2 && (
+      manifest.request.publicBase !== 'https://cloud.semantier.cn' ||
+      manifest.request.channel !== 'semantier-acceptance' ||
+      manifest.request.repository !== 'chris-han/hermes-agent' ||
+      pkg.variant !== 'bundled' ||
+      pkg.artifact.key !== `releases/channel-builds/${manifest.request.buildId}/SemantierAgent.msix`
+    )) {throw new Error('Invalid OSS package origin binding')}
+  }
 
   if (fields.get('receiverCapabilities') !== undefined) {
     const capabilities = fields.object('receiverCapabilities')

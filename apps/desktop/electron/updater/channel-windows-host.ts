@@ -241,7 +241,8 @@ export function createNativeUriAppInstallerStrategy(
             context.log,
             1860,
             {
-              schema: 1,
+              schema: target.package.native!.schema,
+              ...(target.package.native!.packageBase ? {packageBase: target.package.native!.packageBase} : {}),
               base: target.manifest.request.publicBase,
               graph,
               manifestSha256: target.manifestSha256,

@@ -432,7 +432,20 @@ def validate_manifest(value: object, record: dict, base_url: str, *, allow_nativ
 def _validate_native_package(package: dict, request: dict) -> None:
     if package.get("platform") != "win32" or package.get("arch") != "x64":
         raise ChannelError("Native asset receiver requires Windows x64")
-    native = _schema(package.get("native"))
+    native = package.get("native")
+    if (not isinstance(native, dict) or type(native.get("schema")) is not int
+            or native["schema"] not in (1, 2)):
+        raise ChannelError("Unsupported native package origin schema")
+    if native["schema"] == 2:
+        if (native.get("packageBase") != "https://assets.semantier.cn"
+                or request["publicBase"] != "https://cloud.semantier.cn"
+                or request["channel"] != "semantier-acceptance"
+                or request["repository"] != "chris-han/hermes-agent"
+                or package.get("variant") != "bundled"
+                or package["artifact"]["key"] != build_prefix(request["buildId"]) + "SemantierAgent.msix"):
+            raise ChannelError("Invalid OSS package origin binding")
+    elif "packageBase" in native:
+        raise ChannelError("Legacy native schema cannot select a package origin")
     if (native.get("api") != "PackageManager.AddPackageByUriAsync"
             or native.get("digestMethod") != "IAppxDigestProvider.GetDigest"
             or native.get("digestEncoding") != "base64"):

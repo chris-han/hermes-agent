@@ -172,7 +172,7 @@ function Initialize-NativeUpdate($RequestPath, [int]$ParentId, [long]$ParentBirt
  $ErrorActionPreference='Stop'
  if((Get-Item -LiteralPath $RequestPath).Length -gt 4194304){throw 'Native request exceeds metadata limit'}
  $request=Get-Content -LiteralPath $RequestPath -Raw -Encoding UTF8|ConvertFrom-Json
- if($request.schema -ne 1 -or $request.identity -cne $Package.Name -or $request.fullName -cne $Package.PackageFullName -or $request.familyName -cne $Package.PackageFamilyName -or $request.publisher -cne $Package.Publisher -or $request.currentVersion -cne $Package.Version.ToString() -or [Version]$request.version -le $Package.Version -or $request.manifestSha256 -cnotmatch '^[a-f0-9]{64}$' -or $request.graphSha256 -cnotmatch '^[a-f0-9]{64}$'){throw 'Native current package binding mismatch'}
+ if($request.schema -notin @(1,2) -or $request.identity -cne $Package.Name -or $request.fullName -cne $Package.PackageFullName -or $request.familyName -cne $Package.PackageFamilyName -or $request.publisher -cne $Package.Publisher -or $request.currentVersion -cne $Package.Version.ToString() -or [Version]$request.version -le $Package.Version -or $request.manifestSha256 -cnotmatch '^[a-f0-9]{64}$' -or $request.graphSha256 -cnotmatch '^[a-f0-9]{64}$'){throw 'Native current package binding mismatch'}
  if($Package.Status.ToString() -cne 'Ok' -or $Package.SignatureKind.ToString() -cne 'Developer' -or $Package.IsDevelopmentMode -or $Package.NonRemovable){throw 'Native current package trust mismatch'}
  $cpus=@(Get-CimInstance Win32_Processor)
  if(!$cpus.Count -or @($cpus|Where-Object{$_.Architecture -ne 9}).Count){throw 'Actual native x64 host required'}
@@ -246,10 +246,11 @@ function Invoke-NativePackageUpdate($Context) {
  $request=$Context.request
  $before=@(Get-AppxPackage -Name $request.identity|Where-Object{$_.Name -ceq $request.identity})
  if($before.Count -ne 1 -or $before[0].PackageFullName -cne $request.fullName -or $before[0].Publisher -cne $request.publisher){throw 'Native installed baseline changed before deployment'}
- $uris=@($Context.rows|ForEach-Object{$request.base.TrimEnd('/')+'/'+$_.key})
+ $packageBase=if($request.schema -eq 2){$request.packageBase}else{$request.base}
+ $uris=@($Context.rows|ForEach-Object{$packageBase.TrimEnd('/')+'/'+$_.key})
  $digests=@($Context.rows|ForEach-Object{[string]$_.nativeDigest})
  $start=[DateTime]::UtcNow.ToString('o')
- $uri=$request.base.TrimEnd('/')+'/'+$request.graph.root
+ $uri=$packageBase.TrimEnd('/')+'/'+$request.graph.root
  Write-NativeUpdateReceipt $Context 'deployment-intent.json' @{schema=1;status='DEPLOYMENT_INTENT';producedAt=$start;manifestSha256=$request.manifestSha256;uri=$uri;sid=$request.authorizedSid;session=$request.session}
  $deployment=Invoke-BoundNativePackageUri $uris $digests $uri 25 $true
  $deployment.manifestSha256=$request.manifestSha256
@@ -278,6 +279,9 @@ function Test-NativeUpdateInstalled($Context, $Package) {
 function Read-NativeUpdateGraph($request) {
  $base=[Uri]$request.base
  if(!$base.IsAbsoluteUri -or $base.UserInfo -or $base.Query -or $base.Fragment -or $request.base -match '[%\\\s;]' -or ($base.Scheme -cne 'https' -and !($base.Scheme -ceq 'http' -and $base.Host -cin @('127.0.0.1','localhost','[::1]')))){throw 'Native origin invalid'}
+ if($request.schema -eq 2){
+  if($request.base -cne 'https://cloud.semantier.cn' -or $request.packageBase -cne 'https://assets.semantier.cn'){throw 'Native package origin invalid'}
+ }elseif($request.PSObject.Properties['packageBase']){throw 'Legacy native request cannot select package origin'}
  $graph=$request.graph;$rows=@($graph.objects);$byKey=@{};$main=0;$bundle=0;$identities=@{}
  $single=$rows.Count -eq 1 -and $rows[0].kind -ceq 'main-package'
  $maximum=if($single){68719476736L}else{480000000L}
@@ -299,6 +303,7 @@ function Read-NativeUpdateGraph($request) {
  if($references.Count -ne ($rows.Count-1) -or @($references|Select-Object -Unique).Count -ne $references.Count -or @($references|Where-Object{!$byKey.ContainsKey($_) -or $_ -ceq $graph.root}).Count){throw 'Native graph incomplete'}
  $prefix=($graph.root -split '/')[2]
  if(@($rows|Where-Object{($_.key -split '/')[2] -cne $prefix}).Count){throw 'Native graph build mismatch'}
+ if($request.schema -eq 2 -and (!$single -or $prefix -cne $request.targetBuildId -or $graph.root -cne ('releases/channel-builds/'+$request.targetBuildId+'/SemantierAgent.msix'))){throw 'Native OSS build binding mismatch'}
  return $rows
 }
 

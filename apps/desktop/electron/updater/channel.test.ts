@@ -1118,3 +1118,32 @@ test('bundled schema2 resolves one large native MSIX without descriptor or full 
   expect(() => decodeNativePackageGraph(JSON.stringify({...graph, objects:[{...object, publisher:'Wrong'}]}), decoded.request, decoded.packages[0])).toThrow()
   expect(() => decodeNativePackageGraph(JSON.stringify({...graph, objects:[{...object, references:[object.key]}]}), decoded.request, decoded.packages[0])).toThrow()
 })
+
+ test('OSS native origin is exact and separate from cloud metadata', async () => {
+  const f = await fixture()
+  const request = {...f.manifest.request, publicBase:'https://cloud.semantier.cn', channel:'semantier-acceptance', repository:'chris-han/hermes-agent'}
+  const prefix = `releases/channel-builds/${request.buildId}/`
+
+  const native = {schema:2, packageBase:'https://assets.semantier.cn', api:'PackageManager.AddPackageByUriAsync',
+    digestMethod:'IAppxDigestProvider.GetDigest', digestEncoding:'base64',
+    graph:{key:prefix+'native-graph.json', sha256:'a'.repeat(64), size:100}}
+
+  const pkg = {platform:'win32', arch:'x64', variant:'bundled', version:request.windowsVersion,
+    identity:request.identity.msixAppIdWithOrg, publisher:'CN=Semantier Technology, O=Semantier Technology',
+    artifact:{key:prefix+'SemantierAgent.msix', sha256:'b'.repeat(64), size:1000},
+    feed:{key:native.graph.key, channel:'stable'}, native}
+
+  const decode = (origin = native.packageBase, schema = 2, base = request.publicBase) => decodeChannelManifest(JSON.stringify({
+    schema:2, request:{...request, publicBase:base}, packages:[{...pkg, native:{...native, schema, packageBase:origin}}]
+  }))
+
+  expect(decode().packages[0].native).toEqual(native)
+
+  for (const origin of ['https://evil.example','http://assets.semantier.cn','https://assets.semantier.cn/path',
+    'https://assets.semantier.cn?token=secret','https://assets.semantier.cn:443','https://user@assets.semantier.cn']) {
+    expect(() => decode(origin)).toThrow('package origin')
+  }
+
+  expect(() => decode(native.packageBase, 1)).toThrow('package origin')
+  expect(() => decode(native.packageBase, 2, 'https://download.semantier.cn')).toThrow('package origin')
+})
