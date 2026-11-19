@@ -37,5 +37,6 @@ try {
  $originalHash=$ExpectedInputSha256
  $ExpectedInputSha256='0'*64;Require (!(Preserve-ToolingPreparationFailure $previous)) 'Changed package hash accepted'
  $ExpectedInputSha256=$originalHash;[IO.File]::WriteAllText($Msix,'corrupted package');Require (!(Preserve-ToolingPreparationFailure $previous)) 'Changed package bytes accepted'
+ $lease=[IO.File]::Open($script:statusLog,'Open','ReadWrite','None');$lease.Dispose()
  Write-Output 'PASS: missing timestamp, exact built-package resume, replay and source/signing/publication/build/version/hash denials'
 } finally {Remove-Item $root -Recurse -Force}

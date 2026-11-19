@@ -497,7 +497,7 @@ function Preserve-ToolingPreparationFailure($Previous) {
     $eventType='build-preparation-failure';$contract='semantier-built-package-resume-v1'
   }
   $binding=$Previous | ConvertTo-Json -Depth 32 -Compress
-  foreach($line in [IO.File]::ReadLines($script:statusLog)){
+  foreach($line in [IO.File]::ReadAllLines($script:statusLog)){
     try{$event=$line | ConvertFrom-Json -ErrorAction Stop}catch{continue}
     if(!$event -or !$event.PSObject.Properties['type'] -or $event.type -cne $eventType){continue}
     if($event.contract -cne $contract -or $event.previous -cne $binding){throw 'Conflicting historical preparation failure.'}
