@@ -645,7 +645,7 @@ import {
 import { AppInstallerStrategy } from './updater/app-installer'
 import { createChannelAppInstallerStrategy } from './updater/app-installer'
 import { ChannelResolver, type ChannelTarget } from './updater/channel'
-import { configureChannel1Quic, createDesktopUpdateFetches } from './updater/channel1-network'
+import { createDesktopUpdateFetches } from './updater/channel1-network'
 import { markChannelArtifactHandoff, retireInstalledChannelArtifacts } from './updater/channel-artifact-cache'
 import { inspectRunningChannelApp } from './updater/channel-native'
 import { ChannelStrategy } from './updater/channel-strategy'
@@ -1244,7 +1244,6 @@ ipcMain.handle('hermes:embed-host:origin', () => embedHostOrigin())
 // minimized, exactly as before) and return to Chromium's default throttling
 // once the work settles.
 app.commandLine.appendSwitch('disable-renderer-backgrounding')
-const channel1QuicAvailable = configureChannel1Quic(app.commandLine, process.platform)
 
 const SOURCE_REPO_ROOT = path.resolve(APP_ROOT, '../..')
 
@@ -3640,7 +3639,7 @@ async function createPackagedUpdateStrategy(): Promise<UpdaterStrategy | null> {
 }
 
 const { metadata: fetchDesktopUpdate, artifact: fetchDesktopArtifact } = createDesktopUpdateFetches(
-  process.platform, (input, init) => electronNet.fetch(input instanceof URL ? input.href : input, init), session, channel1QuicAvailable)
+  process.platform, (input, init) => electronNet.fetch(input instanceof URL ? input.href : input, init), session)
 
 function createNativePackagedStrategy(
   mechanism: UpdaterStrategy['mechanism'],

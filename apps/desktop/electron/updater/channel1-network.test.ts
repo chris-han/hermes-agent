@@ -1,20 +1,18 @@
 import { expect, test, vi } from 'vitest'
 
-import { channel1ArtifactFetch, configureChannel1Quic, createDesktopUpdateFetches } from './channel1-network'
+import { channel1ArtifactFetch, createDesktopUpdateFetches } from './channel1-network'
 
-const url = `https://download.semantier.cn/releases/channel-builds/${'a'.repeat(32)}/SemantierAgent.msix`
+const url = `https://assets.semantier.cn/releases/channel-builds/${'a'.repeat(32)}/SemantierAgent.msix`
 
-test('production wiring preserves metadata/other channels and fails closed when QUIC is disabled', async () => {
+test('production wiring preserves cloud metadata and permits standard OSS HTTPS', async () => {
   const system = vi.fn(async () => new Response('metadata'))
   const partition = {setProxy: vi.fn(async () => undefined), fetch: vi.fn(async () => new Response('package'))}
   const sessions = {fromPartition: vi.fn(() => partition)}
-  const transport = createDesktopUpdateFetches('win32', system, sessions, true)
-  await transport.metadata('https://download.semantier.cn/releases/channels/semantier-acceptance.json', {redirect:'error'})
+  const transport = createDesktopUpdateFetches('win32', system, sessions)
+  await transport.metadata('https://cloud.semantier.cn/releases/channels/semantier-acceptance.json', {redirect:'error'})
   expect(sessions.fromPartition).not.toHaveBeenCalled()
   await transport.artifact(url, {redirect:'error'})
   expect(sessions.fromPartition).toHaveBeenCalledWith('semantier-channel1-artifacts', {cache:false})
-  expect(system).toHaveBeenCalledTimes(1)
-  await expect(createDesktopUpdateFetches('win32', system, sessions, false).artifact(url, {redirect:'error'})).rejects.toThrow('QUIC')
   expect(system).toHaveBeenCalledTimes(1)
 })
 
@@ -37,21 +35,10 @@ test('direct failure never falls back to proxy or another protocol and redirects
   const fallback = vi.fn()
 
   const read = channel1ArtifactFetch(fallback, () => ({setProxy: async () => undefined,
-    fetch: async () => { throw new Error('QUIC unavailable') }}))
+    fetch: async () => { throw new Error('OSS network unavailable') }}))
 
-  await expect(read(url, { redirect: 'error' })).rejects.toThrow('QUIC unavailable')
+  await expect(read(url, { redirect: 'error' })).rejects.toThrow('OSS network unavailable')
   expect(fallback).not.toHaveBeenCalled()
-})
-
-test('QUIC is forced for the canonical authority before readiness without changing other switches', () => {
-  const appendSwitch = vi.fn()
-  configureChannel1Quic({appendSwitch, getSwitchValue: () => '', hasSwitch: () => false}, 'win32')
-  expect(appendSwitch).toHaveBeenCalledExactlyOnceWith('origin-to-force-quic-on', 'download.semantier.cn:443')
-  appendSwitch.mockClear()
-  configureChannel1Quic({appendSwitch, getSwitchValue: () => '', hasSwitch: () => false}, 'darwin')
-  expect(appendSwitch).not.toHaveBeenCalled()
-  expect(configureChannel1Quic({appendSwitch, getSwitchValue: () => '', hasSwitch: () => true}, 'win32')).toBe(false)
-  expect(appendSwitch).not.toHaveBeenCalled()
 })
 
 test('canonical package transport rejects malformed paths, foreign redirects and cancellation without fallback', async () => {
