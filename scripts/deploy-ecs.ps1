@@ -444,6 +444,29 @@ function Confirm-ToolingTransition($Record,[string]$Inputs) {
     try{$durable.Flush($true)}finally{$durable.Dispose()}
   } finally {foreach($lease in $leases){$lease.Dispose()}}
 }
+function Preserve-ToolingPreparationFailure($Previous) {
+  if(!$ToolingQualification -or !$script:qualifiedTooling){return $false}
+  foreach($name in @('result','commit','signing','installation','publication')){
+    if(!$Previous.PSObject.Properties[$name]){return $false}
+  }
+  if($Previous.result -cnotin @('FAIL','STOP') -or $Previous.commit -cne $Commit -or
+     $Previous.signing -cne 'NOT_RUN' -or $Previous.installation -cne 'NOT_RUN' -or $Previous.publication -cne 'NOT_RUN'){
+    return $false
+  }
+  foreach($name in @('sha256','signedMsix','unsignedSha256','plan')){
+    if($Previous.PSObject.Properties[$name] -and $Previous.$name){return $false}
+  }
+  $binding=$Previous | ConvertTo-Json -Depth 32 -Compress
+  foreach($line in [IO.File]::ReadLines($script:statusLog)){
+    try{$event=$line | ConvertFrom-Json -ErrorAction Stop}catch{continue}
+    if(!$event -or !$event.PSObject.Properties['type'] -or $event.type -cne 'tooling-preparation-failure'){continue}
+    if($event.contract -cne 'semantier-tooling-transition-v1' -or $event.previous -cne $binding){throw 'Conflicting historical preparation failure.'}
+    return $true
+  }
+  Write-RunEvent @{type='tooling-preparation-failure';contract='semantier-tooling-transition-v1';
+    at=[DateTime]::UtcNow.ToString('o');previous=$binding}
+  return $true
+}
 function Initialize-ReactCompilerCache([string]$Source) {
   # The admitted Vite config already keys compiled output by module text,
   # relative module path, lockfile, compiler helper, config and NODE_ENV.
@@ -2234,10 +2257,12 @@ if($saved) {
   # Explicitly selected older runs may predate checkpoints. Adopt only their
   # verified signed artifact; never infer local acceptance or publication.
   $previous=Get-Content -LiteralPath (Join-Path $Output 'result.json') -Raw | ConvertFrom-Json
-  if($previous.unsignedSha256 -cne $ExpectedInputSha256 -or $previous.plan.sourceCommit -cne $SourceCommit){throw 'Older run source mismatch.'}
-  if($previous.sha256 -and (Test-Path -LiteralPath (Join-Path $Output 'SemantierAgent.msix')) -and
-    (Hash (Join-Path $Output 'SemantierAgent.msix')) -ceq $previous.sha256) {
-    $receipt.sha256=$previous.sha256;$script:checkpoints['signed']='imported-verified-hash'
+  if(!(Preserve-ToolingPreparationFailure $previous)){
+    if($previous.unsignedSha256 -cne $ExpectedInputSha256 -or $previous.plan.sourceCommit -cne $SourceCommit){throw 'Older run source mismatch.'}
+    if($previous.sha256 -and (Test-Path -LiteralPath (Join-Path $Output 'SemantierAgent.msix')) -and
+      (Hash (Join-Path $Output 'SemantierAgent.msix')) -ceq $previous.sha256) {
+      $receipt.sha256=$previous.sha256;$script:checkpoints['signed']='imported-verified-hash'
+    }
   }
 }
 if($NativeUpdateFrom){

@@ -205,6 +205,22 @@ try {
   [IO.File]::AppendAllText((Join-Path $Repository 'pm/lock.json'),'changed')
   Reject {Assert-QualifiedToolingSource $script:qualifiedTooling $sourceOperator} 'Dirty tooling lock accepted'
   Set-Item Function:Get-SourceGit $savedGit
+  New-Fixture 'failed-preparation-result'
+  $ToolingQualification=$path
+  $previous=[pscustomobject]@{result='FAIL';commit=$Commit;signing='NOT_RUN';installation='NOT_RUN';publication='NOT_RUN';
+    error='original preparation failure';sourceCleanup='DEFERRED'}
+  Require (Preserve-ToolingPreparationFailure $previous) 'Original failed preparation cannot resume release stages'
+  $once=[IO.File]::ReadAllText($statusLog)
+  Require (Preserve-ToolingPreparationFailure $previous) 'Failure preservation replay rejected'
+  Require ([IO.File]::ReadAllText($statusLog) -ceq $once) 'Historical failure duplicated'
+  $previous.error='conflicting failure'
+  Reject {Preserve-ToolingPreparationFailure $previous} 'Conflicting failure snapshot accepted'
+  $previous.commit='f'*40
+  Require (!(Preserve-ToolingPreparationFailure $previous)) 'Foreign failed result admitted'
+  $previous.commit=$Commit;$previous.signing='PASS'
+  Require (!(Preserve-ToolingPreparationFailure $previous)) 'Signed result admitted as preparation failure'
+  $previous.signing='NOT_RUN';$ToolingQualification=''
+  Require (!(Preserve-ToolingPreparationFailure $previous)) 'Ordinary result validation bypassed'
   # Exercise the real Build-CommitPackage input guard and transition wiring.
   # Stop exactly at the existing native source initialization boundary.
   New-Fixture 'build-entrypoint'
