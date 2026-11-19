@@ -271,7 +271,7 @@ function Initialize-ReleasePaths {
   if($AcceptanceNodeModules){$script:AcceptanceNodeModules=Assert-LocalWindowsPath $AcceptanceNodeModules}
   if($CredentialsEnv){$script:CredentialsEnv=(Resolve-Path -LiteralPath $CredentialsEnv -ErrorAction Stop).ProviderPath;$null=Get-EcsSshPassword $CredentialsEnv}
   if($ChannelRecoveryMsix){$script:ChannelRecoveryMsix=Assert-LocalWindowsPath $ChannelRecoveryMsix}
-  $git=(Get-Command git.exe -CommandType Application -ErrorAction Stop).Source
+  $git=Get-ValidatedNativeGit
   Set-ReleaseEnvironment 'PATH' ((Split-Path -Parent $git)+';'+$env:PATH)
   $trust=@($Repository.Replace('\','/'))
   $script:RuntimeRoot=$null
@@ -577,7 +577,8 @@ function Sync-GitHubLatestSource([string]$Runtime,[string]$Operator) {
     if([Environment]::GetEnvironmentVariable($name,'Process')){throw ('Unset Git override before sync: '+$name)}
   }
   if($env:SEMANTIER_WSL_GIT_DISTRO){throw 'WSL Git is not supported by the native release workflow.'}
-  $null=Get-Command git.exe -CommandType Application -ErrorAction Stop
+  $git=Get-ValidatedNativeGit
+  Set-ReleaseEnvironment 'PATH' ((Split-Path -Parent $git)+';'+$env:PATH)
   $root=Get-SourceGit $Runtime @('rev-parse','--show-toplevel')
   if($root.Replace('\','/') -ine $expected.Replace('\','/')){throw 'Runtime Git top-level mismatch.'}
   if((Get-SourceGit $Runtime @('branch','--show-current')) -cne 'main'){
@@ -1620,14 +1621,24 @@ globalThis.fetch=async(input,options)=>{
   Write-RunEvent @{type='preflight-electron';at=[DateTime]::UtcNow.ToString('o');version=$version;sha256=$expected;status='PASS'}
   Report-Status "Preflight: Electron $version official SHA-256 verified; Node will reuse the local archive and checksums."
 }
-function Initialize-BuildPreflight {
-  param([switch]$NativeOnly)
+function Get-ValidatedNativeGit([string]$Executable='C:\Program Files\Git\cmd\git.exe') {
+  if(!(Test-Path -LiteralPath $Executable -PathType Leaf)){
+    throw "Canonical Git for Windows executable missing: $Executable. No installation attempted."
+  }
+  $PSNativeCommandUseErrorActionPreference=$false
+  $version=@(& $Executable --version 2>&1)
+  $exitCode=$LASTEXITCODE
+  if($exitCode -ne 0 -or $version.Count -ne 1 -or [string]$version[0] -notmatch '^git version [0-9]+\.[0-9]+\.[0-9]+\.windows\.[0-9]+$'){
+    throw "Git for Windows version validation failed: $Executable; exit=$exitCode. Diagnose the native loader before repairing the installation."
+  }
+  return $Executable
+}
+function Initialize-NativeBuildEnvironment([string]$Sdk='10.0.26100.0') {
   if([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT){throw 'Build preflight requires native Windows.'}
-  Report-Status 'Preflight: initializing Windows PATH and VS 2022 x64 SDK environment.'
+  $git=Get-ValidatedNativeGit
   $systemPaths=@($PSHOME,"$env:WINDIR\System32","$env:WINDIR","$env:WINDIR\System32\Wbem",
-    "$env:WINDIR\System32\OpenSSH","$env:WINDIR\System32\WindowsPowerShell\v1.0",'D:\Program Files\Git\cmd')
+    "$env:WINDIR\System32\OpenSSH","$env:WINDIR\System32\WindowsPowerShell\v1.0",(Split-Path -Parent $git))
   $vs='C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat'
-  $sdk='10.0.26100.0'
   if(!(Test-Path -LiteralPath $vs)){throw 'VS 2022 BuildTools is missing; preflight does not install tools.'}
   $command='set "PATH='+($systemPaths -join ';')+'" && call "'+$vs+'" -arch=x64 -host_arch=x64 -winsdk='+$sdk+' && set'
   $lines=& "$env:WINDIR\System32\cmd.exe" /d /s /c $command
@@ -1639,9 +1650,18 @@ function Initialize-BuildPreflight {
     $separator=$line.IndexOf('=');if($separator -le 0){continue}
     $name=$line.Substring(0,$separator)
     if($name -match '^(PATH|INCLUDE|LIB|LIBPATH|WindowsSDK.*|UniversalCRT.*|UCRTVersion|VCTools.*|VSINSTALLDIR|VCINSTALLDIR|VSCMD_ARG_.*)$'){
-      [Environment]::SetEnvironmentVariable($name,$line.Substring($separator+1),'Process')
+      Set-ReleaseEnvironment $name $line.Substring($separator+1)
     }
   }
+  # VS can prepend its own tools; keep the canonical Git ahead of them.
+  Set-ReleaseEnvironment 'PATH' ((Split-Path -Parent $git)+';'+$env:PATH)
+  return (Get-ValidatedNativeGit)
+}
+function Initialize-BuildPreflight {
+  param([switch]$NativeOnly)
+  Report-Status 'Preflight: initializing Windows PATH and VS 2022 x64 SDK environment.'
+  $sdk='10.0.26100.0'
+  $null=Initialize-NativeBuildEnvironment -Sdk $sdk
   if(!$env:WindowsSdkDir){throw 'VS did not supply WindowsSdkDir.'}
   foreach($relative in @("Include\$sdk\um\winsdkver.h","Include\$sdk\shared\sdkddkver.h",
     "Include\$sdk\ucrt\stdio.h","Lib\$sdk\um\x64\gdi32.lib","Lib\$sdk\ucrt\x64\ucrt.lib")){
