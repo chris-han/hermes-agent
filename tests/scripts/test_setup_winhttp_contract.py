@@ -125,3 +125,18 @@ class SetupContractTests {
     assert contract.read_text() == "local-adjacent-single-msix"
     rejected = subprocess.run([str(local_executable), "--probe-h3"], check=False, timeout=30)
     assert rejected.returncode == 2
+
+
+@pytest.mark.platforms("windows")
+def test_private_oss_staging_transport_contract(tmp_path):
+    repo=Path(__file__).resolve().parents[2]
+    source="using System;using System.IO;using System.ComponentModel;using System.Globalization;using System.Runtime.InteropServices;\n"
+    source+=(repo/'win-native-installer/WinHttp.cs').read_text()
+    source+=(repo/'tests/scripts/oss-staging-download-contract.cs').read_text()
+    source+='class Entry {static int Main(){Console.WriteLine(OssStagingContractTests.Run());return 0;}}'
+    path=tmp_path/'Test.cs';path.write_text(source)
+    compiler=Path(os.environ['WINDIR'])/'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+    exe=tmp_path/'Test.exe'
+    subprocess.run([str(compiler),'/nologo','/target:exe','/out:'+str(exe),str(path)],check=True,capture_output=True)
+    result=subprocess.run([str(exe)],check=True,capture_output=True,text=True)
+    assert result.stdout.startswith('PASS:')

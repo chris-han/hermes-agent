@@ -685,3 +685,25 @@ def test_retirement_root_can_maintain_service_owned_directory(tmp_path,monkeypat
         assert channel1.retire_package(root,**kwargs)['result']=='RETIREMENT_PLAN'
     else:
         with pytest.raises(ValueError,match='actor'):channel1.retire_package(root,apply=True,**kwargs)
+
+
+def test_oss_stage_keeps_native_verified_metadata_snapshot(tmp_path,monkeypatch):
+    """A file replacement after signature verification cannot switch release pins."""
+    from agents.client_operations import oss_release
+    from types import SimpleNamespace
+    stage_dir=tmp_path/'stage';package(stage_dir,125)
+    metadata=stage_dir/'channel1-metadata.json';original=json.loads(metadata.read_text())
+    monkeypatch.setattr(oss_release,'assume_role',lambda _:object())
+    monkeypatch.setattr(channel1.subprocess,'check_output',lambda *a,**kw:'D:\\fixture.msix')
+    def native_verified(*args,**kwargs):
+        replacement=json.loads(metadata.read_text())
+        replacement['manifest']['request']['commit']='b'*40
+        metadata.write_text(json.dumps(replacement))
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(channel1.subprocess,'run',native_verified)
+    monkeypatch.setattr(oss_release,'Objects',lambda _:object())
+    seen=[]
+    monkeypatch.setattr(oss_release,'stage',lambda p,c,o,obj:seen.append(c) or c)
+    result=channel1.stage_oss(stage_dir/'SemantierAgent.msix',metadata,tmp_path/'candidate.json')
+    assert result==oss_release.candidate_from_manifest(original['manifest'])
+    assert seen==[result]
