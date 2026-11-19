@@ -196,8 +196,8 @@ with requests.Session(http_version='v2' if legacy else 'v1',trust_env=False,curl
   assert r.status_code==206 and len(r.content)==65536 and r.content==expected,(r.status_code,r.http_version)
   assert not legacy or r.http_version==3
   assert r.headers['Content-Range']==f'bytes {start}-{end}/{a["size"]}' and not r.headers.get('Content-Encoding')
-  rows.append({'origin':'oss-package','protocol':r.http_version,'status':r.status_code,'bytes':len(r.content),'range':r.headers['Content-Range']})
-print(json.dumps({'result':'CLOUD_METADATA_OSS_BOUNDED_RANGE_PASS','fullMsixTransfers':0,'responses':rows}))
+  rows.append({'origin':'legacy-ecs-package' if legacy else 'oss-package','protocol':r.http_version,'status':r.status_code,'bytes':len(r.content),'range':r.headers['Content-Range']})
+print(json.dumps({'result':'CLOUD_METADATA_LEGACY_BASELINE_BOUNDED_RANGE_PASS' if legacy else 'CLOUD_METADATA_OSS_BOUNDED_RANGE_PASS','packageBase':package_base,'fullMsixTransfers':0,'responses':rows}))
 '@
   $encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($Manifest|ConvertTo-Json -Depth 30 -Compress)))
   $result=& $BuildPython -B -c $code $encoded $Package ([bool]$Active).ToString() ([bool]$LegacyBaseline).ToString()

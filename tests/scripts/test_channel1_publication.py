@@ -163,7 +163,7 @@ def test_live_route_uses_restart_only_when_admin_is_disabled(tmp_path, monkeypat
 
 @pytest.mark.parametrize('legacy',[False,True])
 @pytest.mark.parametrize('failure', ['421', 'http1', 'wrong-bytes', 'wrong-graph', None])
-def test_native_public_probe_checks_real_response_predicates(tmp_path, monkeypatch, failure,legacy):
+def test_native_public_probe_checks_real_response_predicates(tmp_path, monkeypatch, failure,legacy,capsys):
     _, _, _ = package(tmp_path/'new', 122)
     data = json.loads((tmp_path/'new/channel1-metadata.json').read_bytes())
     manifest = data['manifest']; graph = protocol.canonical_json(data['graph'])
@@ -204,6 +204,10 @@ def test_native_public_probe_checks_real_response_predicates(tmp_path, monkeypat
         with pytest.raises(AssertionError): exec(code, {})
     else:
         exec(code, {})
+        result=json.loads(capsys.readouterr().out)
+        assert result['packageBase']==('https://download.semantier.cn' if legacy else 'https://assets.semantier.cn')
+        assert {r['origin'] for r in result['responses']}=={'cloud-metadata','legacy-ecs-package' if legacy else 'oss-package'}
+        assert ('LEGACY_BASELINE' in result['result'])==legacy
 
 
 def test_real_metadata_and_repeated_publish_are_current_only(tmp_path):
