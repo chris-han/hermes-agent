@@ -152,16 +152,16 @@ def _atomic(path, body):
         Path(name).unlink(missing_ok=True)
 
 
-def _uploaded_metadata(stage, metadata_sha256, package_sha256, protocol):
+def _uploaded_metadata(stage, metadata_sha256, package_sha256, protocol, metadata_only=False):
     metadata = stage/'channel1-metadata.json'
     package = stage/'SemantierAgent.msix'
-    if sha(metadata) != metadata_sha256 or sha(package) != package_sha256:
+    if sha(metadata) != metadata_sha256 or (not metadata_only and sha(package) != package_sha256):
         raise ValueError('Uploaded SHA256 integrity mismatch')
     data = protocol.decode_json(metadata.read_bytes())
     manifest = data['manifest']; request = manifest['request']; row = manifest['packages'][0]
     prefix = protocol.build_prefix(request['buildId'])
     if (request['publicBase'] != BASE or request['channel'] != CHANNEL or len(manifest['packages']) != 1
-            or row['artifact'] != {'key': prefix+'SemantierAgent.msix', 'sha256': package_sha256, 'size': package.stat().st_size}
+            or row['artifact'] != {'key': prefix+'SemantierAgent.msix', 'sha256': package_sha256, 'size': row['artifact']['size'] if metadata_only else package.stat().st_size}
             or manifest['schema'] != 2 or row['variant'] != 'bundled'
             or row['feed'] != {'key': prefix+'native-graph.json', 'channel': 'stable'}):
         raise ValueError('Uploaded artifact namespace/binding mismatch')
@@ -173,16 +173,20 @@ def _uploaded_metadata(stage, metadata_sha256, package_sha256, protocol):
             or any(graph['objects'][0][key] != row['artifact'][key] for key in ('key', 'sha256', 'size'))
             or row['native']['graph'] != {'key': row['feed']['key'], 'sha256': hashlib.sha256(graph_body).hexdigest(), 'size': len(graph_body)}):
         raise ValueError('Native graph binding mismatch')
-    with zipfile.ZipFile(package) as archive:
-        native = ET.fromstring(archive.read('AppxManifest.xml')).find('{*}Identity').attrib
-        stamp = protocol.decode_json(archive.read('app/resources/install-stamp.json'))
-        if (native['Name'] != row['identity'] or native['Publisher'] != row['publisher']
-                or native['Publisher'] != 'CN=Semantier Technology, O=Semantier Technology'
-                or native['Name'] != 'Semantier.Agent.Acceptance' or native['Version'] != row['version']
-                or native['ProcessorArchitecture'] != 'x64' or stamp['channelBuild'] != request
-                or stamp.get('dirty') is not False or stamp['commit'] != request['commit']
-                or graph['payloadInventorySha256'] != hashlib.sha256(archive.read('AppxBlockMap.xml')).hexdigest()):
-            raise ValueError('Uploaded signed package metadata binding mismatch')
+    if metadata_only:
+        if row['native']['schema'] != 2 or row['native'].get('packageBase') != 'https://assets.semantier.cn':
+            raise ValueError('Metadata-only publication requires the OSS native contract')
+    else:
+        with zipfile.ZipFile(package) as archive:
+            native = ET.fromstring(archive.read('AppxManifest.xml')).find('{*}Identity').attrib
+            stamp = protocol.decode_json(archive.read('app/resources/install-stamp.json'))
+            if (native['Name'] != row['identity'] or native['Publisher'] != row['publisher']
+                    or native['Publisher'] != 'CN=Semantier Technology, O=Semantier Technology'
+                    or native['Name'] != 'Semantier.Agent.Acceptance' or native['Version'] != row['version']
+                    or native['ProcessorArchitecture'] != 'x64' or stamp['channelBuild'] != request
+                    or stamp.get('dirty') is not False or stamp['commit'] != request['commit']
+                    or graph['payloadInventorySha256'] != hashlib.sha256(archive.read('AppxBlockMap.xml')).hexdigest()):
+                raise ValueError('Uploaded signed package metadata binding mismatch')
     return manifest, graph_body
 
 
@@ -214,19 +218,22 @@ def _rollback(snapshots, pointer, stable, created_dirs):
         if saved is None: target.unlink(missing_ok=True)
         elif target.exists() and target.samefile(saved): continue
         else: os.replace(saved, target)
-    temporary = stable.with_name('.channel1-package.tmp'); temporary.unlink(missing_ok=True)
+    if stable is not None:
+        temporary = stable.with_name('.channel1-package.tmp'); temporary.unlink(missing_ok=True)
     for path in sorted(created_dirs, key=lambda p: len(p.parts), reverse=True):
         if path.exists(): path.rmdir()
 
 
-def _activate(root, stage, record, row, bodies, obsolete, backup, protocol):
+def _activate(root, stage, record, row, bodies, obsolete, backup, protocol, metadata_only=False):
     pointer = _safe(root, POINTER)
     artifact = _safe(root, row['artifact']['key'])
     package = stage/'SemantierAgent.msix'
     package_sha256 = row['artifact']['sha256']
     stable = _safe(root, 'releases/SemantierAgent.msix')
     checksum = _safe(root, 'releases/SemantierAgent.msix.sha256')
-    targets = [stable, checksum, artifact, *(_safe(root, k) for k in bodies), *obsolete, pointer]
+    targets = [*(_safe(root, k) for k in bodies), *obsolete, pointer]
+    if not metadata_only:
+        targets = [stable, checksum, artifact, *targets]
     snapshots = {}
     for index, target in enumerate(targets):
         if target.exists():
@@ -238,19 +245,21 @@ def _activate(root, stage, record, row, bodies, obsolete, backup, protocol):
         parent = path.parent
         while not parent.exists(): created_dirs.add(parent); parent = parent.parent
     try:
-        artifact.parent.mkdir(parents=True, exist_ok=True)
-        if not artifact.exists():
-            os.link(package, artifact)
-            os.chmod(artifact, 0o644)
+        if not metadata_only:
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            if not artifact.exists():
+                os.link(package, artifact)
+                os.chmod(artifact, 0o644)
         for key, body in bodies.items(): _atomic(root/key, body)
-        stable.parent.mkdir(parents=True, exist_ok=True)
-        temporary = stable.with_name('.channel1-package.tmp')
-        if temporary.exists(): raise ValueError('Unreconciled package activation')
-        # POSIX rename is a no-op when both names already share an inode.
-        # Avoid leaving the temporary link behind on an idempotent publish.
-        if not stable.exists() or not artifact.samefile(stable):
-            os.link(artifact, temporary); os.replace(temporary, stable)
-        _atomic(checksum, (package_sha256+'  SemantierAgent.msix\n').encode())
+        if not metadata_only:
+            stable.parent.mkdir(parents=True, exist_ok=True)
+            temporary = stable.with_name('.channel1-package.tmp')
+            if temporary.exists(): raise ValueError('Unreconciled package activation')
+            # POSIX rename is a no-op when both names already share an inode.
+            # Avoid leaving the temporary link behind on an idempotent publish.
+            if not stable.exists() or not artifact.samefile(stable):
+                os.link(artifact, temporary); os.replace(temporary, stable)
+            _atomic(checksum, (package_sha256+'  SemantierAgent.msix\n').encode())
         pointer.parent.mkdir(parents=True, exist_ok=True)
         for path in sorted(created_dirs, key=lambda p: len(p.parts), reverse=True):
             _sync_directory(path); _sync_directory(path.parent)
@@ -258,11 +267,11 @@ def _activate(root, stage, record, row, bodies, obsolete, backup, protocol):
         _atomic(pointer, protocol.canonical_json(record))
         for path in obsolete: path.unlink()
     except BaseException:
-        _rollback(snapshots, pointer, stable, created_dirs)
+        _rollback(snapshots, pointer, None if metadata_only else stable, created_dirs)
         raise
 
 
-def _save_recovery(root, recovery, record, package_sha256, protocol):
+def _save_recovery(root, recovery, record, package_sha256, protocol, metadata_only=False):
     recovery = Path(recovery).absolute()
     if recovery.parent != root.parent or not recovery.name.startswith('.channel1-recovery-'):
         raise ValueError('Invalid recovery boundary')
@@ -270,7 +279,8 @@ def _save_recovery(root, recovery, record, package_sha256, protocol):
     pointer = root/POINTER
     if (recovery/'recovery.json').exists():
         saved = protocol.decode_json((recovery/'recovery.json').read_bytes())
-        if (saved['root'] != str(root) or saved['afterPackageSha256'] != package_sha256
+        if (saved.get('delivery', 'ecs-package') != ('oss-metadata-only' if metadata_only else 'ecs-package')
+                or saved['root'] != str(root) or saved['afterPackageSha256'] != package_sha256
                 or saved['afterPointerSha256'] != hashlib.sha256(protocol.canonical_json(record)).hexdigest()):
             raise ValueError('Recovery binding changed')
         for row in saved['files']:
@@ -285,7 +295,8 @@ def _save_recovery(root, recovery, record, package_sha256, protocol):
         os.link(target, saved)
         files.append({'key': key, 'saved': str(index), 'sha256': sha(saved)})
     _atomic(recovery/'recovery.json', protocol.canonical_json({
-        'root': str(root), 'beforePointerSha256': sha(pointer),
+        'root': str(root), 'delivery': 'oss-metadata-only' if metadata_only else 'ecs-package',
+        'beforePointerSha256': sha(pointer),
         'afterPointerSha256': hashlib.sha256(protocol.canonical_json(record)).hexdigest(),
         'afterPackageSha256': package_sha256, 'files': files}))
     _sync_directory(recovery)
@@ -387,12 +398,12 @@ def _native_route_body(before, old_id, new_id):
 
 
 def stage_native(root, stage, *, metadata_sha256, package_sha256, protocol,
-                 expected_previous_sha256, recovery, caddy_sha256):
+                 expected_previous_sha256, recovery, caddy_sha256, metadata_only=False):
     """Expose exact immutable candidate URLs for probing; leave pointer unchanged."""
     root, stage, recovery = Path(root).absolute(), Path(stage).absolute(), Path(recovery).absolute()
     if root == stage or root in stage.parents or stage.is_symlink():
         raise ValueError('Invalid upload boundary')
-    manifest, graph = _uploaded_metadata(stage, metadata_sha256, package_sha256, protocol)
+    manifest, graph = _uploaded_metadata(stage, metadata_sha256, package_sha256, protocol, metadata_only)
     row = manifest['packages'][0]; request = manifest['request']
     with _lock(root):
         pointer = _safe(root, POINTER)
@@ -400,7 +411,9 @@ def stage_native(root, stage, *, metadata_sha256, package_sha256, protocol,
             raise ValueError('Concurrent channel publication')
         previous = protocol.decode_json(pointer.read_bytes())
         record = _record(manifest, previous, protocol)
-        _save_recovery(root, recovery, record, package_sha256, protocol)
+        if metadata_only:
+            _verify_oss_head(row)
+        _save_recovery(root, recovery, record, package_sha256, protocol, metadata_only)
         # Preserve the exact deployed rollback implementation and old closure.
         shutil.copyfile(Path(__file__), recovery/'channel1.py')
         bodies = {protocol.build_prefix(request['buildId'])+'build.json': protocol.canonical_json(manifest),
@@ -413,45 +426,72 @@ def stage_native(root, stage, *, metadata_sha256, package_sha256, protocol,
             if target.exists() and target.read_bytes() != body:
                 raise ValueError('Changed immutable metadata')
         live = Path('/opt/semantier-cloud-live-v1/Caddyfile')
-        saved = protocol.decode_json((recovery/'recovery.json').read_bytes())
-        if saved.get('route'):
-            current = sha(live)
-            if current not in (saved['route']['before'], saved['route']['after']):
-                raise ValueError('Concurrent Caddy configuration')
-            if current == saved['route']['before']:
-                before = (recovery/'Caddyfile').read_bytes()
-                after = _native_route_body(before, previous['nativeHead']['buildId'], request['buildId'])
-                if hashlib.sha256(after).hexdigest() != saved['route']['after']:
-                    raise ValueError('Recovery route binding changed')
-                _apply_route(live, after)
-        else:
+        if metadata_only:
             if sha(live) != caddy_sha256:
                 raise ValueError('Concurrent Caddy configuration')
-            before = live.read_bytes()
-            after = _native_route_body(before, previous['nativeHead']['buildId'], request['buildId'])
-            _atomic(recovery/'Caddyfile', before)
-            saved['route'] = {'path': str(live), 'before': caddy_sha256,
-                              'after': hashlib.sha256(after).hexdigest()}
-            _atomic(recovery/'recovery.json', protocol.canonical_json(saved))
-            _apply_route(live, after)
-        artifact.parent.mkdir(parents=True, exist_ok=True)
-        if not artifact.exists():
-            os.link(stage/'SemantierAgent.msix', artifact); os.chmod(artifact, 0o644)
+        else:
+            saved = protocol.decode_json((recovery/'recovery.json').read_bytes())
+            if saved.get('route'):
+                current = sha(live)
+                if current not in (saved['route']['before'], saved['route']['after']):
+                    raise ValueError('Concurrent Caddy configuration')
+                if current == saved['route']['before']:
+                    before = (recovery/'Caddyfile').read_bytes()
+                    after = _native_route_body(before, previous['nativeHead']['buildId'], request['buildId'])
+                    if hashlib.sha256(after).hexdigest() != saved['route']['after']:
+                        raise ValueError('Recovery route binding changed')
+                    _apply_route(live, after)
+            else:
+                if sha(live) != caddy_sha256:
+                    raise ValueError('Concurrent Caddy configuration')
+                before = live.read_bytes()
+                after = _native_route_body(before, previous['nativeHead']['buildId'], request['buildId'])
+                _atomic(recovery/'Caddyfile', before)
+                saved['route'] = {'path': str(live), 'before': caddy_sha256,
+                                  'after': hashlib.sha256(after).hexdigest()}
+                _atomic(recovery/'recovery.json', protocol.canonical_json(saved))
+                _apply_route(live, after)
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            if not artifact.exists():
+                os.link(stage/'SemantierAgent.msix', artifact); os.chmod(artifact, 0o644)
         for key, body in bodies.items():
             _atomic(_safe(root, key), body)
         if sha(pointer) != expected_previous_sha256:
             raise ValueError('Pointer changed during staging')
-    return {'result': 'IMMUTABLE_STAGED_POINTER_UNCHANGED', 'recovery': str(recovery)}
+    return {'result': 'IMMUTABLE_METADATA_STAGED_POINTER_UNCHANGED' if metadata_only else 'IMMUTABLE_STAGED_POINTER_UNCHANGED', 'recovery': str(recovery)}
+
+
+def _verify_oss_head(row):
+    import http.client
+    artifact = row['artifact']
+    if (row.get('native', {}).get('schema') != 2
+            or row['native'].get('packageBase') != 'https://assets.semantier.cn'
+            or not re.fullmatch(r'releases/channel-builds/[a-f0-9]{32}/SemantierAgent\.msix', artifact['key'])):
+        raise ValueError('OSS release origin invalid')
+    connection = http.client.HTTPSConnection('assets.semantier.cn', timeout=30)
+    try:
+        connection.request('HEAD', '/'+artifact['key'], headers={'Accept-Encoding': 'identity'})
+        response = connection.getresponse()
+        try:
+            if (response.status != 200 or response.getheader('Content-Length') != str(artifact['size'])
+                    or response.getheader('x-oss-meta-sha256') != artifact['sha256']
+                    or response.getheader('Content-Type', '').split(';')[0] != 'application/msix'
+                    or response.getheader('Content-Encoding')):
+                raise ValueError('OSS bytes unavailable or changed')
+        finally:
+            response.close()
+    finally:
+        connection.close()
 
 
 def publish(root, stage, *, metadata_sha256, package_sha256, protocol,
-            expected_previous_sha256=None, recovery=None):
+            expected_previous_sha256=None, recovery=None, metadata_only=False):
     """Activate an uploaded, validated closure; restore the previous view on error."""
     root, stage = Path(root).absolute(), Path(stage).absolute()
     _safe(root, POINTER)
     if root == stage or root in stage.parents or stage.is_symlink():
         raise ValueError('Upload stage must be outside the public root')
-    manifest, feed = _uploaded_metadata(stage, metadata_sha256, package_sha256, protocol)
+    manifest, feed = _uploaded_metadata(stage, metadata_sha256, package_sha256, protocol, metadata_only)
     request = manifest['request']; row = manifest['packages'][0]
     prefix = protocol.build_prefix(request['buildId'])
     pointer = _safe(root, POINTER)
@@ -474,6 +514,8 @@ def publish(root, stage, *, metadata_sha256, package_sha256, protocol,
                 if new_version < old_version or (new_version == old_version and old_head['sha256'] != record['nativeHead']['sha256']):
                     raise ValueError('Version downgrade or changed same-version release')
         protocol.validate_manifest(manifest, record, BASE, allow_native=True)
+        if metadata_only:
+            _verify_oss_head(row)
         bodies = {prefix+'build.json': protocol.canonical_json(manifest), row['feed']['key']: feed}
         artifact = _safe(root, row['artifact']['key'])
         for key, body in bodies.items():
@@ -484,8 +526,8 @@ def publish(root, stage, *, metadata_sha256, package_sha256, protocol,
             raise ValueError('Changed immutable package')
         obsolete = [] if recovery else _obsolete_metadata(root, prefix, request, protocol)
         if recovery:
-            _save_recovery(root, recovery, record, package_sha256, protocol)
-        _activate(root, stage, record, row, bodies, obsolete, Path(directory), protocol)
+            _save_recovery(root, recovery, record, package_sha256, protocol, metadata_only)
+        _activate(root, stage, record, row, bodies, obsolete, Path(directory), protocol, metadata_only)
     return {'buildId': request['buildId'], 'version': request['windowsVersion'],
             'channelSha256': hashlib.sha256(protocol.canonical_json(record)).hexdigest(),
             'manifestSha256': record['nativeHead']['sha256'], 'alreadyPublished': record == previous}
@@ -833,7 +875,7 @@ def retire_package(root, *, build_id, package_sha256, expected_previous_sha256,
         return report
 
 
-def stage_oss(package, metadata, output, signature_package=None):
+def stage_oss(package, metadata, output, signature_package=None, release_bytes=False):
     """WSL staging mode of the existing publisher; never writes an active pointer.
 
     Metadata must come from the existing prepare operation. Native verification
@@ -843,6 +885,7 @@ def stage_oss(package, metadata, output, signature_package=None):
     package = Path(package).resolve()
     # Fail before cloud writes if the required scoped identity is unavailable.
     credentials = assume_role('upload')
+    promotion_credentials = assume_role('publish') if release_bytes else None
     m = json.loads(Path(metadata).read_text())
     candidate_from_manifest(m['manifest'])  # Validate ASCII pins before constructing the native command.
     windows_path = subprocess.check_output(['wslpath', '-w', str(Path(signature_package).resolve() if signature_package else package)], text=True).strip()
@@ -864,6 +907,17 @@ def stage_oss(package, metadata, output, signature_package=None):
             build_id=request['buildId'], native_digest=m['graph']['objects'][0]['nativeDigest'])
     if bound != m:
         raise ValueError('Prepared metadata changed')
+    if release_bytes:
+        from agents.client_operations.oss_release import stage_release_bytes, ReleaseObjects
+        result = stage_release_bytes(package, {'buildId': request['buildId'], **row['artifact']},
+                                     Objects(credentials), ReleaseObjects(promotion_credentials))
+        output = Path(output)
+        encoded = (json.dumps(result, sort_keys=True, separators=(',', ':'))+'\n').encode()
+        if output.exists() and output.read_bytes() != encoded:
+            raise ValueError('OSS staging output collision')
+        output.parent.mkdir(parents=True, exist_ok=True)
+        _atomic(output, encoded)
+        return result
     candidate = candidate_from_manifest(m['manifest'])
     return stage(package, candidate, output, Objects(credentials))
 
@@ -879,6 +933,7 @@ def main():
         remote.add_argument('--'+name, required=True)
     remote.add_argument('--expected-previous-sha256')
     remote.add_argument('--recovery')
+    remote.add_argument('--metadata-only', action='store_true', help='OSS bytes; stage/activate ECS JSON only')
     rollback = commands.add_parser('rollback')
     rollback.add_argument('--root', required=True)
     rollback.add_argument('--recovery', required=True)
@@ -886,9 +941,11 @@ def main():
     for name in ('root', 'stage', 'metadata-sha256', 'package-sha256', 'protocol', 'protocol-sha256',
                  'expected-previous-sha256', 'recovery', 'caddy-sha256'):
         staging.add_argument('--'+name, required=True)
+    staging.add_argument('--metadata-only', action='store_true', help='Keep current head and Caddy unchanged; stage JSON only')
     oss = commands.add_parser('stage-oss', help='Private WSL staging only; no ECS/pointer writes')
     for name in ('package', 'metadata', 'output'):
         oss.add_argument('--'+name, required=True)
+    oss.add_argument('--release-bytes', action='store_true', help='Stage/promote public byte objects without full MSIX GET or pointer activation')
     oss.add_argument('--signature-package', help='Original matching signed package on the Windows release host (read-only verification)')
     args = vars(parser.parse_args()); command = args.pop('command')
     if command == 'stage-oss':
@@ -916,7 +973,9 @@ def main():
             return
         result = publish(**args, protocol=protocol)
         stage = Path(args['stage'])
-        owned = {'SemantierAgent.msix', 'channel1-metadata.json', 'channel1.py', 'channel1-protocol.py'}
+        owned = {'channel1-metadata.json', 'channel1.py', 'channel1-protocol.py'}
+        if not args['metadata_only']:
+            owned.add('SemantierAgent.msix')
         if {p.name for p in stage.iterdir()} == owned and Path(__file__).resolve() == (stage/'channel1.py').resolve():
             for name in owned: (stage/name).unlink()
             stage.rmdir()

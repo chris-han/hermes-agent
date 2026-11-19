@@ -750,3 +750,134 @@ def test_prepared_release_emits_cloud_metadata_and_separate_oss_origin(tmp_path)
     assert manifest['request']['publicBase'] == 'https://cloud.semantier.cn'
     assert manifest['packages'][0]['native']['schema'] == 2
     assert manifest['packages'][0]['native']['packageBase'] == 'https://assets.semantier.cn'
+
+
+def test_oss_publication_requires_only_metadata_on_ecs_and_commits_pointer_last(tmp_path, monkeypatch):
+    root=tmp_path/'public';root.mkdir()
+    request,digest,metadata=package(tmp_path/'upload',131)
+    (tmp_path/'upload/SemantierAgent.msix').unlink()
+    checked=[]
+    monkeypatch.setattr(channel1,'_verify_oss_head',lambda row:checked.append(row['artifact']['sha256']),raising=False)
+    real_atomic=channel1._atomic;writes=[]
+    def atomic(path,body):
+        writes.append(path.relative_to(root).as_posix())
+        real_atomic(path,body)
+    monkeypatch.setattr(channel1,'_atomic',atomic)
+    result=channel1.publish(root,tmp_path/'upload',metadata_sha256=metadata,package_sha256=digest,
+                            protocol=protocol,metadata_only=True)
+    assert checked==[digest] and result['buildId']==request['buildId']
+    assert writes[-1]==channel1.POINTER
+    assert not list(root.rglob('*.msix'))
+    assert not (root/'releases/SemantierAgent.msix.sha256').exists()
+
+
+def test_missing_oss_bytes_refuses_pointer_change_and_metadata_only_rollback_restores_old_closure(tmp_path, monkeypatch):
+    root=tmp_path/'public';root.mkdir()
+    publish(root,tmp_path/'old',130)
+    before=(root/channel1.POINTER).read_bytes()
+    stable=(root/'releases/SemantierAgent.msix').read_bytes()
+    _,digest,metadata=package(tmp_path/'upload',131)
+    (tmp_path/'upload/SemantierAgent.msix').unlink()
+    def refused(row):raise ValueError('OSS bytes unavailable')
+    monkeypatch.setattr(channel1,'_verify_oss_head',refused,raising=False)
+    args=dict(metadata_sha256=metadata,package_sha256=digest,protocol=protocol,metadata_only=True,
+              expected_previous_sha256=hashlib.sha256(before).hexdigest(),recovery=root.parent/'.channel1-recovery-oss')
+    with pytest.raises(ValueError,match='OSS bytes unavailable'):
+        channel1.publish(root,tmp_path/'upload',**args)
+    assert (root/channel1.POINTER).read_bytes()==before
+    monkeypatch.setattr(channel1,'_verify_oss_head',lambda row:None)
+    channel1.publish(root,tmp_path/'upload',**args)
+    assert (root/'releases/SemantierAgent.msix').read_bytes()==stable
+    assert not (root/'releases/channel-builds'/f'{131:032x}'/'SemantierAgent.msix').exists()
+    channel1.restore(root,args['recovery'])
+    assert (root/channel1.POINTER).read_bytes()==before
+    assert (root/'releases/SemantierAgent.msix').read_bytes()==stable
+
+
+def test_oss_metadata_staging_preserves_head_and_caddy_without_ecs_package(tmp_path, monkeypatch):
+    root=tmp_path/'public';root.mkdir();publish(root,tmp_path/'old',130)
+    previous=(root/channel1.POINTER).read_bytes()
+    _,digest,metadata=package(tmp_path/'upload',131)
+    (tmp_path/'upload/SemantierAgent.msix').unlink()
+    caddy=tmp_path/'Caddyfile';caddy.write_bytes(b'qualified cloud metadata route fixture')
+    real_path=Path
+    monkeypatch.setattr(channel1,'Path',lambda p: caddy if str(p)=='/opt/semantier-cloud-live-v1/Caddyfile' else real_path(p))
+    monkeypatch.setattr(channel1,'_verify_oss_head',lambda row:None)
+    def no_route_change(*args):raise AssertionError('Metadata staging must not mutate the qualified Caddy route')
+    monkeypatch.setattr(channel1,'_apply_route',no_route_change)
+    result=channel1.stage_native(root,tmp_path/'upload',metadata_sha256=metadata,package_sha256=digest,
+        protocol=protocol,expected_previous_sha256=hashlib.sha256(previous).hexdigest(),
+        recovery=root.parent/'.channel1-recovery-oss-stage',caddy_sha256=hashlib.sha256(caddy.read_bytes()).hexdigest(),metadata_only=True)
+    assert result['result']=='IMMUTABLE_METADATA_STAGED_POINTER_UNCHANGED'
+    assert (root/channel1.POINTER).read_bytes()==previous
+    prefix=root/'releases/channel-builds'/f'{131:032x}'
+    assert (prefix/'build.json').is_file() and (prefix/'native-graph.json').is_file()
+    assert not (prefix/'SemantierAgent.msix').exists()
+    assert caddy.read_bytes()==b'qualified cloud metadata route fixture'
+
+
+def test_public_oss_stage_uses_verified_snapshot_without_full_readback(tmp_path,monkeypatch):
+    from agents.client_operations import oss_release
+    from types import SimpleNamespace
+    stage_dir=tmp_path/'stage';package(stage_dir,131)
+    metadata=stage_dir/'channel1-metadata.json';original=json.loads(metadata.read_text())
+    roles=[];monkeypatch.setattr(oss_release,'assume_role',lambda role:roles.append(role) or object())
+    monkeypatch.setattr(channel1.subprocess,'check_output',lambda *a,**kw:'D:\\fixture.msix')
+    monkeypatch.setattr(channel1.subprocess,'run',lambda *a,**kw:SimpleNamespace(returncode=0))
+    monkeypatch.setattr(oss_release,'Objects',lambda _:object())
+    monkeypatch.setattr(oss_release,'ReleaseObjects',lambda _:object())
+    seen=[]
+    def stage_bytes(path,artifact,private,public):
+        seen.append(artifact)
+        return {**artifact,'state':'OSS_BYTES_STAGED_NOT_ACTIVE','fullDownloadVerification':'PENDING'}
+    monkeypatch.setattr(oss_release,'stage_release_bytes',stage_bytes)
+    def full_readback(*args):raise AssertionError('Private full-readback mode must not be selected')
+    monkeypatch.setattr(oss_release,'stage',full_readback)
+    output=tmp_path/'public-staged.json'
+    result=channel1.stage_oss(stage_dir/'SemantierAgent.msix',metadata,output,release_bytes=True)
+    assert roles==['upload','publish']
+    assert seen==[{'buildId':original['manifest']['request']['buildId'],**original['manifest']['packages'][0]['artifact']}]
+    assert result==json.loads(output.read_bytes()) and result['fullDownloadVerification']=='PENDING'
+
+
+def test_metadata_only_pointer_failure_restores_old_head_and_preserves_unowned_binary_residue(tmp_path,monkeypatch):
+    root=tmp_path/'public';root.mkdir();publish(root,tmp_path/'old',130)
+    previous=(root/channel1.POINTER).read_bytes()
+    _,digest,metadata=package(tmp_path/'upload',131)
+    (tmp_path/'upload/SemantierAgent.msix').unlink()
+    residue=root/'releases/.channel1-package.tmp';residue.write_bytes(b'not owned by metadata transaction')
+    monkeypatch.setattr(channel1,'_verify_oss_head',lambda row:None)
+    original=channel1._atomic
+    def fail_after_pointer(path,body):
+        original(path,body)
+        if path==root/channel1.POINTER:raise OSError('injected commit failure')
+    monkeypatch.setattr(channel1,'_atomic',fail_after_pointer)
+    with pytest.raises(OSError,match='injected'):
+        channel1.publish(root,tmp_path/'upload',metadata_sha256=metadata,package_sha256=digest,
+                          protocol=protocol,metadata_only=True)
+    assert (root/channel1.POINTER).read_bytes()==previous
+    assert residue.read_bytes()==b'not owned by metadata transaction'
+    assert not (root/'releases/channel-builds'/f'{131:032x}').exists()
+
+
+@pytest.mark.parametrize('status,digest,refused',[(200,'b'*64,False),(301,'b'*64,True),(200,'c'*64,True)])
+def test_oss_publication_head_never_reads_body_or_follows_redirect(tmp_path,monkeypatch,status,digest,refused):
+    import http.client
+    requests=[]
+    class Reply:
+        def __init__(self):self.status=status
+        def getheader(self,name,default=None):
+            return {'Content-Length':'17','x-oss-meta-sha256':digest,'Content-Type':'application/msix'}.get(name,default)
+        def read(self,*args):raise AssertionError('HEAD guard must never read a package body')
+        def close(self):pass
+    class Connection:
+        def request(self,method,path,headers):requests.append((method,path))
+        def getresponse(self):return Reply()
+        def close(self):pass
+    monkeypatch.setattr(http.client,'HTTPSConnection',lambda *args,**kw:Connection())
+    row={'artifact':{'key':'releases/channel-builds/'+'a'*32+'/SemantierAgent.msix','size':17,'sha256':'b'*64},
+         'native':{'schema':2,'packageBase':'https://assets.semantier.cn'}}
+    if refused:
+        with pytest.raises(ValueError):channel1._verify_oss_head(row)
+    else:channel1._verify_oss_head(row)
+    assert requests==[('HEAD','/'+row['artifact']['key'])]
