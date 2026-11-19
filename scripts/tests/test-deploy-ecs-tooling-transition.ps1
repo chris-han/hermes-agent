@@ -173,7 +173,7 @@ try {
   $null=[IO.Directory]::CreateDirectory((Split-Path -Parent $sourceOperator))
   Copy-Item $Operator $sourceOperator
   $script:blobs=@{}
-  foreach($relative in @('scripts/deploy-ecs.ps1','scripts/bundles/desktop.py','apps/desktop/scripts/run-electron-builder.mjs','pm/lock.json')){
+  foreach($relative in @('scripts/deploy-ecs.ps1','scripts/bundles/desktop.py','apps/desktop/scripts/run-electron-builder.mjs','pm/lock.json','scripts/deploy-ecs-continuation.ps1')){
     $file=Join-Path $Repository $relative
     if($relative -cne 'scripts/deploy-ecs.ps1'){
       $null=[IO.Directory]::CreateDirectory((Split-Path -Parent $file));[IO.File]::WriteAllText($file,'fixture '+$relative)

@@ -99,6 +99,7 @@ param(
   [string]$CriticalFileManifest = '',
   [string]$Commit = '',
   [string]$ToolingQualification = '',
+  [string]$ToolingContinuation = '',
   [string]$BuildCache = 'D:\repo\deliverables\cache\desktop-inputs',
   [string]$BuildPython = '',
   [string]$AcceptanceNodeModules = '',
@@ -302,6 +303,9 @@ function Initialize-ReleasePaths {
   if($ToolingQualification -and !$RuntimeRoot){throw 'Tooling qualification requires Runtime source ownership.'}
   if($Commit -and !$RuntimeRoot){throw 'Commit builds require the Runtime checkout and its pinned Hermes gitlink.'}
 }
+function Get-AuthenticatedToolingContinuation {
+  return Get-Variable qualifiedContinuation -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+}
 function Read-ToolingQualification([string]$Path,[string]$Signer) {
   Assert-NoReparseAncestor $Path
   Assert-NoReparseAncestor ($Path+'.p7s')
@@ -317,6 +321,8 @@ function Read-ToolingQualification([string]$Path,[string]$Signer) {
   return $q
 }
 function Assert-ApplicationToolingBinding {
+  $continuationPath=Get-Variable ToolingContinuation -ValueOnly -ErrorAction SilentlyContinue
+  if($continuationPath -and !$ToolingQualification){throw 'Continuation requires the unchanged original qualification.'}
   if(!$ToolingQualification){
     if($Commit -and ($Commit -cne $script:SourceBinding.hermesGitlink -or $script:SourceBinding.toolingHermesHead -cne $Commit)){
       throw 'Requested commit and actual Hermes HEAD must equal the Runtime gitlink; synchronize the pinned source first.'
@@ -330,15 +336,27 @@ function Assert-ApplicationToolingBinding {
   }
   $q=Read-ToolingQualification $ToolingQualification '57BF15739B4AA447842EAF388856A01B4E5029FF'
   Assert-ToolingQualificationIdentity $q
-  Assert-QualifiedToolingSource $q $PSCommandPath
   $script:qualifiedTooling=$q
+  if($continuationPath){
+    $c=Read-ToolingContinuation $continuationPath '57BF15739B4AA447842EAF388856A01B4E5029FF'
+    Assert-ToolingContinuationIdentity $c
+    $active=$q | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    foreach($name in @('toolingCommit','operatorSha256','recoveryCommit','recoveryOperatorSha256')){$active.$name=$c.$name}
+    Assert-QualifiedToolingSource $active $PSCommandPath
+    $script:qualifiedContinuation=$c
+    # The original native archive contract requires LF throughout descendants.
+    $count=[int]$env:GIT_CONFIG_COUNT
+    Set-ReleaseEnvironment "GIT_CONFIG_KEY_$count" 'core.autocrlf'
+    Set-ReleaseEnvironment "GIT_CONFIG_VALUE_$count" 'false'
+    Set-ReleaseEnvironment 'GIT_CONFIG_COUNT' ([string]($count+1))
+  } else {Assert-QualifiedToolingSource $q $PSCommandPath}
 }
 function Assert-QualifiedToolingSource($Q,[string]$OperatorPath) {
   if($q.toolingCommit -cne $script:SourceBinding.toolingHermesHead -or $q.toolingCommit -cne $script:SourceBinding.hermesGitlink -or
      $q.operatorSha256 -cne (Hash $OperatorPath) -or [IO.Path]::GetFullPath($OperatorPath) -ine (Join-Path $Repository 'scripts/deploy-ecs.ps1')){
     throw 'Qualified tooling does not match the committed Runtime gitlink and executing operator.'
   }
-  foreach($path in @('scripts/deploy-ecs.ps1','scripts/bundles/desktop.py','apps/desktop/scripts/run-electron-builder.mjs','pm/lock.json')){
+  foreach($path in @('scripts/deploy-ecs.ps1','scripts/bundles/desktop.py','apps/desktop/scripts/run-electron-builder.mjs','pm/lock.json','scripts/deploy-ecs-continuation.ps1')){
     $blob=Get-SourceGit $Repository @('rev-parse',('HEAD:'+$path))
     if((Get-SourceGit $Repository @('hash-object','--path',$path,(Join-Path $Repository $path))) -cne $blob){throw 'Uncommitted tooling input.'}
   }
@@ -370,7 +388,7 @@ function Assert-ToolingQualificationIdentity($Q) {
     throw 'Tooling qualification is outside the authorized frozen v129 scope.'
   }
 }
-function Confirm-ToolingTransition($Record,[string]$Inputs) {
+function Confirm-ToolingTransition($Record,[string]$Inputs,[switch]$RequireExisting) {
   if(!$ToolingQualification){
     if($Record.inputs -cne $Inputs){throw 'Saved source/toolchain configuration changed; preserve the reservation and use a fresh run.'}
     return
@@ -435,6 +453,7 @@ function Confirm-ToolingTransition($Record,[string]$Inputs) {
       if([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($prefix)).ToLowerInvariant() -cne $event.prefixSha256){throw 'Historical checkpoint prefix changed.'}
       $found=$true
     }
+    if(!$found -and $RequireExisting){throw 'Original tooling transition missing; continuation cannot reconstruct history.'}
     if(!$found){ # Revalidation never duplicates a completed transition.
       if($Record.stage -cne 'reserved'){throw 'Initial tooling transition requires the retained interrupted reservation.'}
       Write-RunEvent @{type='tooling-transition';contract=$q.contract;sequence=1;at=[DateTime]::UtcNow.ToString('o');binding=$binding;
@@ -848,7 +867,8 @@ function Initialize-LocalBuildSource([string]$Source,[string]$Revision) {
     }
     if($previous -and ((Test-Path -LiteralPath (Join-Path $Output 'source-residue')) -or
       ((Test-Path -LiteralPath $Source) -and !(Test-Path -LiteralPath (Join-Path $Source '.git'))))){
-      Restore-OwnedSourceResidue $previous $Source $Revision
+      if(Get-AuthenticatedToolingContinuation){Restore-ToolingContinuationResidue $previous $Source $Revision}
+      else {Restore-OwnedSourceResidue $previous $Source $Revision}
     }
     if(Test-Path -LiteralPath $Source){
       $null=Assert-RegisteredSource $Source $Revision
@@ -1915,7 +1935,8 @@ function Build-CommitPackage {
       Assert-NoReparseAncestor $record.($entry.Key)
     }
     if(!$record.PSObject.Properties['inputs']){throw 'Saved input identity missing.'}
-    Confirm-ToolingTransition $record $inputs
+    if(Get-AuthenticatedToolingContinuation){Confirm-ToolingContinuation $record $inputs}
+    else {Confirm-ToolingTransition $record $inputs}
   }
   if($record -and $record.stage -eq 'cancelled'){
     throw 'This tooling-only version reservation was cancelled. Resume the application source commit and its original run instead.'
@@ -2075,6 +2096,7 @@ function Publish-IndependentSetup {
     Write-Host "Result and evidence: $Output"
   }
 }
+. (Join-Path $PSScriptRoot 'deploy-ecs-continuation.ps1')
 try {
 if($RetireRollbackBuild -or $RetireRollbackSha256){
   $allowed=@('RetireRollbackBuild','RetireRollbackSha256','ExpectedChannelSha256','Output','BuildMode','Repository','BuildPython','Node','CredentialsEnv','IdentityFile','RemoteRoot','SshTarget','WhatIf','Confirm')
