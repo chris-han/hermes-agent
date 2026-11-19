@@ -833,6 +833,41 @@ def retire_package(root, *, build_id, package_sha256, expected_previous_sha256,
         return report
 
 
+def stage_oss(package, metadata, output, signature_package=None):
+    """WSL staging mode of the existing publisher; never writes an active pointer.
+
+    Metadata must come from the existing prepare operation. Native verification
+    is intentionally read-only; no signing, version allocation or installation.
+    """
+    from agents.client_operations.oss_release import candidate_from_manifest, stage, Objects, assume_role
+    package = Path(package).resolve()
+    # Fail before cloud writes if the required scoped identity is unavailable.
+    credentials = assume_role('upload')
+    m = json.loads(Path(metadata).read_text())
+    candidate_from_manifest(m['manifest'])  # Validate ASCII pins before constructing the native command.
+    windows_path = subprocess.check_output(['wslpath', '-w', str(Path(signature_package).resolve() if signature_package else package)], text=True).strip()
+    escaped = windows_path.replace("'", "''")
+    script = ("$ErrorActionPreference='Stop';$p='"+escaped+"';"
+        "$s=Get-AuthenticodeSignature -LiteralPath $p;"
+        "if((Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant() -cne '"+m['manifest']['packages'][0]['artifact']['sha256']+"'){exit 3};"
+        "if($s.Status -ne 'Valid' -or $s.SignerCertificate.Thumbprint -cne '57BF15739B4AA447842EAF388856A01B4E5029FF'){exit 2};"
+        r"& 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe' verify /pa $p | Out-Null;exit $LASTEXITCODE")
+    result = subprocess.run(['/mnt/c/Program Files/PowerShell/7/pwsh.exe', '-NoProfile', '-NonInteractive', '-Command', script], capture_output=True, timeout=300, check=False)
+    if result.returncode:
+        raise ValueError('Native MSIX signature verification failed')
+    # Keep the exact metadata snapshot whose SHA was checked by native verification.
+    # Reuse prepare, including embedded source/version/build and native digest checks.
+    request = m['manifest']['request']; row = m['manifest']['packages'][0]
+    with tempfile.TemporaryDirectory(prefix='semantier-oss-prepare-') as directory:
+        bound = prepare(package, Path(directory)/'bound.json', expected_sha256=row['artifact']['sha256'],
+            source_commit=request['commit'], windows_version=request['windowsVersion'],
+            build_id=request['buildId'], native_digest=m['graph']['objects'][0]['nativeDigest'])
+    if bound != m:
+        raise ValueError('Prepared metadata changed')
+    candidate = candidate_from_manifest(m['manifest'])
+    return stage(package, candidate, output, Objects(credentials))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
@@ -851,7 +886,20 @@ def main():
     for name in ('root', 'stage', 'metadata-sha256', 'package-sha256', 'protocol', 'protocol-sha256',
                  'expected-previous-sha256', 'recovery', 'caddy-sha256'):
         staging.add_argument('--'+name, required=True)
+    oss = commands.add_parser('stage-oss', help='Private WSL staging only; no ECS/pointer writes')
+    for name in ('package', 'metadata', 'output'):
+        oss.add_argument('--'+name, required=True)
+    oss.add_argument('--signature-package', help='Original matching signed package on the Windows release host (read-only verification)')
     args = vars(parser.parse_args()); command = args.pop('command')
+    if command == 'stage-oss':
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+        try:
+            result = stage_oss(**args)
+        except (ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError):
+            print(json.dumps({'state':'STAGING_FAILED','error':'staging_prerequisite_or_integrity_failed'}))
+            raise SystemExit(1) from None
+        print(json.dumps(result))
+        return
     if command == 'prepare':
         sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
         prepare(**args)

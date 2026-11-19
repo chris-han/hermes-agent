@@ -9,6 +9,26 @@ interface IWinHttpRequests { IWinHttpResponse Open(Uri uri,long offset,bool http
 
 static class BootstrapperWinHttp {
     internal static void Download(IWinHttpRequests requests,Uri origin,Stream output,long size,Action<long> progress) {
+        DownloadCore(requests,origin,output,size,progress,null);
+    }
+    // Renewal returns an authorization grant for the exact pinned bytes only.
+    internal static void DownloadAuthorized(IWinHttpRequests requests,StagingDownloadGrant grant,Stream output,Action<long> progress,Func<StagingDownloadGrant> renew) {
+        grant.Validate();
+        if(!output.CanSeek || !output.CanRead)throw new InvalidDataException("Integrity verification requires a readable seekable staging file.");
+        string pinnedKey=grant.Key,pinnedVersion=grant.Version,pinnedSha=grant.Sha256;long pinnedSize=grant.Size;
+        DownloadCore(requests,grant.Uri,output,grant.Size,progress,()=>{
+            var next=renew();next.Validate();
+            if(next.Key!=pinnedKey || next.Version!=pinnedVersion || next.Sha256!=pinnedSha || next.Size!=pinnedSize)
+                throw new InvalidDataException("Renewal changed artifact identity.");
+            return next.Uri;
+        });
+        output.Position=0;
+        using(var hash=System.Security.Cryptography.SHA256.Create()){
+            string actual=BitConverter.ToString(hash.ComputeHash(output)).Replace("-","").ToLowerInvariant();
+            if(actual!=pinnedSha)throw new InvalidDataException("Staging package SHA256 mismatch.");
+        }
+    }
+    static void DownloadCore(IWinHttpRequests requests,Uri origin,Stream output,long size,Action<long> progress,Func<Uri> renew) {
         if(origin.Scheme!=Uri.UriSchemeHttps || origin.Port!=443 || origin.UserInfo.Length!=0 || origin.Fragment.Length!=0)
             throw new InvalidOperationException("HTTPS port 443 required.");
         if(size<=0 || !output.CanWrite || output.Position!=0)throw new InvalidOperationException("Invalid download target.");
@@ -18,6 +38,7 @@ static class BootstrapperWinHttp {
             try { response=requests.Open(origin,total,true); }
             catch(IOException) { try {response=requests.Open(origin,total,false);} catch(IOException) {continue;} }
             using(response) {
+                if(response.StatusCode==403 && renew!=null){origin=renew();continue;}
                 string expected="bytes "+total.ToString(CultureInfo.InvariantCulture)+"-"+(size-1).ToString(CultureInfo.InvariantCulture)+"/"+size.ToString(CultureInfo.InvariantCulture);
                 if(response.ContentLength!=size-total || (total==0?response.StatusCode!=200:response.StatusCode!=206 || response.ContentRange!=expected))
                     throw new InvalidDataException("Unexpected download response.");
@@ -34,7 +55,10 @@ static class BootstrapperWinHttp {
 
 sealed class NativeWinHttpRequests : IWinHttpRequests, IDisposable {
     readonly IntPtr session;
-    public NativeWinHttpRequests() {
+    readonly bool ossStandard;
+    // Opt-in staging only. Legacy production callers keep their exact behavior.
+    public NativeWinHttpRequests(bool ossStandard=false) {
+        this.ossStandard=ossStandard;
         session=NativeWinHttp.Open("SemantierSetup/1",1,null,null,0);
         NativeWinHttp.Check(session!=IntPtr.Zero,"WinHttpOpen");
         try {NativeWinHttp.Check(NativeWinHttp.SetTimeouts(session,15000,15000,15000,30000),"WinHttpSetTimeouts");}
@@ -44,6 +68,9 @@ sealed class NativeWinHttpRequests : IWinHttpRequests, IDisposable {
     public IWinHttpResponse Open(Uri uri,long offset,bool http3) { return OpenRequest(uri,offset,http3,"GET"); }
     public IWinHttpResponse OpenHead(Uri uri,bool http3) { return OpenRequest(uri,0,http3,"HEAD"); }
     IWinHttpResponse OpenRequest(Uri uri,long offset,bool http3,string method) {
+        if(ossStandard && (uri.Scheme!="https" || uri.Port!=443 || uri.IdnHost!="assets.semantier.cn" ||
+            uri.UserInfo.Length!=0 || uri.Fragment.Length!=0 || !uri.AbsolutePath.StartsWith("/staging/windows-msix/",StringComparison.Ordinal) ||
+            uri.Query.Length==0))throw new InvalidDataException("Invalid private staging origin.");
         IntPtr connection=IntPtr.Zero,request=IntPtr.Zero;
         try {
             connection=NativeWinHttp.Connect(session,uri.IdnHost,443,0);NativeWinHttp.Check(connection!=IntPtr.Zero,"WinHttpConnect");
@@ -52,7 +79,7 @@ sealed class NativeWinHttpRequests : IWinHttpRequests, IDisposable {
             int protocols=http3?2:1;NativeWinHttp.Check(NativeWinHttp.SetOption(request,133,ref protocols,4),"WinHttpSetOption protocol");
             int disableRedirect=2;NativeWinHttp.Check(NativeWinHttp.SetOption(request,63,ref disableRedirect,4),"WinHttpSetOption redirect");
             if(http3){int required=1;NativeWinHttp.Check(NativeWinHttp.SetOption(request,145,ref required,4),"WinHttpSetOption required");}
-            string headers="Accept-Encoding: identity\r\n"+(offset>0?"Range: bytes="+offset.ToString(CultureInfo.InvariantCulture)+"-\r\n":"");
+            string headers="Accept-Encoding: identity\r\n"+(ossStandard?"x-oss-range-behavior: standard\r\n":"")+(offset>0?"Range: bytes="+offset.ToString(CultureInfo.InvariantCulture)+"-\r\n":"");
             NativeWinHttp.Check(NativeWinHttp.SendRequest(request,headers,uint.MaxValue,IntPtr.Zero,0,0,UIntPtr.Zero),"WinHttpSendRequest");
             NativeWinHttp.Check(NativeWinHttp.ReceiveResponse(request,IntPtr.Zero),"WinHttpReceiveResponse");
             int status;long length;
@@ -101,5 +128,20 @@ static class NativeWinHttp {
         uint length=0;QueryHeaders(h,level,null,IntPtr.Zero,ref length,IntPtr.Zero);int error=Marshal.GetLastWin32Error();
         if(optional && error==12150)return null;if(error!=122 || length>65536)throw new Win32Exception(error,"WinHttpQueryHeaders");
         IntPtr p=Marshal.AllocHGlobal((int)length);try{Check(QueryHeaders(h,level,null,p,ref length,IntPtr.Zero),"WinHttpQueryHeaders");return Marshal.PtrToStringUni(p);}finally{Marshal.FreeHGlobal(p);}
+    }
+}
+
+sealed class StagingDownloadGrant {
+    internal Uri Uri;
+    internal string Key,Version,Sha256;
+    internal long Size;
+    internal void Validate(){
+        if(Uri==null || Uri.Scheme!="https" || Uri.IdnHost!="assets.semantier.cn" || Uri.Port!=443 ||
+           Uri.UserInfo.Length!=0 || Uri.Fragment.Length!=0 || Uri.Query.Length==0 ||
+           !System.Text.RegularExpressions.Regex.IsMatch(Key??"","^staging/windows-msix/[a-f0-9]{32}/SemantierAgent-[a-f0-9]{64}\\.msix$",System.Text.RegularExpressions.RegexOptions.CultureInvariant) ||
+           !System.Text.RegularExpressions.Regex.IsMatch(Sha256??"","^[a-f0-9]{64}$") ||
+           !Key.EndsWith("SemantierAgent-"+Sha256+".msix",StringComparison.Ordinal) || Uri.AbsolutePath!="/"+Key ||
+           !System.Text.RegularExpressions.Regex.IsMatch(Version??"","^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$") || Size<=0 || Size>12000000000)
+            throw new InvalidDataException("Invalid immutable staging authorization.");
     }
 }
