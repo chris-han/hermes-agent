@@ -92,7 +92,7 @@ function Test-NativeReleasePreflight {
   }
   elseif($saved){if(($saved.version+'.0') -cne $ExpectedVersion){throw 'Saved reservation differs from requested version'}}
   elseif(([Version]($ledger.version+'.0')).Build+1 -ne ([Version]$ExpectedVersion).Build){throw 'Next version reservation differs from explicit target'}
-  if($SupersededBuildOutput){$null=Remove-SupersededUnsignedInput $SupersededBuildOutput}
+  if($SupersededBuildOutput -and !$PreflightOnly){$null=Remove-SupersededUnsignedInput $SupersededBuildOutput}
   if((Get-PSDrive ([IO.Path]::GetPathRoot($Output).Substring(0,1))).Free -lt 12GB){throw 'Insufficient native build space'}
   $code=@'
 import hashlib,json,pathlib,sys
