@@ -49,7 +49,8 @@ def postgres_scope_schema_sql():
     from hermes_state_postgresql_schema import SCHEMA_SQL
     from hermes_state_postgresql_kanban_schema import SCHEMA_SQL as KANBAN_SCHEMA_SQL
     from hermes_state_postgresql_rooms_schema import SCHEMA_SQL as ROOMS_SCHEMA_SQL
-    return SCHEMA_SQL + "\n" + KANBAN_SCHEMA_SQL + "\n" + ROOMS_SCHEMA_SQL + "\n" + r"""
+    from hermes_state_postgresql_projects_schema import SCHEMA_SQL as PROJECTS_SCHEMA_SQL
+    return PROJECTS_SCHEMA_SQL + "\n" + SCHEMA_SQL + "\n" + KANBAN_SCHEMA_SQL + "\n" + ROOMS_SCHEMA_SQL + "\n" + r"""
 CREATE TABLE IF NOT EXISTS scope_binding (
     singleton INTEGER PRIMARY KEY CHECK(singleton=1), tenant_id TEXT NOT NULL,
     workspace_id TEXT NOT NULL, source_store_id TEXT NOT NULL,

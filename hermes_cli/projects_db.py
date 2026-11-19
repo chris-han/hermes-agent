@@ -16,8 +16,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-from hermes_cli.sqlite_util import add_column_if_missing as _add_column_if_missing, open_db, write_txn
+from hermes_cli.sqlite_util import add_column_if_missing as _add_column_if_missing, open_db, write_txn as _sqlite_write_txn
 from hermes_constants import get_hermes_home
+from hermes_state_backend import postgres_enabled
+from hermes_state_sql import statement as _storage_statement, execute_many as _execute_many, is_postgres, native_write_transaction
 
 
 def projects_db_path() -> Path:
@@ -118,6 +120,21 @@ def connect(db_path: Optional[Path] = None) -> sqlite3.Connection:
     idempotent (``CREATE TABLE IF NOT EXISTS`` + additive migrations) and cached per-path per-process.
     """
     path = db_path if db_path is not None else projects_db_path()
+    if postgres_enabled():
+        from hermes_state_sql import connect_postgres
+        if Path(path).name != "projects.db":
+            raise ValueError("Projects must resolve its governed profile home")
+        conn = connect_postgres(Path(path).parent)
+        try:
+            conn.execute("SELECT id,slug,name,description,icon,color,board_slug,primary_path,created_at,archived FROM projects LIMIT 0")
+            conn.execute("SELECT project_id,path,label,is_primary,added_at FROM project_folders LIMIT 0")
+            conn.execute("SELECT key,value FROM project_meta LIMIT 0")
+            conn.execute("SELECT root,label,last_seen FROM discovered_repos LIMIT 0")
+            return conn
+        except BaseException:
+            conn.close()
+            raise
+
     resolved = str(path.resolve())
 
     def _initialize(conn: sqlite3.Connection) -> None:
@@ -131,6 +148,14 @@ def connect(db_path: Optional[Path] = None) -> sqlite3.Connection:
         _INITIALIZED_PATHS.add(resolved)
 
     return open_db(path, db_label="projects.db", foreign_keys=True, initialize=_initialize)
+
+
+@contextlib.contextmanager
+def write_txn(conn):
+    """Use the native scoped writer fence; standalone retains its SQLite owner."""
+    transaction = native_write_transaction if is_postgres(conn) else _sqlite_write_txn
+    with transaction(conn):
+        yield conn
 
 
 @contextlib.contextmanager
@@ -179,7 +204,7 @@ def _load_project(conn: sqlite3.Connection, row: sqlite3.Row) -> Project:
     """Materialize a ``projects`` row together with its folders."""
     keys = row.keys()
     folders = conn.execute(
-        "SELECT path, label, is_primary, added_at FROM project_folders WHERE project_id = ? ORDER BY is_primary DESC, added_at ASC",
+        _storage_statement(sqlite="SELECT path, label, is_primary, added_at FROM project_folders WHERE project_id = ? ORDER BY is_primary DESC, added_at ASC", postgresql="SELECT path, label, is_primary, added_at FROM project_folders WHERE project_id = %s ORDER BY is_primary DESC, added_at ASC"),
         (row["id"],),
     ).fetchall()
     return Project(
@@ -193,7 +218,7 @@ def _load_project(conn: sqlite3.Connection, row: sqlite3.Row) -> Project:
 def _unique_slug(conn: sqlite3.Connection, candidate: str) -> str:
     """Return ``candidate`` or ``candidate-2``, ``-3`` ... if taken."""
     n, slug = 1, candidate
-    while conn.execute("SELECT 1 FROM projects WHERE slug = ?", (slug,)).fetchone() is not None:
+    while conn.execute(_storage_statement(sqlite="SELECT 1 FROM projects WHERE slug = ?", postgresql="SELECT 1 FROM projects WHERE slug = %s"), (slug,)).fetchone() is not None:
         n += 1
         slug = candidate[: 64 - len(f"-{n}")].rstrip("-_") + f"-{n}"
     return slug
@@ -244,13 +269,14 @@ def create_project(
         )
     with write_txn(conn):
         conn.execute(
-            "INSERT INTO projects (id, slug, name, description, icon, color, board_slug,  primary_path, created_at, archived) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+            _storage_statement(sqlite="INSERT INTO projects (id, slug, name, description, icon, color, board_slug,  primary_path, created_at, archived) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)", postgresql="INSERT INTO projects (id, slug, name, description, icon, color, board_slug,  primary_path, created_at, archived) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 0)"),
             (pid, _unique_slug(conn, slug_candidate), name, description, icon, color,
              normalize_slug(board_slug) if board_slug else None, primary, now),
         )
-        conn.executemany(
-            "INSERT INTO project_folders (project_id, path, label, is_primary, added_at) VALUES (?, ?, ?, ?, ?)",
+        _execute_many(conn,
+            _storage_statement(sqlite="INSERT INTO project_folders (project_id, path, label, is_primary, added_at) VALUES (?, ?, ?, ?, ?)", postgresql="INSERT INTO project_folders (project_id, path, label, is_primary, added_at) VALUES (%s, %s, %s, %s, %s)"),
             [(pid, path, None, 1 if path == primary else 0, now) for path in folder_paths],
         )
     return pid
@@ -264,8 +290,8 @@ def list_projects(conn: sqlite3.Connection, *, include_archived: bool = False) -
 def get_project(conn: sqlite3.Connection, id_or_slug: str) -> Optional[Project]:
     """Look up a project by id first, then by slug."""
     row = (
-        conn.execute("SELECT * FROM projects WHERE id = ?", (id_or_slug,)).fetchone()
-        or conn.execute("SELECT * FROM projects WHERE slug = ?", (str(id_or_slug).lower(),)).fetchone()
+        conn.execute(_storage_statement(sqlite="SELECT * FROM projects WHERE id = ?", postgresql="SELECT * FROM projects WHERE id = %s"), (id_or_slug,)).fetchone()
+        or conn.execute(_storage_statement(sqlite="SELECT * FROM projects WHERE slug = ?", postgresql="SELECT * FROM projects WHERE slug = %s"), (str(id_or_slug).lower(),)).fetchone()
     )
     return None if row is None else _load_project(conn, row)
 
@@ -291,8 +317,8 @@ def update_project(
     ]
     if not fields:
         return False
-    sets = ", ".join(f"{col} = ?" for col, _, _ in fields)
-    return _execute_rowcount(conn, f"UPDATE projects SET {sets} WHERE id = ?", [f[2] for f in fields] + [project_id]) > 0
+    sets = ", ".join(_storage_statement(sqlite=f"{col} = ?", postgresql=f"{col} = %s") for col, _, _ in fields)
+    return _execute_rowcount(conn, _storage_statement(sqlite=f"UPDATE projects SET {sets} WHERE id = ?", postgresql=f"UPDATE projects SET {sets} WHERE id = %s"), [f[2] for f in fields] + [project_id]) > 0
 
 
 def _execute_rowcount(conn: sqlite3.Connection, sql: str, params) -> int:
@@ -311,14 +337,14 @@ def add_folder(conn: sqlite3.Connection, project_id: str, path: str, *, label: O
         raise ValueError(f"no such project: {project_id}")
     with write_txn(conn):
         conn.execute(
-            "INSERT OR IGNORE INTO project_folders (project_id, path, label, is_primary, added_at) VALUES (?, ?, ?, 0, ?)",
+            _storage_statement(sqlite="INSERT OR IGNORE INTO project_folders (project_id, path, label, is_primary, added_at) VALUES (?, ?, ?, 0, ?)", postgresql="INSERT INTO project_folders (project_id, path, label, is_primary, added_at) VALUES (%s, %s, %s, 0, %s) ON CONFLICT DO NOTHING"),
             (project_id, norm, label, _now()),
         )
         if label is not None:
-            conn.execute("UPDATE project_folders SET label = ? WHERE project_id = ? AND path = ?", (label, project_id, norm))
+            conn.execute(_storage_statement(sqlite="UPDATE project_folders SET label = ? WHERE project_id = ? AND path = ?", postgresql="UPDATE project_folders SET label = %s WHERE project_id = %s AND path = %s"), (label, project_id, norm))
         # An explicit primary, or the first folder of an empty project, becomes primary.
         if is_primary or conn.execute(
-            "SELECT 1 FROM project_folders WHERE project_id = ? AND is_primary = 1", (project_id,)
+            _storage_statement(sqlite="SELECT 1 FROM project_folders WHERE project_id = ? AND is_primary = 1", postgresql="SELECT 1 FROM project_folders WHERE project_id = %s AND is_primary = 1"), (project_id,)
         ).fetchone() is None:
             _set_primary_locked(conn, project_id, norm)
     return norm
@@ -329,47 +355,47 @@ def remove_folder(conn: sqlite3.Connection, project_id: str, path: str) -> bool:
     norm = _normalize_path(path)
     with write_txn(conn):
         was_primary = conn.execute(
-            "SELECT is_primary FROM project_folders WHERE project_id = ? AND path = ?", (project_id, norm)
+            _storage_statement(sqlite="SELECT is_primary FROM project_folders WHERE project_id = ? AND path = ?", postgresql="SELECT is_primary FROM project_folders WHERE project_id = %s AND path = %s"), (project_id, norm)
         ).fetchone()
-        cur = conn.execute("DELETE FROM project_folders WHERE project_id = ? AND path = ?", (project_id, norm))
+        cur = conn.execute(_storage_statement(sqlite="DELETE FROM project_folders WHERE project_id = ? AND path = ?", postgresql="DELETE FROM project_folders WHERE project_id = %s AND path = %s"), (project_id, norm))
         if was_primary is not None and was_primary["is_primary"]:
             nxt = conn.execute(
-                "SELECT path FROM project_folders WHERE project_id = ? ORDER BY added_at ASC LIMIT 1", (project_id,)
+                _storage_statement(sqlite="SELECT path FROM project_folders WHERE project_id = ? ORDER BY added_at ASC LIMIT 1", postgresql="SELECT path FROM project_folders WHERE project_id = %s ORDER BY added_at ASC LIMIT 1"), (project_id,)
             ).fetchone()
             if nxt and nxt["path"]:
                 _set_primary_locked(conn, project_id, nxt["path"])
             else:
-                conn.execute("UPDATE projects SET primary_path = NULL WHERE id = ?", (project_id,))
+                conn.execute(_storage_statement(sqlite="UPDATE projects SET primary_path = NULL WHERE id = ?", postgresql="UPDATE projects SET primary_path = NULL WHERE id = %s"), (project_id,))
     return cur.rowcount > 0
 
 
 def _set_primary_locked(conn: sqlite3.Connection, project_id: str, path: str) -> None:
     """Set the primary folder (caller already holds a write txn)."""
-    conn.execute("UPDATE project_folders SET is_primary = 0 WHERE project_id = ?", (project_id,))
-    conn.execute("UPDATE project_folders SET is_primary = 1 WHERE project_id = ? AND path = ?", (project_id, path))
-    conn.execute("UPDATE projects SET primary_path = ? WHERE id = ?", (path, project_id))
+    conn.execute(_storage_statement(sqlite="UPDATE project_folders SET is_primary = 0 WHERE project_id = ?", postgresql="UPDATE project_folders SET is_primary = 0 WHERE project_id = %s"), (project_id,))
+    conn.execute(_storage_statement(sqlite="UPDATE project_folders SET is_primary = 1 WHERE project_id = ? AND path = ?", postgresql="UPDATE project_folders SET is_primary = 1 WHERE project_id = %s AND path = %s"), (project_id, path))
+    conn.execute(_storage_statement(sqlite="UPDATE projects SET primary_path = ? WHERE id = ?", postgresql="UPDATE projects SET primary_path = %s WHERE id = %s"), (path, project_id))
 
 
 def set_primary(conn: sqlite3.Connection, project_id: str, path: str) -> bool:
     norm = _normalize_path(path)
     with write_txn(conn):
-        if conn.execute("SELECT 1 FROM project_folders WHERE project_id = ? AND path = ?", (project_id, norm)).fetchone() is None:
+        if conn.execute(_storage_statement(sqlite="SELECT 1 FROM project_folders WHERE project_id = ? AND path = ?", postgresql="SELECT 1 FROM project_folders WHERE project_id = %s AND path = %s"), (project_id, norm)).fetchone() is None:
             return False
         _set_primary_locked(conn, project_id, norm)
     return True
 
 
 def archive_project(conn: sqlite3.Connection, project_id: str) -> bool:
-    return _execute_rowcount(conn, "UPDATE projects SET archived = 1 WHERE id = ?", (project_id,)) > 0
+    return _execute_rowcount(conn, _storage_statement(sqlite="UPDATE projects SET archived = 1 WHERE id = ?", postgresql="UPDATE projects SET archived = 1 WHERE id = %s"), (project_id,)) > 0
 
 
 def restore_project(conn: sqlite3.Connection, project_id: str) -> bool:
-    return _execute_rowcount(conn, "UPDATE projects SET archived = 0 WHERE id = ?", (project_id,)) > 0
+    return _execute_rowcount(conn, _storage_statement(sqlite="UPDATE projects SET archived = 0 WHERE id = ?", postgresql="UPDATE projects SET archived = 0 WHERE id = %s"), (project_id,)) > 0
 
 
 def delete_project(conn: sqlite3.Connection, project_id: str) -> bool:
     """Hard-delete a project and its folders (cascade)."""
-    return _execute_rowcount(conn, "DELETE FROM projects WHERE id = ?", (project_id,)) > 0
+    return _execute_rowcount(conn, _storage_statement(sqlite="DELETE FROM projects WHERE id = ?", postgresql="DELETE FROM projects WHERE id = %s"), (project_id,)) > 0
 
 
 # --- Active-project pointer + discovery policy (project_meta KV) --------------
@@ -377,13 +403,13 @@ def delete_project(conn: sqlite3.Connection, project_id: str) -> bool:
 def _upsert_meta_locked(conn: sqlite3.Connection, key: str, value: str) -> None:
     """Upsert a project_meta row (caller already holds a write txn)."""
     conn.execute(
-        "INSERT INTO project_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        _storage_statement(sqlite="INSERT INTO project_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", postgresql="INSERT INTO project_meta (key, value) VALUES (%s, %s) ON CONFLICT(key) DO UPDATE SET value = excluded.value"),
         (key, value),
     )
 
 
 def _get_meta(conn: sqlite3.Connection, key: str) -> Optional[str]:
-    row = conn.execute("SELECT value FROM project_meta WHERE key = ?", (key,)).fetchone()
+    row = conn.execute(_storage_statement(sqlite="SELECT value FROM project_meta WHERE key = ?", postgresql="SELECT value FROM project_meta WHERE key = %s"), (key,)).fetchone()
     return row["value"] if row else None
 
 
@@ -391,7 +417,7 @@ def set_active(conn: sqlite3.Connection, project_id: Optional[str]) -> None:
     """Set (or clear, when ``None``) the active project pointer."""
     with write_txn(conn):
         if project_id is None:
-            conn.execute("DELETE FROM project_meta WHERE key = ?", (_ACTIVE_META_KEY,))
+            conn.execute(_storage_statement(sqlite="DELETE FROM project_meta WHERE key = ?", postgresql="DELETE FROM project_meta WHERE key = %s"), (_ACTIVE_META_KEY,))
         else:
             _upsert_meta_locked(conn, _ACTIVE_META_KEY, project_id)
 
@@ -445,9 +471,10 @@ def record_discovered_repos(
         if replace:
             conn.execute("DELETE FROM discovered_repos")
         if rows:
-            conn.executemany(
-                "INSERT INTO discovered_repos (root, label, last_seen) VALUES (?, ?, ?) "
-                "ON CONFLICT(root) DO UPDATE SET label = excluded.label, last_seen = excluded.last_seen",
+            _execute_many(conn,
+                _storage_statement(sqlite="INSERT INTO discovered_repos (root, label, last_seen) VALUES (?, ?, ?) "
+                "ON CONFLICT(root) DO UPDATE SET label = excluded.label, last_seen = excluded.last_seen", postgresql="INSERT INTO discovered_repos (root, label, last_seen) VALUES (%s, %s, %s) "
+                "ON CONFLICT(root) DO UPDATE SET label = excluded.label, last_seen = excluded.last_seen"),
                 rows,
             )
         _clear_repos_locked(conn, False, policy_key)

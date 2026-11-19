@@ -15,7 +15,8 @@ NATIVE_TABLES = ('schema_version','system_prompts','sessions','messages','sessio
     'compression_locks','session_turn_leases','async_delegations','semantier_session_branches','delivery_obligations')
 
 
-SNAPSHOT_FAMILIES = {'hosted_rooms': ROOM_TABLES, 'sessions': NATIVE_TABLES, 'api_runs': ('run_idempotency',),
+SNAPSHOT_FAMILIES = {'projects': ('projects','project_folders','project_meta','discovered_repos'),
+    'hosted_rooms': ROOM_TABLES, 'sessions': NATIVE_TABLES, 'api_runs': ('run_idempotency',),
     'api_responses': ('responses','conversations','response_keys','response_admissions','response_output_order'),
     'cron': ('executions','cron_incidents'), 'cron_notes': ('cron_notepad',), 'cron_delivery': ('deliveries','delivery_tombstones'), 'kanban': ('tasks','task_links','task_comments','task_events','task_runs','task_attachments','kanban_notify_subs'), 'hosted_rooms_marker': ('hosted_room_legacy_imports',)}
 
@@ -29,19 +30,29 @@ class PostgreSQLPortabilityMixin(SessionPortabilityMixin):
     _SQLITE_INT_MIN=-(2**63)
     _SQLITE_INT_MAX=2**63-1
 
-    def import_sqlite_snapshot(self,source,*,family='sessions'):
+    def import_sqlite_snapshot(self,source,*,family='sessions',source_sha256=None):
         """One transaction imports a consistent read-only backup, retaining all native keys.
 
         Unknown tables are returned to the migration owner for their explicit adapters;
         they never become silently discarded native state. A changed snapshot cannot
         merge into an occupied namespace. Exact reruns compare content fingerprints.
+        A pinned frozen input is hashed once and consumed from those exact bytes;
+        its operator must materialize a sidecar-free rollback-journal snapshot.
         """
         selected=SNAPSHOT_FAMILIES[family]
         with self._transaction(read_only=True) as guard_conn:
             permitted=guard_conn.execute("SELECT has_table_privilege(current_user,%s,'INSERT') AS permitted",(self.scope.schema+'.migration_receipts',)).fetchone()['permitted']
             if not permitted:raise PermissionError('Snapshot import requires the explicit migration owner')
         path=Path(source).resolve()
-        with sqlite3.connect(path.as_uri()+'?mode=ro',uri=True) as source_conn:
+        frozen=None
+        if source_sha256 is not None:
+            frozen=path.read_bytes()
+            if hashlib.sha256(frozen).hexdigest()!=source_sha256:
+                raise ValueError('Frozen SQLite snapshot hash differs')
+            if (frozen[18:20]!=b'\x01\x01' or any(Path(str(path)+suffix).exists() for suffix in ('-wal','-shm','-journal'))):
+                raise ValueError('Frozen SQLite snapshot must be sidecar-free rollback journal')
+        with sqlite3.connect(':memory:' if frozen is not None else path.as_uri()+'?mode=ro',uri=frozen is None) as source_conn:
+            if frozen is not None:source_conn.deserialize(frozen)
             source_conn.row_factory=sqlite3.Row
             source_conn.execute('BEGIN')
             names={r[0] for r in source_conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
