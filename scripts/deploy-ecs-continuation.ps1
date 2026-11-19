@@ -151,6 +151,7 @@ function Restore-ToolingContinuationResidue($Owner,[string]$Source,[string]$Revi
     if($IsWindows -and (Get-Acl -LiteralPath $Output).GetOwner([Security.Principal.SecurityIdentifier]).Value -cne
       [Security.Principal.WindowsIdentity]::GetCurrent().User.Value){throw 'Foreign continuation run ownership.'}
     if((Get-ResidueInventory (Join-Path $Output 'source-residue/source')) -cne $q.originalResidueInventory){throw 'Original preserved residue changed.'}
+    foreach($prior in $script:continuationPriorResidues){if((Get-ResidueInventory $prior.path) -cne $prior.inventory){throw 'Predecessor preserved residue changed before recovery.'}}
     $saved=Join-Path $Output ('source-residue/continuation-'+$q.sequence+'/source');Assert-NoReparseAncestor $saved
     $binding=Get-ToolingBytesHash $script:continuationBytes
     $intent=$null;$complete=$false

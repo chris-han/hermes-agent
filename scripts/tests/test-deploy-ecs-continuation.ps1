@@ -113,6 +113,11 @@ try{
  $script:c=[Text.Encoding]::UTF8.GetString($chainQualification)|ConvertFrom-Json
  Sign-Fixture $path (Get-Bytes $c);$script:qualifiedContinuation=Read-ToolingContinuation $path $cert.Thumbprint
  Confirm-ToolingContinuation $record $continuedInputs
+ [IO.File]::WriteAllText($priorFile,'changed after admission')
+ $script:sourceLease=[IO.File]::Open((Join-Path $Output '.source.lock'),'OpenOrCreate','ReadWrite','None')
+ try{Reject {Restore-ToolingContinuationResidue $owner $BuildSource $Commit} 'Predecessor preserved residue changed before recovery.'}finally{$script:sourceLease.Dispose();$script:sourceLease=$null}
+ Require (Test-Path $BuildSource) 'Changed predecessor allowed current residue move'
+ [IO.File]::WriteAllText($priorFile,'second')
  $script:sourceLease=[IO.File]::Open((Join-Path $Output '.source.lock'),'OpenOrCreate','ReadWrite','None')
  try{Restore-ToolingContinuationResidue $owner $BuildSource $Commit}finally{$script:sourceLease.Dispose();$script:sourceLease=$null}
  Require ([IO.File]::ReadAllText((Join-Path $Output 'source-residue/continuation-2/source/node_modules/generated')) -ceq 'third') 'Third residue lost'
