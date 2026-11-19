@@ -109,15 +109,32 @@ export function actInPageCore(
     const field: Element[] = []
     const elements: PreviewElement[] = []
 
-    const candidates = doc.querySelectorAll(
+    const candidateSelector =
       'a[href], button, input:not([type="hidden"]), select, textarea, summary, label[for], ' +
-        '[role="button"], [role="link"], [role="checkbox"], [role="radio"], [role="tab"], ' +
-        '[role="menuitem"], [role="switch"], [role="option"], [role="combobox"], [role="searchbox"], ' +
-        '[role="textbox"], [contenteditable=""], [contenteditable="true"], [onclick], ' +
-        '[tabindex]:not([tabindex="-1"])'
+      '[role="button"], [role="link"], [role="checkbox"], [role="radio"], [role="tab"], ' +
+      '[role="menuitem"], [role="switch"], [role="option"], [role="combobox"], [role="searchbox"], ' +
+      '[role="textbox"], [contenteditable=""], [contenteditable="true"], [onclick], ' +
+      '[tabindex]:not([tabindex="-1"])'
+
+    // React attaches a DOM onclick property to custom click targets without an
+    // onclick attribute. Inspect the property, never framework-private fibers.
+    const candidates = Array.from(doc.querySelectorAll('*')).filter(
+      el => el.matches(candidateSelector) || typeof (el as HTMLElement).onclick === 'function'
     )
 
+    // React also installs a click shim on the root container. Do not expose
+    // that wrapper as a second action over its actual interactive descendants.
+    const wrappers = new Set<Element>()
+
     for (const el of candidates) {
+      for (let parent = el.parentElement; parent; parent = parent.parentElement) { wrappers.add(parent) }
+    }
+
+    for (const el of candidates) {
+      if (!el.matches(candidateSelector) && (el === doc.body || el === doc.documentElement || wrappers.has(el))) {
+        continue
+      }
+
       if (elements.length >= max && field.length >= maxMarks) {
         break
       }
@@ -274,6 +291,7 @@ export function actInPageCore(
 
       let best: PreviewActBinding | undefined
       let score = 0
+      let tied = false
 
       for (const bound of pool) {
         if (claimed[bound.ref]) {
@@ -282,15 +300,37 @@ export function actInPageCore(
 
         const rung = affinity(bound, now)
 
-        // Strictly better, so a tie goes to whichever candidate the page put
-        // first and the same page twice re-binds the same way.
+        // A tie is ambiguity, never evidence that document order is identity.
+        if (rung >= rebindBar && rung === score) {
+          tied = true
+        }
+
         if (rung >= rebindBar && rung > score) {
           best = bound
           score = rung
+          tied = false
         }
       }
 
-      if (best) {
+      if (
+        best &&
+        !tied &&
+        !seen.nodes.some(
+          (other, index) =>
+            index !== i &&
+            affinity(best!, {
+              el: other,
+              label: seen.elements[index].label,
+              name: seen.elements[index].label || seen.elements[index].value || '',
+              off: !!seen.elements[index].disabled,
+              path: anchorOf(other),
+              ref: '',
+              role: seen.elements[index].role,
+              stable: stableOf(other),
+              value: seen.elements[index].value || ''
+            }) >= score
+        )
+      ) {
         // Same handle, new node. Reported as one word rather than a removal
         // and an addition, because from the agent's side nothing happened —
         // its handle still works and it has nothing to re-read.
