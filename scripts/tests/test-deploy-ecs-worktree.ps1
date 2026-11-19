@@ -38,10 +38,12 @@ New-Item -ItemType Directory -Path $Repository,$BuildCache | Out-Null
 try {
   [IO.File]::WriteAllText((Join-Path $Repository '.gitignore'),"node_modules/`napps/`n")
   [IO.File]::WriteAllText((Join-Path $Repository 'app.txt'),'pinned')
+  [IO.File]::WriteAllText((Join-Path $Repository 'MODEL-NOTICE.txt'),"LF notice`n")
   Run 'git.exe' @('-C',$Repository,'init','-q')
   Run 'git.exe' @('-C',$Repository,'add','.')
   Run 'git.exe' @('-C',$Repository,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','pinned')
   $Commit=Get-SourceGit $Repository @('rev-parse','HEAD')
+  Run 'git.exe' @('-C',$Repository,'config','core.autocrlf','true')
   [IO.File]::WriteAllText((Join-Path $Repository 'app.txt'),'moving head')
   Run 'git.exe' @('-C',$Repository,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qam','moving')
   $protected=@{}
@@ -59,6 +61,8 @@ try {
   Require ($script:sourceRecreated) 'First stage not created'
   Require (!(Get-Item -Force (Join-Path $BuildSource '.git')).PSIsContainer) '.git is not a file'
   Require ((Get-SourceGit $BuildSource @('rev-parse','HEAD')) -ceq $Commit) 'Moving branch selected'
+  Require ((Hash (Join-Path $BuildSource 'MODEL-NOTICE.txt')) -ceq (Hash (Join-Path $Repository 'MODEL-NOTICE.txt'))) 'MODEL-NOTICE LF integrity lost'
+  Require ((Get-SourceGit $Repository @('config','--local','core.autocrlf')) -ceq 'true') 'Operator changed repository Git configuration'
   $common=Assert-RegisteredSource $BuildSource $Commit
   Require ($common -ceq (Get-SourceGit $Repository @('rev-parse','--path-format=absolute','--git-common-dir'))) 'Objects not shared'
   Write-Output ('COMMON_DIR_EQUAL: '+$common)
@@ -97,6 +101,172 @@ try {
   try{throw 'fixture failure'}catch{}finally{$clean=Remove-OwnedBuildSource}
   Require ($clean -ceq 'REMOVED') 'Failure cleanup failed'
   $script:sourceLease.Dispose();$script:sourceLease=$null;$script:sourceOwner=$null
+  # An interrupted retirement can leave only generated dependencies, with no
+  # registration. The retained reservation/request are authority, never recreated.
+  $VersionState=Join-Path $root 'version-ledger.json'
+  $RecoveryMsix=Join-Path $root 'release/signed.msix';$ChannelRecoveryMsix='';$ProfileSampleManifest='';$CriticalFileManifest=''
+  $BuildId='8b19a2c012444a959b2370160324402a'
+  $reservation=@{kind='semantier-windows-build-version-v1';version='0.0.129';sourceCommit=$Commit}
+  $reservation | ConvertTo-Json | Set-Content -LiteralPath $VersionState
+  $request=Join-Path $Output 'channel-request.json'
+  @{commit=$Commit;version='0.0.129';buildId=$BuildId;sequence=129;publicBase='https://download.semantier.cn'} | ConvertTo-Json | Set-Content $request
+  $record=@{commit=$Commit;version='0.0.129';source=$BuildSource;cache=$BuildCache;request=$request;
+    prepared=(Join-Path $Output 'desktop-job/prepared.json');msix=(Join-Path $Output 'unsigned.msix');stage='reserved';publicBase='https://download.semantier.cn'}
+  Write-RunEvent @{type='build';build=$record}
+  $protected[$VersionState]=Hash $VersionState
+  $protected[$request]=Hash $request
+  $null=[IO.Directory]::CreateDirectory((Join-Path $BuildSource 'node_modules'))
+  [IO.File]::WriteAllText((Join-Path $BuildSource 'node_modules/generated'),'retained dependencies')
+  $checkpointBefore=[IO.File]::ReadAllText($script:statusLog)
+  Initialize-LocalBuildSource $BuildSource $Commit
+  $savedResidue=Join-Path $Output 'source-residue/source/node_modules/generated'
+  Require (Test-Path -LiteralPath $savedResidue) 'Owned residue not preserved'
+  Require ([IO.File]::ReadAllText($savedResidue) -ceq 'retained dependencies') 'Residue changed'
+  Require (!(Test-Path -LiteralPath (Join-Path $BuildSource 'node_modules'))) 'Unverified dependencies reused'
+  Require ((Get-SourceGit $BuildSource @('rev-parse','HEAD')) -ceq $Commit) 'Residue reconstruction changed source'
+  $null=Assert-RegisteredSource $BuildSource $Commit
+  Require ([IO.File]::ReadAllText($script:statusLog).StartsWith($checkpointBefore)) 'Historical checkpoints changed'
+  $eventsBefore=@(Get-Content $script:statusLog | Where-Object {$_ -match '"type":"source-residue-recovery"'}).Count
+  Initialize-LocalBuildSource $BuildSource $Commit
+  Require (@(Get-Content $script:statusLog | Where-Object {$_ -match '"type":"source-residue-recovery"'}).Count -eq $eventsBefore) 'Repeated recovery appended duplicate transition'
+  Require ((Remove-OwnedBuildSource) -ceq 'REMOVED') 'Recovered cleanup failed'
+  $script:sourceLease.Dispose();$script:sourceLease=$null;$script:sourceOwner=$null
+  function New-ResidueFixture([string]$Name) {
+    if($script:sourceLease){$script:sourceLease.Dispose()}
+    $script:sourceLease=$null;$script:sourceOwner=$null
+    $script:Output=Join-Path $root $Name;$script:BuildSource=Join-Path $Output 'source'
+    Initialize-LocalBuildSource $BuildSource $Commit
+    Require ((Remove-OwnedBuildSource) -ceq 'REMOVED') 'Fixture retirement failed'
+    $script:sourceLease.Dispose();$script:sourceLease=$null;$script:sourceOwner=$null
+    $script:VersionState=Join-Path $Output 'version-ledger.json'
+    $reservation | ConvertTo-Json | Set-Content -LiteralPath $VersionState
+    $request=Join-Path $Output 'channel-request.json'
+    @{commit=$Commit;version='0.0.129';buildId=$BuildId;sequence=129;publicBase='https://download.semantier.cn'} | ConvertTo-Json | Set-Content $request
+    $copy=$record.Clone();$copy.source=$BuildSource;$copy.request=$request
+    $copy.prepared=Join-Path $Output 'desktop-job/prepared.json';$copy.msix=Join-Path $Output 'unsigned.msix'
+    Write-RunEvent @{type='progress';message='fixture-original'}
+    Write-RunEvent @{type='build';build=$copy}
+    $null=[IO.Directory]::CreateDirectory((Join-Path $BuildSource 'node_modules'))
+    [IO.File]::WriteAllText((Join-Path $BuildSource 'node_modules/generated'),'retained dependencies')
+  }
+  foreach($case in @('missing-owner','foreign-owner','run','commit','version','build-id','unexpected','link','registration','cache-lock','stage-process','cache-process')){
+    New-ResidueFixture ('reject-'+$case)
+    $extraLease=$null
+    switch($case){
+      'missing-owner' {
+        $lines=@(Get-Content $script:statusLog | Where-Object {$_ -notmatch '"type":"source-owner"'})
+        [IO.File]::WriteAllLines($script:statusLog,$lines)
+      }
+      'foreign-owner' {$owner=Read-SourceOwner;$owner.repository='foreign';Write-RunEvent @{type='source-owner';owner=$owner}}
+      'run' {$owner=Read-SourceOwner;$owner.run='foreign';Write-RunEvent @{type='source-owner';owner=$owner}}
+      'commit' {$owner=Read-SourceOwner;$owner.commit='f'*40;Write-RunEvent @{type='source-owner';owner=$owner}}
+      'version' {$bad=$reservation.Clone();$bad.version='0.0.130';$bad | ConvertTo-Json | Set-Content $VersionState}
+      'build-id' {$request=Join-Path $Output 'channel-request.json';$bad=Get-Content $request -Raw | ConvertFrom-Json;$bad.buildId='f'*32;$bad | ConvertTo-Json | Set-Content $request}
+      'unexpected' {[IO.File]::WriteAllText((Join-Path $BuildSource 'app.txt'),'unregistered tracked source edit')}
+      'link' {
+        $link=Join-Path $BuildSource 'node_modules/escape'
+        if($native){New-Item -ItemType Junction -Path $link -Target $BuildCache | Out-Null}
+        else{New-Item -ItemType SymbolicLink -Path $link -Target $BuildCache | Out-Null}
+      }
+      'registration' {
+        # Missing .git plus a surviving exact registration must also refuse.
+        [IO.Directory]::Move($BuildSource,($BuildSource+'-fixture'))
+        Run 'git.exe' @('-C',$Repository,'worktree','add','--detach',$BuildSource,$Commit)
+        Remove-Item -LiteralPath $BuildSource -Recurse -Force
+        [IO.Directory]::Move(($BuildSource+'-fixture'),$BuildSource)
+      }
+      'cache-lock' {$extraLease=[IO.File]::Open((Join-Path $BuildCache '.desktop-build.lock'),'OpenOrCreate','ReadWrite','None')}
+      'stage-process' {
+        $script:busyPath=$BuildSource
+        function Get-CimInstance {param($ClassName) return @([pscustomobject]@{ProcessId=123456;ParentProcessId=0;CreationDate=[datetime]::UtcNow;ExecutablePath='';Name='fixture';CommandLine=$script:busyPath})}
+      }
+      'cache-process' {
+        $script:busyPath=$BuildCache
+        function Get-CimInstance {param($ClassName) return @([pscustomobject]@{ProcessId=123456;ParentProcessId=0;CreationDate=[datetime]::UtcNow;ExecutablePath='';Name='fixture';CommandLine=$script:busyPath})}
+      }
+    }
+    $before=[IO.File]::ReadAllText($script:statusLog);$ledgerHash=Hash $VersionState
+    try {
+      Reject {Initialize-LocalBuildSource $BuildSource $Commit} ('Unsafe recovery accepted: '+$case)
+      Require (Test-Path -LiteralPath (Join-Path $BuildSource 'node_modules/generated')) ('Refusal moved residue: '+$case)
+      Require (!(Test-Path -LiteralPath (Join-Path $Output 'source-residue'))) ('Refusal preserved unverified residue: '+$case)
+      Require ([IO.File]::ReadAllText($script:statusLog) -ceq $before) ('Refusal changed checkpoints: '+$case)
+      Require ((Hash $VersionState) -ceq $ledgerHash) ('Refusal changed reservation: '+$case)
+    } finally {
+      if($extraLease){$extraLease.Dispose()}
+      if($script:sourceLease){$script:sourceLease.Dispose();$script:sourceLease=$null}
+      $script:sourceOwner=$null
+      if($case -in @('stage-process','cache-process')){
+        Remove-Item Function:Get-CimInstance
+        if(!$native){function Get-CimInstance {param($ClassName) return @()}}
+      }
+      if($case -eq 'link'){Remove-Item -LiteralPath $link -Force}
+      if($case -eq 'registration'){Remove-Item -LiteralPath $BuildSource -Recurse -Force;Run 'git.exe' @('-C',$Repository,'worktree','remove','--force',$BuildSource)}
+    }
+    Write-Output ('RECOVERY_REFUSED: '+$case)
+  }
+  if($native){
+    New-ResidueFixture 'reject-foreign-acl'
+    $path=Join-Path $BuildSource 'node_modules/generated'
+    $acl=Get-Acl -LiteralPath $path
+    $foreign=Get-Acl -LiteralPath $path
+    $foreign.SetOwner([Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'))
+    # This native negative requires a host permitted to set a foreign owner;
+    # failure to establish that fixture is a test failure, never a claimed PASS.
+    Set-Acl -LiteralPath $path -AclObject $foreign
+    try {Reject {Initialize-LocalBuildSource $BuildSource $Commit} 'Foreign filesystem owner accepted'}
+    finally {Set-Acl -LiteralPath $path -AclObject $acl}
+    $script:sourceLease.Dispose();$script:sourceLease=$null;$script:sourceOwner=$null
+  }
+  $writeEvent=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Write-RunEvent'},$true)
+  foreach($phase in @('intent','preserved-before','preserved')){
+    New-ResidueFixture ('interrupt-'+$phase)
+    $checkpointBefore=[IO.File]::ReadAllText($script:statusLog)
+    $script:stopPhase=$phase
+    function Write-RunEvent($Event){
+      if($Event.type -eq 'source-residue-recovery' -and $Event.phase -eq 'preserved' -and $script:stopPhase -eq 'preserved-before'){throw 'fixture interrupted before completion append'}
+      $json=ConvertTo-Json -InputObject $Event -Depth 32 -Compress
+      [IO.File]::AppendAllText($script:statusLog,"`n"+$json+"`n",$utf8)
+      if($Event.type -eq 'source-residue-recovery' -and $Event.phase -eq $script:stopPhase){throw 'fixture interrupted'}
+    }
+    try {Reject {Initialize-LocalBuildSource $BuildSource $Commit} ('Interruption not reached: '+$phase)}
+    finally {. ([scriptblock]::Create($writeEvent.Extent.Text))}
+    Require ([IO.File]::ReadAllText($script:statusLog).StartsWith($checkpointBefore)) 'Interruption changed history'
+    $script:sourceLease.Dispose();$script:sourceLease=$null;$script:sourceOwner=$null
+    Initialize-LocalBuildSource $BuildSource $Commit
+    $null=Assert-RegisteredSource $BuildSource $Commit
+    $events=@(Get-Content $script:statusLog | Where-Object {$_ -match '"type":"source-residue-recovery"'})
+    Require ($events.Count -eq 2) 'Interruption duplicated recovery events'
+    $script:sourceLease.Dispose();$script:sourceLease=$null;$script:sourceOwner=$null
+    Initialize-LocalBuildSource $BuildSource $Commit
+    Require (@(Get-Content $script:statusLog | Where-Object {$_ -match '"type":"source-residue-recovery"'}).Count -eq 2) 'Restart duplicated recovery events'
+    Require ((Remove-OwnedBuildSource) -ceq 'REMOVED') 'Interrupted recovery cleanup failed'
+    $script:sourceLease.Dispose();$script:sourceLease=$null;$script:sourceOwner=$null
+    Write-Output ('RECOVERY_INTERRUPTION_PASS: '+$phase)
+  }
+  foreach($change in @('history','protected-input','signed-input','residue')){
+    New-ResidueFixture ('changed-'+$change)
+    function Write-RunEvent($Event){
+      [IO.File]::AppendAllText($script:statusLog,"`n"+($Event | ConvertTo-Json -Depth 32 -Compress)+"`n",$utf8)
+      if($Event.type -eq 'source-residue-recovery' -and $Event.phase -eq 'intent'){throw 'fixture interruption'}
+    }
+    try {Reject {Initialize-LocalBuildSource $BuildSource $Commit} 'Intent interruption missing'}
+    finally {. ([scriptblock]::Create($writeEvent.Extent.Text))}
+    $script:sourceLease.Dispose();$script:sourceLease=$null;$script:sourceOwner=$null
+    switch($change){
+      'history' {$text=[IO.File]::ReadAllText($script:statusLog);[IO.File]::WriteAllText($script:statusLog,$text.Replace('fixture-original','fixture-tampered'))}
+      'protected-input' {[IO.File]::AppendAllText($VersionState," `n")}
+      'signed-input' {[IO.File]::AppendAllText($RecoveryMsix,'changed')}
+      'residue' {[IO.File]::AppendAllText((Join-Path $BuildSource 'node_modules/generated'),'changed')}
+    }
+    Reject {Initialize-LocalBuildSource $BuildSource $Commit} ('Changed recovery admitted: '+$change)
+    Require (Test-Path -LiteralPath (Join-Path $BuildSource 'node_modules/generated')) 'Changed residue moved'
+    $script:sourceLease.Dispose();$script:sourceLease=$null;$script:sourceOwner=$null
+    if($change -eq 'signed-input'){[IO.File]::WriteAllText($RecoveryMsix,'preserve release/signed.msix')}
+    Write-Output ('RECOVERY_TAMPER_REFUSED: '+$change)
+  }
+  $Output=Join-Path $root 'run-one';$BuildSource=Join-Path $Output 'source'
+  $VersionState=Join-Path $root 'version-ledger.json'
   # Different runs never share a source path. Foreign source is never adopted.
   $Output=Join-Path $root 'run-two';$BuildSource=Join-Path $Output 'source'
   $null=[IO.Directory]::CreateDirectory($BuildSource)

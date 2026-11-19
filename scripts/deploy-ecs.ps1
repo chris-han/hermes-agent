@@ -468,7 +468,8 @@ function Assert-StageInactive($Owner) {
        ($process.ParentProcessId -eq $Owner.pid -and $process.CreationDate.ToUniversalTime() -ge [datetime]$Owner.started) -or
        ($process.ExecutablePath -and ($process.ExecutablePath.StartsWith($Owner.source+'\',[StringComparison]::OrdinalIgnoreCase) -or
          $process.ExecutablePath.StartsWith($Owner.cache+'\',[StringComparison]::OrdinalIgnoreCase))) -or
-       ($process.CommandLine -and $process.CommandLine.IndexOf($Owner.source,[StringComparison]::OrdinalIgnoreCase) -ge 0)){
+       ($process.CommandLine -and ($process.CommandLine.IndexOf($Owner.source,[StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+         $process.CommandLine.IndexOf($Owner.cache,[StringComparison]::OrdinalIgnoreCase) -ge 0))){
       throw "Stage may have active children or an active previous operator ($($process.ProcessId) $($process.Name)); cleanup/recovery deferred."
     }
   }
@@ -491,7 +492,7 @@ function Assert-SourceOwner($Owner,[string]$Source,[string]$Revision) {
 }
 function Get-SourceRegistration([string]$Source,[string]$Revision) {
   $records=(Get-SourceGit $Repository @('worktree','list','--porcelain')) -split "`n`n"
-  $registrations=@($records | Where-Object {($_ -split "`n")[0] -ceq ('worktree '+$Source.Replace('\','/'))})
+  $registrations=@($records | Where-Object {($_ -split "`n")[0] -ieq ('worktree '+$Source.Replace('\','/'))})
   if(!$registrations.Count){return $null}
   if($registrations.Count -ne 1 -or $registrations[0] -notmatch '(?:\n)detached(?:\n|$)' -or
     $registrations[0] -notmatch ('(?:\n)HEAD '+$Revision+'(?:\n|$)') -or $registrations[0] -match '(?:\n)locked'){
@@ -511,6 +512,133 @@ function Assert-RegisteredSource([string]$Source,[string]$Revision) {
   if(!(Get-SourceRegistration $Source $Revision)){throw 'Exact detached stage registration is missing.'}
   return $common
 }
+function Get-ResidueInventory([string]$Root) {
+  Assert-NoReparseAncestor $Root
+  $top=@(Get-ChildItem -LiteralPath $Root -Force)
+  if($top.Count -ne 1 -or $top[0].Name -cne 'node_modules' -or !$top[0].PSIsContainer){
+    throw 'Recovery accepts only node_modules-only generated residue.'
+  }
+  $pending=[Collections.Generic.Stack[string]]::new();$pending.Push($Root)
+  $entries=[Collections.Generic.List[string]]::new()
+  while($pending.Count){
+    $path=$pending.Pop();$item=Get-Item -LiteralPath $path -Force
+    if(($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $item.LinkType){throw 'Linked residue is not recoverable.'}
+    if($IsWindows){
+      $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+      if((Get-Acl -LiteralPath $path).GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $sid){throw 'Foreign residue ownership.'}
+    }
+    $relative=[IO.Path]::GetRelativePath($Root,$path)
+    if($item.PSIsContainer){
+      $entries.Add('D '+$relative)
+      foreach($child in Get-ChildItem -LiteralPath $path -Force){$pending.Push($child.FullName)}
+    } else {$entries.Add('F '+$relative+' '+$item.Length+' '+(Hash $path))}
+  }
+  $sorted=$entries.ToArray();[Array]::Sort($sorted,[StringComparer]::Ordinal)
+  return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes(($sorted | ConvertTo-Json -Compress))))
+}
+function Assert-ResidueBindings([string]$Source,[string]$Revision) {
+  if([IO.Path]::GetFullPath($Source) -cne (Join-Path ([IO.Path]::GetFullPath($Output)) 'source')){throw 'Recovery source/run mismatch.'}
+  if($IsWindows -and (Get-Acl -LiteralPath $Output).GetOwner([Security.Principal.SecurityIdentifier]).Value -cne
+    [Security.Principal.WindowsIdentity]::GetCurrent().User.Value){throw 'Foreign run ownership.'}
+  $record=Read-CommitBuild $script:statusLog
+  if(!$record -or $record.commit -cne $Revision -or $record.source -ine $Source -or $record.cache -ine $BuildCache -or
+    $record.stage -cne 'reserved' -or $record.version -cnotmatch '^0\.0\.[1-9][0-9]*$') {throw 'Recovery requires the original interrupted reservation.'}
+  foreach($pair in @{request='channel-request.json';prepared='desktop-job/prepared.json';msix='unsigned.msix'}.GetEnumerator()){
+    if([IO.Path]::GetFullPath($record.($pair.Key)) -ine (Join-Path $Output $pair.Value)){throw 'Recovery build input escaped the run.'}
+  }
+  Assert-NoReparseAncestor $VersionState
+  Assert-NoReparseAncestor $record.request
+  $ledger=Get-Content -LiteralPath $VersionState -Raw | ConvertFrom-Json
+  $request=Get-Content -LiteralPath $record.request -Raw | ConvertFrom-Json
+  if($ledger.kind -cne 'semantier-windows-build-version-v1' -or $ledger.sourceCommit -cne $Revision -or
+    $ledger.version -cne $record.version -or $request.commit -cne $Revision -or $request.version -cne $record.version -or
+    $request.publicBase -cne $record.publicBase -or $request.buildId -cnotmatch '^[a-f0-9]{32}$' -or
+    $request.buildId -cne $BuildId -or $request.sequence -ne [int]($record.version.Split('.')[2])){throw 'Recovery reservation/request identity mismatch.'}
+  $protected=[ordered]@{}
+  foreach($path in @($VersionState,$record.request,$record.prepared,$record.msix,(Join-Path $Output 'result.json'),
+    $RecoveryMsix,$ChannelRecoveryMsix,$ProfileSampleManifest,$CriticalFileManifest)){
+    if(!$path){continue}
+    Assert-NoReparseAncestor $path
+    if(Test-Path -LiteralPath $path){$protected[[IO.Path]::GetFullPath($path)]=Hash $path}
+    else {$protected[[IO.Path]::GetFullPath($path)]='ABSENT'}
+  }
+  return ([ordered]@{run=$Output;source=$Source;commit=$Revision;version=$record.version;buildId=$request.buildId;
+    repository=$Repository;cache=$BuildCache;protected=$protected} | ConvertTo-Json -Compress -Depth 8)
+}
+function Assert-NoResidueRegistration([string]$Source) {
+  foreach($line in (Get-SourceGit $Repository @('worktree','list','--porcelain')) -split "`n"){
+    if(!$line.StartsWith('worktree ')){continue}
+    $path=[IO.Path]::GetFullPath($line.Substring(9)).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    $stage=[IO.Path]::GetFullPath($Source).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    if($path -ieq $stage -or $path.StartsWith($stage+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase) -or
+      $stage.StartsWith($path+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Conflicting residue worktree registration.'}
+  }
+}
+function Restore-OwnedSourceResidue($Owner,[string]$Source,[string]$Revision) {
+  # This is a transition of the existing source owner, not a dependency cache.
+  Assert-SourceOwner $Owner $Source $Revision
+  if(!$script:sourceLease){throw 'Recovery requires the exclusive source lease.'}
+  $leases=@()
+  try {
+    foreach($path in @((Join-Path $Output '.residue-recovery.lock'),(Join-Path $BuildCache '.desktop-build.lock'))){
+      Assert-NoReparseAncestor $path
+      $lease=[IO.File]::Open($path,'OpenOrCreate','ReadWrite','None');$leases+=,$lease
+      $lease.Lock(0,1)
+    }
+    Assert-StageInactive $Owner
+    $binding=Assert-ResidueBindings $Source $Revision
+    $preserved=Join-Path $Output 'source-residue/source'
+    Assert-NoReparseAncestor $preserved
+    $intent=$null;$complete=$false
+    foreach($line in [IO.File]::ReadLines($script:statusLog)){
+      if($line -notmatch '"type"\s*:\s*"source-residue-recovery"'){continue}
+      try{$event=$line | ConvertFrom-Json -ErrorAction Stop}catch{continue}
+      if($event.phase -ceq 'intent'){
+        if($intent){throw 'Multiple residue intents; preserve and inspect.'}
+        $intent=$event
+      } elseif($event.phase -ceq 'preserved'){
+        if(!$intent -or $complete -or $event.binding -cne $intent.binding -or $event.inventory -cne $intent.inventory -or
+          $event.destination -cne $intent.destination){throw 'Conflicting residue completion.'}
+        $complete=$true
+      }
+      else {throw 'Unknown residue recovery event.'}
+    }
+    if($intent){
+      if($intent.binding -cne $binding -or $intent.destination -cne $preserved){throw 'Recovery inputs changed.'}
+      $bytes=[IO.File]::ReadAllBytes($script:statusLog)
+      if($bytes.Length -lt $intent.logLength){throw 'Historical checkpoints truncated.'}
+      $prefix=[byte[]]::new($intent.logLength);[Array]::Copy($bytes,$prefix,$prefix.Length)
+      if([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($prefix)) -cne $intent.logSha256){throw 'Historical checkpoints changed.'}
+    } else {
+      if(Test-Path -LiteralPath (Split-Path -Parent $preserved)){throw 'Unowned preservation directory.'}
+      Assert-NoResidueRegistration $Source
+      $inventory=Get-ResidueInventory $Source
+      $bytes=[IO.File]::ReadAllBytes($script:statusLog)
+      $intent=[pscustomobject]@{type='source-residue-recovery';phase='intent';at=[DateTime]::UtcNow.ToString('o');
+        binding=$binding;destination=$preserved;inventory=$inventory;logLength=$bytes.Length;
+        logSha256=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))}
+      Write-RunEvent $intent
+    }
+    if(Test-Path -LiteralPath $preserved){
+      if((Get-ResidueInventory $preserved) -cne $intent.inventory){throw 'Preserved residue changed.'}
+      if(Test-Path -LiteralPath $Source){
+        $null=Assert-RegisteredSource $Source $Revision
+        if(Get-SourceGit $Source @('status','--porcelain','--untracked-files=all')){throw 'Reconstructed source is dirty.'}
+      } elseif(Get-SourceRegistration $Source $Revision){throw 'Conflicting recovery registration.'}
+    } else {
+      if($complete){throw 'Recovery state conflicts.'}
+      Assert-NoResidueRegistration $Source
+      if((Get-ResidueInventory $Source) -cne $intent.inventory){throw 'Residue changed after intent.'}
+      if($binding -cne (Assert-ResidueBindings $Source $Revision)){throw 'Protected inputs changed.'}
+      Assert-StageInactive $Owner
+      $null=[IO.Directory]::CreateDirectory((Split-Path -Parent $preserved))
+      # Same-run directory rename preserves every generated byte; never delete.
+      [IO.Directory]::Move($Source,$preserved)
+    }
+    if(!$complete){Write-RunEvent @{type='source-residue-recovery';phase='preserved';at=[DateTime]::UtcNow.ToString('o');
+      binding=$binding;destination=$preserved;inventory=$intent.inventory;dependencies='NOT_REUSED_UNVERIFIED'}}
+  } finally {foreach($lease in $leases){$lease.Dispose()}}
+}
 function Initialize-LocalBuildSource([string]$Source,[string]$Revision) {
   if($WhatIfPreference){return}
   if($Revision -cnotmatch '^[a-f0-9]{40}$'){throw 'Exact source SHA required.'}
@@ -529,6 +657,10 @@ function Initialize-LocalBuildSource([string]$Source,[string]$Revision) {
     elseif((Test-Path -LiteralPath $Source) -or (Get-Item -LiteralPath $script:statusLog).Length -gt 0 -or
       @(Get-ChildItem -LiteralPath $Output -Force | Where-Object {$_.Name -notin @('.source.lock','checkpoints.jsonl')}).Count){
       throw 'Occupied run/source has no workflow ownership; preserve it.'
+    }
+    if($previous -and ((Test-Path -LiteralPath (Join-Path $Output 'source-residue')) -or
+      ((Test-Path -LiteralPath $Source) -and !(Test-Path -LiteralPath (Join-Path $Source '.git'))))){
+      Restore-OwnedSourceResidue $previous $Source $Revision
     }
     if(Test-Path -LiteralPath $Source){
       $null=Assert-RegisteredSource $Source $Revision
