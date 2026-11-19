@@ -285,7 +285,12 @@ path=root/'hermes-agent/scripts/releases/channel1.py'
 spec=importlib.util.spec_from_file_location('oss_channel1_owner',path);owner=importlib.util.module_from_spec(spec);spec.loader.exec_module(owner)
 artifact=Path(artifact);output=Path(output)
 if mode=='msix':result=owner.stage_oss(artifact,metadata,output,release_bytes=True)
-elif mode=='retention':result=owner.retire_oss_previous(artifact,metadata,output,None if superseded=='-' else superseded)
+elif mode=='retention':
+ try:result=owner.retire_oss_previous(artifact,metadata,output,None if superseded=='-' else superseded)
+ except ValueError as error:
+  if str(error)=='Verified active Setup qualification required before retention':
+   print(json.dumps({'state':'OSS_RETENTION_UNQUALIFIED'},separators=(',',':')));raise SystemExit(2)
+  raise
 else:
  if not artifact.is_file() or artifact.is_symlink() or not 0<artifact.stat().st_size<=2097152:raise ValueError('Small signed Setup required')
  with artifact.open('rb') as stream:sha=hashlib.file_digest(stream,'sha256').hexdigest()
@@ -303,7 +308,10 @@ print(json.dumps(result,separators=(',',':')))
   Report-Status ('Scoped WSL OSS operation: '+$Mode+'; no active pointer write')
   $previousSetup=if($Mode -ceq 'setup' -and $OssPreviousSetupSha256){$OssPreviousSetupSha256}else{'-'}
   $body=& $wsl -d $OssWslDistro --exec ("$OssRuntimeRoot/.venv/bin/python") -B -c $entry $OssRuntimeRoot $Mode $linuxArtifact $linuxMetadata $linuxResult (Get-OssSourceHash $core) (Get-OssSourceHash $publisher) (Get-OssSourceHash $protocol) $previousSetup $linuxSuperseded
-  if($LASTEXITCODE -ne 0){throw 'Scoped WSL OSS byte operation failed; no credential or authority fallback'}
+  if($LASTEXITCODE -ne 0){
+    if($Mode -ceq 'retention' -and ($body -join '') -ceq '{"state":"OSS_RETENTION_UNQUALIFIED"}'){throw 'OSS_RETENTION_UNQUALIFIED'}
+    throw 'Scoped WSL OSS byte operation failed; no credential or authority fallback'
+  }
   $result=($body -join "`n")|ConvertFrom-Json
   if($Mode -ceq 'retention'){
     if($result.result -cne 'ONE_ACTIVE_MSIX_AND_SETUP'){throw 'OSS retention is incomplete'}

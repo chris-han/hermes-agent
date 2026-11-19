@@ -15,7 +15,7 @@ $messages=[Collections.Generic.List[string]]::new();$rejected=$false
 try {
  Invoke-OssByteOperation 'retention' (Join-Path $UnqualifiedRun 'SemantierAgent.msix') (Join-Path $UnqualifiedRun 'channel1-metadata.json') $ResultPath 2>&1 | ForEach-Object {$messages.Add([string]$_)}
 }catch{$rejected=$true;$messages.Add($_.Exception.Message)}
-if(!$rejected -or (Test-Path $ResultPath) -or ($messages -join "`n") -notmatch 'Verified active Setup qualification required before retention'){
+if(!$rejected -or (Test-Path $ResultPath) -or ($messages -join "`n") -notmatch 'OSS_RETENTION_UNQUALIFIED'){
  throw ('Expected cross-owner qualification denial not observed: '+($messages -join "`n"))
 }
 Write-Output 'PASS: native/WSL retention mode and pinned source wiring; unqualified run refused before cloud writes or transfers'
