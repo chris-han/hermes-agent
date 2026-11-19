@@ -1,4 +1,4 @@
-param([string]$Operator=(Join-Path $PSScriptRoot '../deploy-ecs.ps1'),[string]$OuterOperator='')
+param([string]$Operator=(Join-Path $PSScriptRoot '../deploy-ecs.ps1'),[string]$OuterOperator='',[string]$ForeignOwnerFixtureFile='')
 $ErrorActionPreference='Stop'
 $ResumeSigned=$false
 $RetireRollbackBuild='';$RetireRollbackSha256='';$ChannelRecoveryMsix=''
@@ -38,6 +38,7 @@ New-Item -ItemType Directory -Path $Repository,$BuildCache | Out-Null
 try {
   [IO.File]::WriteAllText((Join-Path $Repository '.gitignore'),"node_modules/`napps/`n")
   [IO.File]::WriteAllText((Join-Path $Repository 'app.txt'),'pinned')
+  [IO.File]::WriteAllText((Join-Path $Repository 'package-lock.json'),'{"packages":{"node_modules/fixture-workspace":{"link":true,"resolved":"apps/workspace"}}}')
   [IO.File]::WriteAllText((Join-Path $Repository 'MODEL-NOTICE.txt'),"LF notice`n")
   Run 'git.exe' @('-C',$Repository,'init','-q')
   Run 'git.exe' @('-C',$Repository,'add','.')
@@ -208,15 +209,62 @@ try {
   if($native){
     New-ResidueFixture 'reject-foreign-acl'
     $path=Join-Path $BuildSource 'node_modules/generated'
-    $acl=Get-Acl -LiteralPath $path
-    $foreign=Get-Acl -LiteralPath $path
-    $foreign.SetOwner([Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'))
-    # This native negative requires a host permitted to set a foreign owner;
-    # failure to establish that fixture is a test failure, never a claimed PASS.
-    Set-Acl -LiteralPath $path -AclObject $foreign
-    try {Reject {Initialize-LocalBuildSource $BuildSource $Commit} 'Foreign filesystem owner accepted'}
-    finally {Set-Acl -LiteralPath $path -AclObject $acl}
+    if($ForeignOwnerFixtureFile){
+      # A same-volume rename retains the real foreign security descriptor.
+      # Preparation alone is elevated; restore the disposable file in finally.
+      Assert-NoReparseAncestor $ForeignOwnerFixtureFile
+      Require (Test-Path -LiteralPath $ForeignOwnerFixtureFile -PathType Leaf) 'Foreign fixture file missing'
+      $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+      $foreignSid=(Get-Acl -LiteralPath $ForeignOwnerFixtureFile).GetOwner([Security.Principal.SecurityIdentifier]).Value
+      Require ($foreignSid -cne $sid) 'Prepared ACL fixture is not foreign owned'
+      $fixtureHash=Hash $ForeignOwnerFixtureFile
+      Remove-Item -LiteralPath $path
+      [IO.File]::Move($ForeignOwnerFixtureFile,$path)
+      Require ((Get-Acl -LiteralPath $path).GetOwner([Security.Principal.SecurityIdentifier]).Value -ceq $foreignSid) 'Rename lost foreign owner'
+      $reason=''
+      try {Initialize-LocalBuildSource $BuildSource $Commit}catch{$reason=$_.Exception.Message}
+      finally {[IO.File]::Move($path,$ForeignOwnerFixtureFile)}
+      Require ($reason -ceq 'Foreign residue ownership.') ('Native ACL guard not exercised: '+$reason)
+      Require ((Hash $ForeignOwnerFixtureFile) -ceq $fixtureHash) 'Foreign fixture bytes changed'
+      Require ((Get-Acl -LiteralPath $ForeignOwnerFixtureFile).GetOwner([Security.Principal.SecurityIdentifier]).Value -ceq $foreignSid) 'Foreign fixture owner changed'
+    } else {
+      $acl=Get-Acl -LiteralPath $path
+      $foreign=Get-Acl -LiteralPath $path
+      $foreign.SetOwner([Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'))
+      # Failure to establish the real foreign owner remains a test failure.
+      Set-Acl -LiteralPath $path -AclObject $foreign
+      try {Reject {Initialize-LocalBuildSource $BuildSource $Commit} 'Foreign filesystem owner accepted'}
+      finally {Set-Acl -LiteralPath $path -AclObject $acl}
+    }
+    Write-Output 'RECOVERY_REFUSED: foreign-filesystem-owner (native ACL)'
     $script:sourceLease.Dispose();$script:sourceLease=$null;$script:sourceOwner=$null
+  }
+  if($native){
+    New-ResidueFixture 'pinned-junction'
+    $target=Join-Path $BuildSource 'apps/workspace'
+    $null=[IO.Directory]::CreateDirectory($target)
+    New-Item -ItemType Junction -Path (Join-Path $BuildSource 'node_modules/fixture-workspace') -Target $target | Out-Null
+    [IO.Directory]::Delete($target);[IO.Directory]::Delete((Split-Path -Parent $target))
+    $inventory=Get-ResidueInventory $BuildSource
+    Initialize-LocalBuildSource $BuildSource $Commit
+    $preserved=Join-Path $Output 'source-residue/source'
+    Require ((Get-ResidueInventory $preserved) -ceq $inventory) 'Pinned junction inventory changed during recovery'
+    Require ((Get-Item -LiteralPath (Join-Path $preserved 'node_modules/fixture-workspace') -Force).Target -ceq $target) 'Preserved junction target changed'
+    Require (!(Test-Path -LiteralPath (Join-Path $BuildSource 'node_modules'))) 'Pinned junction dependencies reused'
+    Require ((Remove-OwnedBuildSource) -ceq 'REMOVED') 'Pinned junction stage cleanup failed'
+    $script:sourceLease.Dispose();$script:sourceLease=$null;$script:sourceOwner=$null
+    foreach($case in @('wrong-target','unpinned')){
+      New-ResidueFixture ('reject-workspace-'+$case)
+      $name=if($case -eq 'wrong-target'){'fixture-workspace'}else{'unknown-workspace'}
+      $target=if($case -eq 'wrong-target'){$BuildCache}else{Join-Path $BuildSource 'apps/workspace'}
+      if($case -eq 'unpinned'){$null=[IO.Directory]::CreateDirectory($target)}
+      New-Item -ItemType Junction -Path (Join-Path $BuildSource ('node_modules/'+$name)) -Target $target | Out-Null
+      if($case -eq 'unpinned'){[IO.Directory]::Delete($target);[IO.Directory]::Delete((Split-Path -Parent $target))}
+      Reject {Initialize-LocalBuildSource $BuildSource $Commit} ('Unsafe workspace junction accepted: '+$case)
+      Require (!(Test-Path -LiteralPath (Join-Path $Output 'source-residue'))) 'Rejected workspace junction moved'
+      $script:sourceLease.Dispose();$script:sourceLease=$null;$script:sourceOwner=$null
+    }
+    Write-Output 'PINNED_WORKSPACE_JUNCTION: recovery/integrity PASS; wrong-target/unpinned REFUSED'
   }
   $writeEvent=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Write-RunEvent'},$true)
   foreach($phase in @('intent','preserved-before','preserved')){

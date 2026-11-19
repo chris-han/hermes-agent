@@ -681,6 +681,23 @@ function Assert-RegisteredSource([string]$Source,[string]$Revision) {
   if(!(Get-SourceRegistration $Source $Revision)){throw 'Exact detached stage registration is missing.'}
   return $common
 }
+function Get-PinnedResidueJunction([string]$Root,$Item) {
+  # npm workspace junctions may survive Git retirement. Never follow them.
+  if(!$IsWindows -or !$Item.PSIsContainer -or $Item.LinkType -cne 'Junction') {throw 'Linked residue is not recoverable.'}
+  $relative=[IO.Path]::GetRelativePath($Root,$Item.FullName).Replace('\','/')
+  if(!$relative.StartsWith('node_modules/',[StringComparison]::Ordinal)){throw 'Linked residue is not recoverable.'}
+  $lock=Get-SourceGit $Repository @('show',($Commit+':package-lock.json')) | ConvertFrom-Json -AsHashtable
+  $pin=$lock.packages[$relative]
+  if(!$pin -or !$pin.ContainsKey('link') -or !$pin.link -or !$pin.ContainsKey('resolved') -or
+     [IO.Path]::IsPathRooted($pin.resolved)){throw 'Unpinned residue junction.'}
+  $source=[IO.Path]::GetFullPath($BuildSource).TrimEnd('\')
+  $target=[IO.Path]::GetFullPath((Join-Path $source $pin.resolved))
+  if(!$target.StartsWith($source+'\',[StringComparison]::OrdinalIgnoreCase) -or
+     $target.StartsWith($source+'\node_modules\',[StringComparison]::OrdinalIgnoreCase) -or
+     @($Item.Target).Count -ne 1 -or [string]$Item.Target -ine $target){throw 'Residue junction escapes its pinned workspace.'}
+  Assert-NoReparseAncestor $target
+  return $target
+}
 function Get-ResidueInventory([string]$Root) {
   Assert-NoReparseAncestor $Root
   $top=@(Get-ChildItem -LiteralPath $Root -Force)
@@ -691,12 +708,14 @@ function Get-ResidueInventory([string]$Root) {
   $entries=[Collections.Generic.List[string]]::new()
   while($pending.Count){
     $path=$pending.Pop();$item=Get-Item -LiteralPath $path -Force
-    if(($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $item.LinkType){throw 'Linked residue is not recoverable.'}
+    $linked=($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $item.LinkType
+    $target=if($linked){Get-PinnedResidueJunction $Root $item}else{''}
     if($IsWindows){
       $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
       if((Get-Acl -LiteralPath $path).GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $sid){throw 'Foreign residue ownership.'}
     }
     $relative=[IO.Path]::GetRelativePath($Root,$path)
+    if($linked){$entries.Add('J '+$relative+' '+$target);continue}
     if($item.PSIsContainer){
       $entries.Add('D '+$relative)
       foreach($child in Get-ChildItem -LiteralPath $path -Force){$pending.Push($child.FullName)}
