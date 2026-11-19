@@ -61,6 +61,13 @@ def test_setup_resolves_only_cloud_metadata_and_exact_oss_package(tmp_path):
         (case/'stamp.json').write_bytes(encode({'dirty': False, 'commit': m['request']['commit'], 'channelBuild': m['request']}))
         for name, body in [('channel', encode(c)), ('manifest', manifest_body), ('graph', graph_body)]:
             (case/(name+'.json')).write_bytes(body)
+    staged = tmp_path/'staged';staged.mkdir()
+    for name in ('manifest.json','graph.json'):
+        shutil.copyfile(tmp_path/'0'/name,staged/name)
+    baseline=copy.deepcopy(channel)
+    baseline['nativeHead'].update(buildId='f'*32,sequence=130,manifestKey='releases/channel-builds/'+'f'*32+'/build.json',sha256='f'*64)
+    baseline['nextSequence']=131
+    (staged/'channel.json').write_text(json.dumps(baseline))
     harness = tmp_path/'harness.cs'
     harness.write_text(r'''
 public static class ReleaseMetadataTests {
@@ -89,7 +96,21 @@ public static class ReleaseMetadataTests {
     catch(System.FormatException){refused=true;}
    if(refused!=(i!=0))throw new System.Exception("Wrong admission for fixture "+i);
   }
-  return "PASS:1 exact release,8 negative controls";
+  string candidateRoot=System.IO.Path.Combine(directory,"staged");
+  System.Func<string,byte[]> nominatedRead=url=>{
+   string name=url==ReleaseSelection.MetadataBase+"/"+ReleaseSelection.ChannelKey?"channel":
+    url==ReleaseSelection.MetadataBase+"/releases/channel-builds/"+new string('a',32)+"/build.json"?"manifest":
+    url==ReleaseSelection.MetadataBase+"/releases/channel-builds/"+new string('a',32)+"/native-graph.json"?"graph":null;
+   if(name==null)throw new System.Exception("Untrusted candidate URI");
+   return System.IO.File.ReadAllBytes(System.IO.Path.Combine(candidateRoot,name+".json"));
+  };
+  string pinned;using(var hash=System.Security.Cryptography.SHA256.Create())pinned=System.BitConverter.ToString(hash.ComputeHash(System.IO.File.ReadAllBytes(System.IO.Path.Combine(candidateRoot,"manifest.json")))).Replace("-","").ToLowerInvariant();
+  var selected=ReleaseSelection.Resolve(nominatedRead,new string('a',32),pinned,131);
+  if(selected.Version!="0.0.131.0" || selected.ManifestSha256!=pinned)throw new System.Exception("Wrong staged selection");
+  bool downgrade=false;try{ReleaseSelection.Resolve(nominatedRead,new string('a',32),pinned,130);}catch(System.IO.InvalidDataException){downgrade=true;}
+  bool changedPin=false;try{ReleaseSelection.Resolve(nominatedRead,new string('a',32),new string('f',64),131);}catch(System.IO.InvalidDataException){changedPin=true;}
+  if(!downgrade || !changedPin)throw new System.Exception("Untrusted staged selection accepted");
+  return "PASS:active and pinned staged release;10 negative controls";
  }
 }
 ''')
@@ -101,4 +122,4 @@ public static class ReleaseMetadataTests {
                              str(ROOT/'win-native-installer/ReleaseMetadata.cs'), str(harness), str(tmp_path)],
                             capture_output=True, text=True, timeout=40, check=False)
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == 'PASS:1 exact release,8 negative controls'
+    assert result.stdout.strip() == 'PASS:active and pinned staged release;10 negative controls'

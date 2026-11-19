@@ -4,7 +4,7 @@ internal sealed class ReleaseSelection {
   internal const string PackageBase="https://assets.semantier.cn";
   internal const string ChannelKey="releases/channels/semantier-acceptance.json";
   const string Identity="Semantier.Agent.Acceptance", Publisher="CN=Semantier Technology, O=Semantier Technology";
-  internal string BuildId,Commit,Version,Sha256,NativeDigest,ManifestSha256;
+  internal string BuildId,Commit,Version,Sha256,NativeDigest,ManifestSha256,ChannelSha256;
   internal long Size;
   internal System.Uri Uri;
   static void Require(bool value,string message){if(!value)throw new System.IO.InvalidDataException(message);}
@@ -30,16 +30,21 @@ internal sealed class ReleaseSelection {
     var stamp=Json(body);var request=Field(stamp,"channelBuild","object");
     Require(Field(stamp,"dirty","boolean").Value=="false" && Text(stamp,"commit")==Commit && Text(request,"commit")==Commit && Text(request,"buildId")==BuildId && Text(request,"publicBase")==MetadataBase && Text(request,"windowsVersion")==Version,"Signed package source stamp mismatch.");
   }
-  internal static ReleaseSelection Resolve(System.Func<string,byte[]> read){
-    var channel=Json(read(MetadataBase+"/"+ChannelKey));
+  internal static ReleaseSelection Resolve(System.Func<string,byte[]> read,string candidateBuild=null,string candidateManifestHash=null,long candidateSequence=0){
+    byte[] channelBody=read(MetadataBase+"/"+ChannelKey);var channel=Json(channelBody);
     Require(Number(channel,"schema")==1 && Text(channel,"name")=="semantier-acceptance" && Text(channel,"repository")=="chris-han/hermes-agent" && Text(channel,"state")=="active" && Text(channel,"policy")=="stable-release","Unexpected release authority.");
     var channelIdentity=Field(channel,"identity","object");Require(Text(channelIdentity,"msixAppIdWithOrg")==Identity,"Unexpected channel identity.");
     var head=Field(channel,"nativeHead","object");
     string build=Text(head,"buildId"), manifestHash=Text(head,"sha256");
     Match(build,"[a-f0-9]{32}","build ID");Match(manifestHash,"[a-f0-9]{64}","manifest hash");
-    long sequence=Number(head,"sequence");Require(sequence>=131 && sequence<=65535 && Number(channel,"nextSequence")>sequence,"Invalid release sequence.");
+    long sequence=Number(head,"sequence");Require(sequence>0 && sequence<=65535 && Number(channel,"nextSequence")>sequence,"Invalid release sequence.");
+    Require(Text(head,"manifestKey")=="releases/channel-builds/"+build+"/build.json","Manifest outside current build.");
+    if(candidateBuild!=null){
+      Match(candidateBuild,"[a-f0-9]{32}","candidate build ID");Match(candidateManifestHash,"[a-f0-9]{64}","candidate manifest hash");
+      Require(candidateSequence>sequence && candidateSequence>=131 && candidateSequence<=65535,"Candidate must advance the current release.");
+      build=candidateBuild;manifestHash=candidateManifestHash;sequence=candidateSequence;
+    }else Require(candidateManifestHash==null && candidateSequence==0 && sequence>=131,"Invalid active OSS release.");
     string prefix="releases/channel-builds/"+build+"/",version="0.0."+sequence.ToString(System.Globalization.CultureInfo.InvariantCulture)+".0";
-    Require(Text(head,"manifestKey")==prefix+"build.json","Manifest outside selected build.");
     byte[] manifestBody=read(MetadataBase+"/"+prefix+"build.json");Require(Hash(manifestBody)==manifestHash,"Manifest SHA256 mismatch.");
     var manifest=Json(manifestBody);Require(Number(manifest,"schema")==2,"Expected native release manifest.");
     var request=Field(manifest,"request","object");string commit=Text(request,"commit");Match(commit,"[a-f0-9]{40}","source commit");
@@ -60,6 +65,6 @@ internal sealed class ReleaseSelection {
     Require(Text(row,"key")==key && Number(row,"size")==size && Text(row,"sha256")==sha && Text(row,"identity")==Identity && Text(row,"publisher")==Publisher && Text(row,"version")==version && Text(row,"arch")=="x64" && Text(row,"kind")=="main-package" && Array(row,"references").Length==0,"Native object binding mismatch.");
     string digest=Text(row,"nativeDigest");byte[] decoded=System.Convert.FromBase64String(digest);
     Require(decoded.Length==32 && System.Convert.ToBase64String(decoded)==digest,"Invalid native package digest.");
-    return new ReleaseSelection{BuildId=build,Commit=commit,Version=version,Sha256=sha,Size=size,NativeDigest=digest,ManifestSha256=manifestHash,Uri=new System.Uri(PackageBase+"/"+key)};
+    return new ReleaseSelection{BuildId=build,Commit=commit,Version=version,Sha256=sha,Size=size,NativeDigest=digest,ManifestSha256=manifestHash,ChannelSha256=Hash(channelBody),Uri=new System.Uri(PackageBase+"/"+key)};
   }
 }

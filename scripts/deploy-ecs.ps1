@@ -30,7 +30,7 @@
   Native SSH/SFTP prefer environment variable ALI_ECS_SSH_PASSWORD, then an explicit -CredentialsEnv,
   otherwise use your SSH key/agent or prompt for the ECS password. Secrets
   are never embedded in this script. The single-MSIX operator composes a small
-  stdlib metadata transaction; no second release controller, WSL, release database,
+  stdlib metadata transaction and scoped WSL OSS IO; no second controller or release database,
   split packages, bundles, ZIPs, or CH2/R2 operations.
   -BuildOnly with -Commit stops after the unsigned package build: no signing, install or publication.
   -SkipLocalInstall signs and publishes without touching the installed app/profile; local acceptance is explicitly skipped.
@@ -44,10 +44,11 @@
   -LocalSetup builds a signed semantier-setup-ch0.exe for the single adjacent MSIX; never uploads.
   -SetupOnly builds/reuses and publishes Setup in its own ecs-setup-* run.
   -UpdateSetup forces a new Setup build; neither mode builds or installs MSIX.
-  Routine MSIX releases require an already compatible Setup on ECS.
-  A signed Setup EXE downloads a single fixed MSIX over HTTP/3, with no
-  current-release manifest or catalog. Desktop checks use the canonical channel
-  record and its current immutable metadata. Existing Windows profile is preserved.
+  Routine MSIX releases require an already compatible signed Setup on OSS.
+  Signed Setup and Desktop read cloud.semantier.cn metadata and exact pinned
+  OSS bytes. -OssRuntimeRoot selects matching WSL source/credentials; native Git
+  stays on Windows. -OssSetupQualification authorizes one retained Setup-driven
+  full candidate download before pointer activation; no native update is implied.
   A local result.json is evidence of this invocation, not a publication journal.
   Default reruns resume the latest matching incomplete checkpointed run. Use
   -Output to select a run explicitly, or -NewRun to start fresh. Successful
@@ -64,7 +65,10 @@ param(
   [string]$SshTarget = 'root@123.57.184.194',
   [string]$IdentityFile = '',
   [string]$RemoteRoot = '/opt/semantier-client-distribution/channel1-storage-root/releases',
-  [string]$PublicBase = 'https://download.semantier.cn',
+  [string]$PublicBase = 'https://cloud.semantier.cn',
+  [string]$OssRuntimeRoot = '/home/chris/repo/semantier-runtime',
+  [string]$OssWslDistro = 'Ubuntu-22.04',
+  [switch]$OssSetupQualification,
   [string]$UserProfile = "$env:LOCALAPPDATA\hermes-semantier-acceptance",
   [string]$Output = ('D:\repo\deliverables\work\ecs-deploy-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0,8)),
   [string]$SetupExe = 'D:\repo\deliverables\cache\ecs-setup\semantier-setup-ch1.exe',
@@ -109,6 +113,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+if($OssSetupQualification -and $VerifyPublicDownload){throw 'The one full OSS transfer is owned by Setup; standalone full download is forbidden.'}
 $identity = 'Semantier.Agent.Acceptance'
 $publisher = 'CN=Semantier Technology, O=Semantier Technology'
 $utf8 = New-Object Text.UTF8Encoding($false)
@@ -2088,24 +2093,11 @@ function Publish-IndependentSetup {
     Report-Status 'Independent Setup release; application version, MSIX and user profile remain unchanged.'
     $setup=Prepare-IndependentSetup
     if($LocalOnly){$receipt.result='SETUP_LOCAL_VERIFIED';Complete-Checkpoint 'finished';return}
-    $remoteSetup="$RemoteRoot/releases/installers/semantier-setup-ch1.exe"
-    $contract="${PublicBase}/releases/channels/semantier-acceptance.json|cloud-channel-oss-native-v3"
-    if(!$script:checkpoints.ContainsKey('published')){
-      if(!$receipt.Contains('remoteStage')){$receipt.remoteStage=$RemoteRoot.Substring(0,$RemoteRoot.LastIndexOf('/'))+'/.semantier-setup-stage-'+[Guid]::NewGuid().ToString('N')}
-      $stage=[string]$receipt.remoteStage
-      $parent=$RemoteRoot.Substring(0,$RemoteRoot.LastIndexOf('/'))
-      if($stage -cnotmatch ('^'+[Regex]::Escape($parent)+'/\.semantier-setup-stage-[a-f0-9]{32}$')){throw 'Invalid Setup staging path.'}
-      Complete-Checkpoint 'setup-stage'
-      $null=Ssh "set -eu; test ! -L '$stage'; mkdir -p '$stage'; chmod 700 '$stage'"
-      Upload $setup "$stage/semantier-setup-ch1.exe"
-      $marker=Join-Path $Output 'setup.contract.txt'
-      [IO.File]::WriteAllText($marker,$contract,$utf8)
-      Upload $marker "$stage/setup.contract.txt"
-      $receipt.publication=Ssh "set -eu; test -s '$stage/semantier-setup-ch1.exe'; test ! -L '$remoteSetup'; mkdir -p '$RemoteRoot/releases/installers'; mv -f '$stage/semantier-setup-ch1.exe' '$remoteSetup'; mv -f '$stage/setup.contract.txt' '$remoteSetup.contract.txt'; chmod 644 '$remoteSetup' '$remoteSetup.contract.txt'; rmdir '$stage'; printf SETUP_ONLY_PUBLISH_PASS"
-      Complete-Checkpoint 'published'
-    }
-    $state=Ssh "set -eu; test -s '$remoteSetup'; cat '$remoteSetup.contract.txt'"
-    if($state.Trim() -cne $contract){throw 'Published Setup contract verification failed.'}
+    . (Join-Path $PSScriptRoot 'deploy-ecs-channel1.ps1')
+    $receipt.publication=Invoke-OssByteOperation 'setup' $setup '' (Join-Path $Output 'oss-setup.json')
+    $receipt.setupObject='https://assets.semantier.cn/releases/installers/semantier-setup-ch1.exe'
+    # Preserve the old ECS Setup until public entrypoints have cut over.
+    Complete-Checkpoint 'published'
     $receipt.result='SETUP_PUBLISHED_VERIFIED'
     Complete-Checkpoint 'finished'
   } catch {
@@ -2208,7 +2200,7 @@ if($Commit){
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'Run on native Windows.' }
 if ($SshTarget -cnotmatch '^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+$' -or
     $RemoteRoot -cnotmatch '^/opt/[A-Za-z0-9_/-]+/releases$' -or $RemoteRoot.Contains('/../') -or
-    $PublicBase -cne 'https://download.semantier.cn' -or $BuildId -cnotmatch '^[a-f0-9]{32}$' -or
+    $PublicBase -cne 'https://cloud.semantier.cn' -or $BuildId -cnotmatch '^[a-f0-9]{32}$' -or
     $SourceCommit -cnotmatch '^[a-f0-9]{40}$' -or $ExpectedInputSha256 -cnotmatch '^[a-f0-9]{64}$' -or
     $Version -cnotmatch '^\d+\.\d+\.\d+\.\d+$' -or $Thumbprint -cnotmatch '^[A-F0-9]{40}$') {
   throw 'Invalid release/SSH/path configuration. This script publishes CH1 only.'
@@ -2280,7 +2272,8 @@ $bindingFields=[ordered]@{mode=$BuildMode;skipLocalInstall=[bool]$SkipLocalInsta
   nativePublishOnly=[bool]$NativePublishOnly;
   nativeUserData=$NativeUserData;recoveryMsix=$RecoveryMsix;profileSampleManifest=$ProfileSampleManifest;criticalFileManifest=$CriticalFileManifest;
   signer=$Thumbprint;target=$SshTarget;root=$RemoteRoot;origin=$PublicBase;profile=$UserProfile;
-  setupContract='cloud-channel-oss-native-v3';channelContract='current-only-channel-metadata-v1'}
+  setupContract='cloud-channel-oss-native-v3';channelContract='current-only-channel-metadata-v1';
+  ossRuntimeRoot=$OssRuntimeRoot;ossWslDistro=$OssWslDistro;ossSetupQualification=[bool]$OssSetupQualification}
 if($ChannelRecoveryMsix){$bindingFields.channelRecoveryMsix=$ChannelRecoveryMsix}
 $script:runBinding=$bindingFields | ConvertTo-Json -Compress
 if (!$Commit -and !$NewRun -and !$PSBoundParameters.ContainsKey('Output')) {
@@ -2370,14 +2363,13 @@ try {
   Complete-Checkpoint 'signed'
 
   # Setup has its own release run; routine MSIX publication never builds it.
-  $remoteSetup="$RemoteRoot/releases/installers/semantier-setup-ch1.exe"
-  $setupContractVersion="${PublicBase}/releases/channels/semantier-acceptance.json|cloud-channel-oss-native-v3"
+  . (Join-Path $PSScriptRoot 'deploy-ecs-channel1.ps1')
   if(!$LocalOnly -and $BuildMode -eq 'Prod') {
-    $state=Ssh "if test -s '$remoteSetup' && test -f '$remoteSetup.contract.txt'; then cat '$remoteSetup.contract.txt'; else printf MISSING_OR_UNVERIFIED; fi"
-    if($state.Trim() -cne $setupContractVersion){throw 'Compatible Setup is missing or unverified. Run -SetupOnly separately, then resume this MSIX run.'}
+    Require-Signature $SetupExe
+    $receipt.setupTransport=Test-OssSetupTransport $SetupExe
   }
-  $receipt.setupExe=$remoteSetup
-  $receipt.setupAction='REUSE_INDEPENDENT_ECS_SETUP'
+  $receipt.setupExe=$SetupExe
+  $receipt.setupAction='REUSE_INDEPENDENT_OSS_SETUP'
   # Stop only executables inside this registered package before copying its
   # existing profile. The acceptance app uses isolated state and cannot alter it.
   if($SkipLocalInstall) {
@@ -2523,7 +2515,7 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output);let app;const err
   }
 
   . (Join-Path $PSScriptRoot 'deploy-ecs-channel1.ps1')
-  # Stable Setup/MSIX stay compatible; the channel commits a complete immutable closure last.
+  # OSS bytes are staged separately; the channel commits a complete immutable closure last.
   $remoteMsix="$RemoteRoot/releases/SemantierAgent.msix"
   $remoteProof=Get-Channel1ProofCommand -Root $RemoteRoot -PackageSha256 $hash -Build $BuildId
   $posixParent=$RemoteRoot.Substring(0,$RemoteRoot.LastIndexOf('/'))
@@ -2537,7 +2529,7 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output);let app;const err
   $msixSize=(Get-Item -LiteralPath $signed).Length
   # Compute the POSIX parent in PowerShell without Windows Split-Path (which uses backslashes).
   Report-Status 'Checking retained references and bounded ECS capacity recovery.'
-  $receipt.capacityRecovery=Get-EcsCapacityRecovery -Stage $stage -Size $msixSize
+  $receipt.capacityRecovery=Get-EcsCapacityRecovery -Stage $stage -Size $(if($OssSetupQualification){4MB}else{$msixSize})
   Save-Json $receipt (Join-Path $Output 'result.json')
   if($receipt.capacityRecovery.result -cne 'CAPACITY_READY'){
     $receipt.result='BLOCKED_WITH_EXACT_CAUSE'
@@ -2555,18 +2547,18 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output);let app;const err
   }
   $null=Ssh $remoteProof
   if($NativeUpdateFrom){
-    $receipt.result='PUBLISHED_READY_FOR_USER_UPDATE'
+    $receipt.result='OSS_PUBLISHED_SETUP_VERIFIED_NATIVE_NOT_RUN'
     $receipt.localAcceptance='NOT_RUN_BEFORE_PUBLICATION'
     Save-Json $receipt (Join-Path $Output 'result.json')
     $metadata=Get-Content -LiteralPath (Join-Path $Output 'channel1-metadata.json') -Raw | ConvertFrom-Json
     $receipt.nativePublicAfterPointer=Test-NativePublic $metadata.manifest $signed -Active
     if((Hash $Msix) -cne $(if($ResumeSigned){$script:resumeInputSha256}else{$ExpectedInputSha256}) -or (Hash $signed) -cne $hash){throw 'Local package changed during publication.'}
     $receipt.publicationVerification='PASS'
-    $receipt.h3='PUBLIC_H3_RANGE_PASS'
-    $receipt.publicReadback='H2/H3 Range bytes match signed package; complete ECS stable/immutable disk SHA256 verified; no full public download'
+    $receipt.h3='CLOUD_METADATA_H2_H3_PASS_OSS_HTTPS_RANGE_PASS'
+    $receipt.publicReadback='OSS bounded Range bytes and retained single Setup full download match signed package; cloud metadata closure verified'
     $receipt.nativeAcceptance='NOT_RUN_OWNER_MANUAL'
-    $receipt.publicationStage='PUBLISHED_REMOTE_VERIFIED_CLIENT_MANUAL'
-    $receipt.cleanup='RECOVERY_AND_121_ARTIFACTS_RETAINED'
+    $receipt.publicationStage='OSS_PUBLISHED_SETUP_VERIFIED_NATIVE_NOT_RUN'
+    $receipt.cleanup='RECOVERY_RETAINED_PENDING_ENTRYPOINT_CUTOVER_AND_LEGACY_HOST_RETIREMENT'
     $receipt.installedVersion=(Get-AppxPackage -Name $identity).Version.ToString()
     Complete-Checkpoint 'finished'
     return
@@ -2601,7 +2593,7 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output);let app;const err
 const {chromium}=require(process.argv[2]+'/@playwright/test');
 const fs=require('node:fs');
 (async()=>{
-  const expected='https://download.semantier.cn/releases/installers/semantier-setup-ch1.exe';
+  const expected='https://assets.semantier.cn/releases/installers/semantier-setup-ch1.exe';
   const browser=await chromium.launch({headless:true});
   const observations=[];
   try {
@@ -2677,7 +2669,7 @@ const fs=require('node:fs');
   Save-Json $receipt (Join-Path $Output 'result.json')
   Report-Status ('Finished: '+$receipt.result)
   [IO.File]::WriteAllText((Join-Path $Output 'release-note.md'),
-    "Result: $($receipt.result)`nVersion: $Version`nSource: $SourceCommit`nSigned MSIX: $($receipt.signedMsix)`nSHA-256: $($receipt.sha256)`nFixed public MSIX: $PublicBase/releases/SemantierAgent.msix`nFixed Setup: $PublicBase/releases/installers/semantier-setup-ch1.exe`nLocal acceptance: $($receipt.localAcceptance)`nPublication: $($receipt.publication)`nH3: $($receipt.h3)`nPublic readback: $($receipt.publicReadback)`nLanding cutover: $($receipt.landingCutover)`nCleanup: $($receipt.cleanup)`nCH2: unchanged`n",$utf8)
+    "Result: $($receipt.result)`nVersion: $Version`nSource: $SourceCommit`nSigned MSIX: $($receipt.signedMsix)`nSHA-256: $($receipt.sha256)`nPublic MSIX: https://assets.semantier.cn/releases/channel-builds/$BuildId/SemantierAgent.msix`nFixed Setup: https://assets.semantier.cn/releases/installers/semantier-setup-ch1.exe`nLocal acceptance: $($receipt.localAcceptance)`nPublication: $($receipt.publication)`nH3: $($receipt.h3)`nPublic readback: $($receipt.publicReadback)`nLanding cutover: $($receipt.landingCutover)`nCleanup: $($receipt.cleanup)`nCH2: unchanged`n",$utf8)
   Write-Host "Result and evidence: $Output"
   $receipt | ConvertTo-Json -Depth 20 -Compress
 }

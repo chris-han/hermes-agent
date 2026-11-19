@@ -51,7 +51,7 @@ function Test-NativeChannelRecovery($Remote,[string]$Path) {
 }
 function Test-NativeReleasePreflight {
   if($RemoteRoot -cnotmatch '^/opt/[A-Za-z0-9_/-]+/releases$' -or $RemoteRoot.Contains('/../') -or
-    $SshTarget -cnotmatch '^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+$' -or $PublicBase -cne 'https://download.semantier.cn') {throw 'Invalid native release destination'}
+    $SshTarget -cnotmatch '^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+$' -or $PublicBase -cne 'https://cloud.semantier.cn') {throw 'Invalid native release destination'}
   # Refuse prompts: existing process credentials or noninteractive SSH must work.
   if(!(Get-EcsSshPassword $CredentialsEnv)){$script:sshOptions+=@('-o','BatchMode=yes')}
   $package=@(Get-AppxPackage -Name $identity)
@@ -106,7 +106,7 @@ print(json.dumps({'pointerSha256':expected,'record':r,'manifest':manifest,'packa
   $remote=Ssh "printf '%s' '$encoded' | base64 -d | python3 - '$RemoteRoot' '$ExpectedChannelSha256' '$identity'"
   $remote=$remote | ConvertFrom-Json
   $channelRecovery=Test-NativeChannelRecovery $remote $(if($ChannelRecoveryMsix){$ChannelRecoveryMsix}else{$RecoveryMsix})
-  $public=Test-NativePublic $remote.manifest $channelRecovery.path -Active
+  $public=Test-NativePublic $remote.manifest $channelRecovery.path -Active -LegacyBaseline
   return @{result='PASS';stage='READ_ONLY_PREFLIGHT';producedAt=[DateTime]::UtcNow.ToString('o');source=$script:SourceBinding;
     journalReadiness=$journalReadiness;baseline=$NativeUpdateFrom;target=$ExpectedVersion;family=$package[0].PackageFamilyName;signature=$signature;
     recoveryMsix=$RecoveryMsix;recoverySha256=(Hash $RecoveryMsix);channelRecovery=$channelRecovery;remote=$remote;gateway=$gateway;files=$samples;
@@ -117,13 +117,20 @@ function Test-NativeCompletedRelease {
   $path=Join-Path $Output 'result.json'
   if(!(Test-Path -LiteralPath $path)){return $false}
   $saved=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
-  if($NativePublishOnly -and $saved.result -cin @('PUBLISHED_READY_FOR_USER_UPDATE','PUBLISHED_122_CLIENT_NOT_YET_VERIFIED')){
+  if($NativePublishOnly -and $saved.result -cin @('OSS_PUBLISHED_SETUP_VERIFIED_NATIVE_NOT_RUN')){
     $applicationCommit=if($Commit){$Commit}else{$SourceCommit}
     if($saved.plan.sourceCommit -cne $applicationCommit -or $saved.plan.version -cne $ExpectedVersion -or
       $saved.signedMsix -ine (Join-Path $Output 'SemantierAgent.msix') -or (Hash $saved.signedMsix) -cne $saved.sha256){throw 'Completed publication binding changed'}
     Require-Signature $saved.signedMsix
     $null=Ssh (Get-Channel1ProofCommand -Root $RemoteRoot -PackageSha256 $saved.sha256 -Build $saved.plan.buildId)
     $metadata=Get-Content -LiteralPath (Join-Path $Output 'channel1-metadata.json') -Raw | ConvertFrom-Json
+    $cached=Join-Path $Output 'setup-download/SemantierAgent.msix'
+    $proof=Get-Content -LiteralPath (Join-Path $Output 'setup-download/download-receipt.json') -Raw|ConvertFrom-Json
+    if($saved.ossFullTransferCount -ne 1 -or $proof.status -cne 'DOWNLOADED_VERIFIED_NOT_INSTALLED' -or
+       $proof.selection -cne 'PINNED_STAGED_CANDIDATE' -or $proof.signature -cne 'PINNED_SIGNER_VALID' -or
+       $proof.sha256 -cne $saved.sha256 -or $proof.buildId -cne $saved.plan.buildId -or
+       $proof.manifestSha256 -cne (Get-OssManifestHash (Join-Path $Output 'channel1-metadata.json')) -or
+       (Hash $cached) -cne $saved.sha256){throw 'Retained one-shot Setup qualification changed; no redownload permitted'}
     $public=Test-NativePublic $metadata.manifest $saved.signedMsix -Active
     $saved | Add-Member -NotePropertyName publicationVerification -NotePropertyValue 'PASS' -Force
     $saved | Add-Member -NotePropertyName nativeAcceptance -NotePropertyValue 'NOT_RUN_OWNER_MANUAL' -Force
@@ -149,40 +156,150 @@ function Test-NativeCompletedRelease {
   return $true
 }
 function Test-NativePublic {
-  param($Manifest,[string]$Package,[switch]$Active)
+  param($Manifest,[string]$Package,[switch]$Active,[switch]$LegacyBaseline)
   $code=@'
-import hashlib,json,sys
+import base64,hashlib,json,sys
 from curl_cffi import requests,CurlOpt
-m=json.loads(sys.argv[1]);row=m['packages'][0];a=row['artifact'];rows=[]
+m=json.loads(base64.b64decode(sys.argv[1]));row=m['packages'][0];a=row['artifact'];rows=[]
+canonical=(json.dumps(m,sort_keys=True,separators=(',',':'),ensure_ascii=True,allow_nan=False)+chr(10)).encode()
+legacy=sys.argv[4]=='True'
+if legacy:
+ assert m['request']['publicBase']=='https://download.semantier.cn' and row['native']['schema']==1
+ package_base='https://download.semantier.cn'
+else:
+ assert m['request']['publicBase']=='https://cloud.semantier.cn' and row['native']['packageBase']=='https://assets.semantier.cn'
+ package_base='https://assets.semantier.cn'
 for mode,negotiated in [('v2',3),('v3only',30)]:
- with requests.Session(http_version=mode,trust_env=False,curl_options={CurlOpt.PROXY:b''}) as c:
+ with requests.Session(http_version=mode,trust_env=False,curl_options={CurlOpt.PROXY:b'',CurlOpt.MAXFILESIZE_LARGE:4194304}) as c:
   if sys.argv[3]=='True':
-   r=c.get('https://download.semantier.cn/releases/channels/semantier-acceptance.json',timeout=25)
-   assert r.http_version==negotiated and r.status_code==200
-   head=json.loads(r.content)['nativeHead']
-   assert head['buildId']==m['request']['buildId'] and head['sha256']==hashlib.sha256((json.dumps(m,sort_keys=True,separators=(',',':'))+'\n').encode()).hexdigest()
+   r=c.get('https://cloud.semantier.cn/releases/channels/semantier-acceptance.json',allow_redirects=False,timeout=25)
+   assert r.http_version==negotiated and r.status_code==200 and 'no-store' in r.headers.get('Cache-Control','')
+   head=json.loads(r.content)['nativeHead'];assert head['buildId']==m['request']['buildId'] and head['sha256']==hashlib.sha256(canonical).hexdigest()
   for key in (row['feed']['key'],'releases/channel-builds/'+m['request']['buildId']+'/build.json'):
-   r=c.get('https://download.semantier.cn/'+key,timeout=25)
-   assert r.http_version==negotiated and r.status_code==200,(key,r.status_code,r.http_version)
-   if key.endswith('build.json'):assert r.content==(json.dumps(m,sort_keys=True,separators=(',',':'))+'\n').encode()
+   r=c.get('https://cloud.semantier.cn/'+key,allow_redirects=False,timeout=25)
+   assert r.http_version==negotiated and r.status_code==200 and 'application/json' in r.headers.get('Content-Type','')
+   assert 'immutable' in r.headers.get('Cache-Control','')
+   if key.endswith('build.json'):assert r.content==canonical
    else:assert hashlib.sha256(r.content).hexdigest()==row['native']['graph']['sha256']
-  for start,end in ((0,65535),(a['size']-65536,a['size']-1)):
-   r=c.get('https://download.semantier.cn/'+a['key'],headers={'Range':f'bytes={start}-{end}','Accept-Encoding':'identity'},timeout=30)
-   with open(sys.argv[2],'rb') as f:f.seek(start);expected=f.read(end-start+1)
-   assert r.http_version==negotiated and r.status_code==206 and r.content==expected,(r.status_code,r.http_version)
-   assert r.headers['Content-Range']==f'bytes {start}-{end}/{a["size"]}'
-   rows.append({'protocol':r.http_version,'status':r.status_code,'bytes':len(r.content),'range':r.headers['Content-Range']})
-print(json.dumps({'result':'H2_H3_RANGE_PASS','responses':rows}))
+   rows.append({'origin':'cloud-metadata','protocol':r.http_version,'status':r.status_code,'bytes':len(r.content)})
+with requests.Session(http_version='v1',trust_env=False,curl_options={CurlOpt.PROXY:b'',CurlOpt.MAXFILESIZE_LARGE:65536}) as c:
+ for start,end in ((0,65535),(a['size']-65536,a['size']-1)):
+  r=c.get(package_base+'/'+a['key'],headers={'Range':f'bytes={start}-{end}','Accept-Encoding':'identity'},allow_redirects=False,timeout=30)
+  with open(sys.argv[2],'rb') as f:f.seek(start);expected=f.read(end-start+1)
+  assert r.status_code==206 and len(r.content)==65536 and r.content==expected,(r.status_code,r.http_version)
+  assert r.headers['Content-Range']==f'bytes {start}-{end}/{a["size"]}' and not r.headers.get('Content-Encoding')
+  rows.append({'origin':'oss-package','protocol':r.http_version,'status':r.status_code,'bytes':len(r.content),'range':r.headers['Content-Range']})
+print(json.dumps({'result':'CLOUD_METADATA_OSS_BOUNDED_RANGE_PASS','fullMsixTransfers':0,'responses':rows}))
 '@
-  $result=& $BuildPython -B -c $code ($Manifest | ConvertTo-Json -Depth 30 -Compress) $Package ([bool]$Active).ToString()
-  if($LASTEXITCODE -ne 0){throw 'Native public H2/H3 Range or immutable metadata check failed'}
-  return ($result | ConvertFrom-Json)
+  $encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($Manifest|ConvertTo-Json -Depth 30 -Compress)))
+  $result=& $BuildPython -B -c $code $encoded $Package ([bool]$Active).ToString() ([bool]$LegacyBaseline).ToString()
+  if($LASTEXITCODE -ne 0){throw 'Cloud metadata or bounded OSS Range check failed; no full-file fallback'}
+  return ($result|ConvertFrom-Json)
 }
 function Get-NativeWindow($Package,[switch]$AllowStopped) {
   $windows=@(Get-Process | Where-Object {$_.Path -ieq (Join-Path $Package.InstallLocation 'app/Semantier Agent.exe') -and $_.MainWindowHandle -ne 0})
   if($windows.Count -eq 0 -and $AllowStopped){return $null}
   if($windows.Count -ne 1){throw 'Expected exactly one real installed application window'}
   return $windows[0]
+}
+function Test-OssSetupTransport([string]$Setup) {
+  Require-Signature $Setup
+  $size=(Get-Item -LiteralPath $Setup).Length
+  if($size -le 0 -or $size -gt 2097152){throw 'Small Setup size limit exceeded'}
+  $proof=Join-Path $Output 'setup-oss-transport.json'
+  Run-Setup $Setup @('--probe-oss-transport',(Hash $Setup),[string]$size,$proof)
+  $result=Get-Content -LiteralPath $proof -Raw|ConvertFrom-Json
+  if($result.status -cne 'PASS' -or $result.scope -cne 'SMALL_EXE_TRANSPORT_ONLY_NO_INSTALL' -or $result.sha256 -cne (Hash $Setup) -or $result.bytes -lt $size){throw 'Native OSS small Setup transport failed'}
+  return $result
+}
+function Get-OssSourceHash([string]$Path) {
+  $text=[IO.File]::ReadAllText($Path).Replace("`r`n","`n")
+  $sha=[Security.Cryptography.SHA256]::Create()
+  try{return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text)))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
+}
+function Invoke-OssByteOperation([string]$Mode,[string]$Artifact,[string]$Metadata,[string]$ResultPath) {
+  if($Mode -cnotin @('msix','setup') -or !$script:RuntimeRoot -or
+     $OssRuntimeRoot -cnotmatch '^/home/[A-Za-z0-9_./-]+$' -or $OssRuntimeRoot.Contains('/../') -or
+     $OssWslDistro -cnotmatch '^[A-Za-z0-9_.-]+$'){throw 'Invalid pinned WSL OSS owner configuration'}
+  $wsl=Join-Path $env:SystemRoot 'System32/wsl.exe'
+  $linuxArtifact=(& $wsl -d $OssWslDistro -- wslpath -u $Artifact).Trim()
+  if($LASTEXITCODE -ne 0){throw 'Cannot resolve signed artifact in the selected WSL owner'}
+  $linuxResult=(& $wsl -d $OssWslDistro -- wslpath -u $ResultPath).Trim()
+  if($LASTEXITCODE -ne 0){throw 'Cannot resolve OSS result path'}
+  $linuxMetadata='-'
+  if($Metadata){$linuxMetadata=(& $wsl -d $OssWslDistro -- wslpath -u $Metadata).Trim();if($LASTEXITCODE -ne 0){throw 'Cannot resolve pinned metadata path'}}
+  $core=Join-Path $script:RuntimeRoot 'src/agents/client_operations/oss_release.py'
+  $publisher=Join-Path $Repository 'scripts/releases/channel1.py'
+  $protocol=Join-Path $Repository 'hermes_cli/release_channels.py'
+  $code=@'
+import hashlib,importlib.util,json,sys
+from pathlib import Path
+root,mode,artifact,metadata,output,core_sha,publisher_sha,protocol_sha=sys.argv[1:]
+root=Path(root)
+def normalized(path):return hashlib.sha256(path.read_text(encoding='utf-8-sig').encode()).hexdigest()
+for path,wanted in [(root/'src/agents/client_operations/oss_release.py',core_sha),(root/'hermes-agent/scripts/releases/channel1.py',publisher_sha),(root/'hermes-agent/hermes_cli/release_channels.py',protocol_sha)]:
+ if normalized(path)!=wanted:raise ValueError('WSL OSS owner source hash differs from the native pinned source')
+sys.path[:0]=[str(root/'src'),str(root/'hermes-agent')]
+from agents.client_operations import oss_release
+if Path(oss_release.__file__).resolve()!=root/'src/agents/client_operations/oss_release.py':raise ValueError('Unexpected OSS module owner')
+path=root/'hermes-agent/scripts/releases/channel1.py'
+spec=importlib.util.spec_from_file_location('oss_channel1_owner',path);owner=importlib.util.module_from_spec(spec);spec.loader.exec_module(owner)
+artifact=Path(artifact);output=Path(output)
+if mode=='msix':result=owner.stage_oss(artifact,metadata,output,release_bytes=True)
+else:
+ if not artifact.is_file() or artifact.is_symlink() or not 0<artifact.stat().st_size<=2097152:raise ValueError('Small signed Setup required')
+ with artifact.open('rb') as stream:sha=hashlib.file_digest(stream,'sha256').hexdigest()
+ objects=oss_release.ReleaseObjects(oss_release.assume_role('publish'));key='releases/installers/semantier-setup-ch1.exe'
+ objects.put_once(key,artifact,sha,content_type='application/octet-stream');objects.head_identity(key,sha,artifact.stat().st_size)
+ objects.verify(key,sha,artifact.stat().st_size)
+ result={'state':'OSS_SETUP_OBJECT_VERIFIED_NOT_SELECTED','key':key,'sha256':sha,'size':artifact.stat().st_size}
+ encoded=(json.dumps(result,sort_keys=True,separators=(',',':'))+chr(10)).encode()
+ if output.exists() and output.read_bytes()!=encoded:raise ValueError('Setup result collision')
+ owner._atomic(output,encoded)
+print(json.dumps(result,separators=(',',':')))
+'@
+  $encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($code))
+  $entry="import base64;exec(base64.b64decode('$encoded'))"
+  Report-Status ('Scoped WSL OSS operation: '+$Mode+'; no active pointer write')
+  $body=& $wsl -d $OssWslDistro -- ("$OssRuntimeRoot/.venv/bin/python") -B -c $entry $OssRuntimeRoot $Mode $linuxArtifact $linuxMetadata $linuxResult (Get-OssSourceHash $core) (Get-OssSourceHash $publisher) (Get-OssSourceHash $protocol)
+  if($LASTEXITCODE -ne 0){throw 'Scoped WSL OSS byte operation failed; no credential or authority fallback'}
+  $result=($body -join "`n")|ConvertFrom-Json
+  if($result.state -cnotin @('OSS_BYTES_STAGED_NOT_ACTIVE','OSS_SETUP_OBJECT_VERIFIED_NOT_SELECTED')){throw 'Unexpected OSS byte operation result'}
+  return $result
+}
+function Get-OssManifestHash([string]$Metadata) {
+  $code="import hashlib,json,sys; m=json.load(open(sys.argv[1],encoding='utf-8-sig'))['manifest']; print(hashlib.sha256((json.dumps(m,sort_keys=True,separators=(',',':'),ensure_ascii=True,allow_nan=False)+chr(10)).encode()).hexdigest())"
+  $hash=& $BuildPython -B -c $code $Metadata
+  if($LASTEXITCODE -ne 0 -or $hash -cnotmatch '^[a-f0-9]{64}$'){throw 'Cannot bind the immutable candidate manifest'}
+  return [string]$hash
+}
+function Test-OssSetupQualification($Manifest,[string]$Package,[string]$Metadata) {
+  if(!$OssSetupQualification -or !$NativePublishOnly -or !$SkipLocalInstall -or $BuildMode -cne 'Prod'){throw 'OSS activation requires explicit one-shot Setup qualification in Prod publish-only mode'}
+  Require-Signature $SetupExe
+  $manifestHash=Get-OssManifestHash $Metadata
+  $folder=Join-Path $Output 'setup-download'
+  $download=Join-Path $folder 'SemantierAgent.msix'
+  $proof=Join-Path $folder 'download-receipt.json'
+  if(!$script:checkpoints.ContainsKey('oss-setup-qualified')){
+    if($script:checkpoints.ContainsKey('oss-setup-transfer-started')){throw 'The one Setup transfer attempt was consumed; preserve its state and do not automatically retry'}
+    $receipt.ossFullTransferCount=1
+    Complete-Checkpoint 'oss-setup-transfer-started'
+    Run-Setup $SetupExe @('--download-candidate',[string]$Manifest.request.buildId,$manifestHash,[string]$Manifest.request.sequence,[string]$Manifest.packages[0].artifact.sha256,$folder)
+    $receipt.ossSetupQualification=Get-Content -LiteralPath $proof -Raw|ConvertFrom-Json
+  }
+  if(!(Test-Path -LiteralPath $proof -PathType Leaf) -or !(Test-Path -LiteralPath $download -PathType Leaf)){throw 'Retained Setup download evidence is incomplete'}
+  $result=Get-Content -LiteralPath $proof -Raw|ConvertFrom-Json
+  if($result.status -cne 'DOWNLOADED_VERIFIED_NOT_INSTALLED' -or $result.selection -cne 'PINNED_STAGED_CANDIDATE' -or
+     $result.buildId -cne $Manifest.request.buildId -or $result.version -cne $Manifest.request.windowsVersion -or
+     $result.sha256 -cne $Manifest.packages[0].artifact.sha256 -or $result.manifestSha256 -cne $manifestHash -or
+     $result.channelSha256 -cne $ExpectedChannelSha256 -or $result.origin -cne 'https://assets.semantier.cn' -or $result.signature -cne 'PINNED_SIGNER_VALID' -or
+     $result.sourceCommit -cne $Manifest.request.commit -or
+     $result.uri -cne ('https://assets.semantier.cn/releases/channel-builds/'+$Manifest.request.buildId+'/SemantierAgent.msix') -or
+     $result.ossResponseBytes -lt $Manifest.packages[0].artifact.size -or (Hash $download) -cne $result.sha256 -or
+     (Hash $Package) -cne $result.sha256){throw 'Setup full-download evidence does not match the pinned signed candidate'}
+  $receipt.ossSetupQualification=$result
+  Complete-Checkpoint 'oss-setup-qualified'
+  return $result
 }
 function Publish-Channel1Artifacts([string]$Signed, [string]$Root, [string]$Stage, [string]$PackageSha256, [string]$Metadata, [string]$Publisher = (Join-Path $PSScriptRoot 'releases/channel1.py')) {
   if($Root -cnotmatch '^[A-Za-z0-9_:/.-]+$' -or $Stage -cnotmatch '^[A-Za-z0-9_:/.-]+$' -or $PackageSha256 -cnotmatch '^[a-f0-9]{64}$') {
@@ -193,11 +310,14 @@ function Publish-Channel1Artifacts([string]$Signed, [string]$Root, [string]$Stag
   $nativeDigest=Get-NativePackageDigest $Signed
   Run $BuildPython @('-B',$publisher,'prepare','--package',$Signed,'--output',$Metadata,
     '--expected-sha256',$PackageSha256,'--source-commit',$SourceCommit,'--windows-version',$Version,'--build-id',$BuildId,'--native-digest',$nativeDigest)
-  Upload $Signed "$Stage/SemantierAgent.msix"
+  if(!$NativeUpdateFrom -or !$NativePublishOnly -or !$SkipLocalInstall -or $BuildMode -cne 'Prod' -or !$OssSetupQualification){throw 'OSS publication requires the pinned Prod publish-only one-shot flow'}
+  $preparedMetadataSha=Hash $Metadata
+  $receipt.ossStaging=Invoke-OssByteOperation 'msix' $Signed $Metadata (Join-Path $Output 'oss-staged.json')
+  if((Hash $Metadata) -cne $preparedMetadataSha){throw 'Prepared release metadata changed during OSS staging'}
   Upload $Metadata "$Stage/channel1-metadata.json"
   Upload $publisher "$Stage/channel1.py"
   Upload $protocol "$Stage/channel1-protocol.py"
-  $arguments="--root '$Root' --stage '$Stage' --metadata-sha256 '$(Hash $Metadata)' --package-sha256 '$PackageSha256' --protocol '$Stage/channel1-protocol.py' --protocol-sha256 '$(Hash $protocol)'"
+  $arguments="--metadata-only --root '$Root' --stage '$Stage' --metadata-sha256 '$preparedMetadataSha' --package-sha256 '$PackageSha256' --protocol '$Stage/channel1-protocol.py' --protocol-sha256 '$(Hash $protocol)'"
   if($NativeUpdateFrom){
     $recovery=$Root.Substring(0,$Root.LastIndexOf('/'))+'/.channel1-recovery-'+$BuildId
     $receipt.nativeRecovery=$recovery
@@ -206,6 +326,7 @@ function Publish-Channel1Artifacts([string]$Signed, [string]$Root, [string]$Stag
     $null=Ssh "python3 -B '$Stage/channel1.py' stage-native $arguments $guard --caddy-sha256 '$($script:nativePreflight.remote.caddySha256)'"
     $candidate=Get-Content -LiteralPath $Metadata -Raw | ConvertFrom-Json
     $receipt.nativePublicBeforePointer=Test-NativePublic $candidate.manifest $Signed
+    $receipt.ossSetupQualification=Test-OssSetupQualification $candidate.manifest $Signed $Metadata
     $receipt.result='BUILT_SIGNED_PACKAGE';Save-Json $receipt (Join-Path $Output 'result.json')
     $arguments+=$guard
   }
@@ -217,17 +338,22 @@ set -eu
 python3 - '__ROOT__' '__HASH__' '__BUILD__' <<'CHANNEL1_PROOF'
 import hashlib,json,pathlib,sys
 root,wanted,build=sys.argv[1:];root=pathlib.Path(root)
-assert (root/'releases/installers/semantier-setup-ch1.exe').is_file()
-with (root/'releases/SemantierAgent.msix').open('rb') as stream:
-    assert hashlib.file_digest(stream,'sha256').hexdigest()==wanted
 record=json.loads((root/'releases/channels/semantier-acceptance.json').read_bytes())
 head=record['nativeHead'];assert head['buildId']==build
 body=(root/head['manifestKey']).read_bytes()
 assert hashlib.sha256(body).hexdigest()==head['sha256']
 manifest=json.loads(body);pkg=manifest['packages'][0]
 assert pkg['artifact']['sha256']==wanted
-assert (root/pkg['artifact']['key']).samefile(root/'releases/SemantierAgent.msix')
-assert (root/pkg['feed']['key']).is_file()
+assert manifest['request']['publicBase']=='https://cloud.semantier.cn'
+assert pkg['native']['packageBase']=='https://assets.semantier.cn'
+graph=(root/pkg['feed']['key']).read_bytes()
+assert hashlib.sha256(graph).hexdigest()==pkg['native']['graph']['sha256']
+from urllib.request import Request,urlopen
+url='https://assets.semantier.cn/'+pkg['artifact']['key']
+with urlopen(Request(url,method='HEAD'),timeout=30) as response:
+ assert response.status==200 and response.url==url
+ assert response.headers['Content-Length']==str(pkg['artifact']['size'])
+ assert response.headers['x-oss-meta-sha256']==wanted and not response.headers.get('Content-Encoding')
 print('CHANNEL1_CURRENT_CLOSURE_VERIFIED')
 CHANNEL1_PROOF
 '@

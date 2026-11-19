@@ -174,11 +174,14 @@ def test_native_public_probe_checks_real_response_predicates(tmp_path, monkeypat
 
     class Session:
         def __init__(self, **kwargs):
-            self.version = 3 if kwargs['http_version'] == 'v2' else 30
+            self.version = {'v2':3,'v3only':30,'v1':2}[kwargs['http_version']]
+            assert kwargs['curl_options'][2] in (65536,4194304)
         def __enter__(self): return self
         def __exit__(self, *args): pass
         def get(self, url, **kwargs):
-            status = 200; headers = {}; content = protocol.canonical_json(manifest)
+            assert url.startswith('https://assets.semantier.cn/' if url.endswith('.msix') else 'https://cloud.semantier.cn/')
+            assert kwargs['allow_redirects'] is False
+            status = 200; headers = {'Content-Type':'application/json','Cache-Control':'public,max-age=31536000,immutable'}; content = protocol.canonical_json(manifest)
             if url.endswith('native-graph.json'):
                 content = graph if failure != 'wrong-graph' else b'changed'
             if url.endswith('.msix'):
@@ -189,8 +192,8 @@ def test_native_public_probe_checks_real_response_predicates(tmp_path, monkeypat
                 headers['Content-Range'] = f'bytes {start}-{end}/{manifest["packages"][0]["artifact"]["size"]}'
             return types.SimpleNamespace(status_code=status, content=content, headers=headers,
                                          http_version=2 if failure == 'http1' else self.version)
-    monkeypatch.setitem(sys.modules, 'curl_cffi', types.SimpleNamespace(requests=types.SimpleNamespace(Session=Session), CurlOpt=types.SimpleNamespace(PROXY=1)))
-    monkeypatch.setattr(sys, 'argv', ['probe', json.dumps(manifest), str(probe), 'False'])
+    monkeypatch.setitem(sys.modules, 'curl_cffi', types.SimpleNamespace(requests=types.SimpleNamespace(Session=Session), CurlOpt=types.SimpleNamespace(PROXY=1,MAXFILESIZE_LARGE=2)))
+    monkeypatch.setattr(sys, 'argv', ['probe', __import__('base64').b64encode(json.dumps(manifest).encode()).decode(), str(probe), 'False', 'False'])
     if failure:
         with pytest.raises(AssertionError): exec(code, {})
     else:

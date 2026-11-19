@@ -22,7 +22,6 @@ using System.Xml.Linq;
 internal static class Program {
   internal const string MetadataUrl=ReleaseSelection.MetadataBase+"/"+ReleaseSelection.ChannelKey;
   const string Identity="Semantier.Agent.Acceptance",Publisher="CN=Semantier Technology, O=Semantier Technology";
-  const long MaxBytes=12000000000;
   internal static string AppVersionString="latest";
   internal static string LogPath=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Semantier","Setup",DateTime.UtcNow.ToString("yyyyMMdd-HHmmss")+"-"+Guid.NewGuid().ToString("N"),"log.txt");
   static readonly object LogGate=new object();
@@ -44,6 +43,16 @@ internal static class Program {
           if(observed!=args[1].ToLowerInvariant())throw new InvalidDataException("Small EXE transport SHA256 mismatch.");
           File.WriteAllText(args[3],"{\"status\":\"PASS\",\"scope\":\"SMALL_EXE_TRANSPORT_ONLY_NO_INSTALL\",\"bytes\":"+client.ReceivedBytes+",\"responses\":"+client.OpenedResponses+",\"protocol\":"+client.LastProtocol+",\"sha256\":\""+observed+"\"}",new UTF8Encoding(false));
         }return 0;
+      }
+      if(args.Length==2 && args[0]=="--describe-release"){
+        using(var client=new NativeWinHttpRequests()){
+          var selected=ReleaseSelection.Resolve(url=>ReadMetadata(client,url));
+          File.WriteAllText(args[1],"{\"scope\":\"SELECTION_ONLY_NO_TRANSFER\",\"buildId\":\""+selected.BuildId+"\",\"version\":\""+selected.Version+"\",\"sha256\":\""+selected.Sha256+"\",\"uri\":\""+selected.Uri.AbsoluteUri+"\",\"manifestSha256\":\""+selected.ManifestSha256+"\"}",new UTF8Encoding(false));
+        }return 0;
+      }
+      if(args.Length==6 && args[0]=="--download-candidate"){
+        long sequence;if(!long.TryParse(args[3],NumberStyles.None,CultureInfo.InvariantCulture,out sequence) || args[4].Length!=64 || !args[4].All(Uri.IsHexDigit))throw new ArgumentException("Invalid pinned candidate.");
+        Directory.CreateDirectory(args[5]);DownloadPackage(args[5],null,args[4],null,args[1],args[2],sequence);return 0;
       }
       if(args.Length==3 && args[0]=="--download-release"){
         if(args[1].Length!=64 || !args[1].All(Uri.IsHexDigit))throw new ArgumentException("Invalid expected SHA256.");
@@ -99,9 +108,9 @@ internal static class Program {
       if(output.Length!=response.ContentLength)throw new InvalidDataException("Incomplete metadata.");return output.ToArray();
     }
   }
-  internal static string DownloadPackage(string directory,Action<long,long> progress,string expected,Action<string> report=null){
+  internal static string DownloadPackage(string directory,Action<long,long> progress,string expected,Action<string> report=null,string candidateBuild=null,string candidateManifestHash=null,long candidateSequence=0){
     using(var metadata=new NativeWinHttpRequests())using(var client=new NativeWinHttpRequests()){
-      var release=ReleaseSelection.Resolve(url=>ReadMetadata(metadata,url));
+      var release=ReleaseSelection.Resolve(url=>ReadMetadata(metadata,url),candidateBuild,candidateManifestHash,candidateSequence);
       if(expected!=null && !string.Equals(release.Sha256,expected,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Selected release differs from expected SHA256.");
       using(var head=Open(client,release.Uri,true))if(head.StatusCode!=200 || head.ContentLength!=release.Size)throw new InvalidDataException("OSS package size mismatch.");
       string file=Path.Combine(directory,"SemantierAgent.msix");
@@ -114,9 +123,9 @@ internal static class Program {
       string observed;using(var stream=File.OpenRead(file))using(var sha=SHA256.Create()){observed=BitConverter.ToString(sha.ComputeHash(stream)).Replace("-","").ToLowerInvariant();}
       if(observed!=release.Sha256)throw new InvalidDataException("MSIX SHA256 mismatch; no full-file retry.");
       VerifyIdentity(file,release);VerifySignature(file);
-      var current=ReleaseSelection.Resolve(url=>ReadMetadata(metadata,url));
-      if(current.ManifestSha256!=release.ManifestSha256)throw new InvalidDataException("Selected release changed during download.");
-      File.WriteAllText(Path.Combine(directory,"download-receipt.json"),"{\"status\":\"DOWNLOADED_VERIFIED_NOT_INSTALLED\",\"buildId\":\""+release.BuildId+"\",\"version\":\""+release.Version+"\",\"sha256\":\""+observed+"\",\"origin\":\""+ReleaseSelection.PackageBase+"\",\"ossResponseBytes\":"+client.ReceivedBytes+",\"responses\":"+client.OpenedResponses+"}",new UTF8Encoding(false));
+      var current=ReleaseSelection.Resolve(url=>ReadMetadata(metadata,url),candidateBuild,candidateManifestHash,candidateSequence);
+      if(current.ManifestSha256!=release.ManifestSha256 || current.ChannelSha256!=release.ChannelSha256)throw new InvalidDataException("Selected release changed during download.");
+      File.WriteAllText(Path.Combine(directory,"download-receipt.json"),"{\"status\":\"DOWNLOADED_VERIFIED_NOT_INSTALLED\",\"selection\":\""+(candidateBuild==null?"ACTIVE_CHANNEL_HEAD":"PINNED_STAGED_CANDIDATE")+"\",\"producedAt\":\""+DateTime.UtcNow.ToString("o")+"\",\"manifestSha256\":\""+release.ManifestSha256+"\",\"channelSha256\":\""+release.ChannelSha256+"\",\"buildId\":\""+release.BuildId+"\",\"version\":\""+release.Version+"\",\"sha256\":\""+observed+"\",\"uri\":\""+release.Uri.AbsoluteUri+"\",\"sourceCommit\":\""+release.Commit+"\",\"nativeDigest\":\""+release.NativeDigest+"\",\"signature\":\"PINNED_SIGNER_VALID\",\"origin\":\""+ReleaseSelection.PackageBase+"\",\"ossResponseBytes\":"+client.ReceivedBytes+",\"responses\":"+client.OpenedResponses+",\"protocol\":"+client.LastProtocol+"}",new UTF8Encoding(false));
       return file;
     }
   }
