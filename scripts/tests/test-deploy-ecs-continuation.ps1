@@ -124,6 +124,21 @@ try{
  Require ([IO.File]::ReadAllText((Join-Path $Output 'source-residue/continuation-1/source/node_modules/generated')) -ceq 'second') 'Predecessor residue changed'
  $once=[IO.File]::ReadAllText($statusLog);Confirm-ToolingContinuation $record $continuedInputs
  Require ([IO.File]::ReadAllText($statusLog) -ceq $once) 'Chain replay duplicated history'
+ if($IsWindows){
+  New-ContinuationFixture 'compiler-continuation'
+  $shared=Join-Path $BuildCache 'react-compiler/desktop';$null=[IO.Directory]::CreateDirectory($shared)
+  [IO.File]::WriteAllText((Join-Path $shared 'retained'),'shared compiler bytes')
+  $link=Join-Path $BuildSource 'apps/desktop/node_modules/.cache/hermes-react-compiler'
+  $null=[IO.Directory]::CreateDirectory((Split-Path $link -Parent));New-Item -ItemType Junction -Path $link -Target $shared|Out-Null
+  $c.residueInventory=Get-ResidueInventory $BuildSource
+  Sign-Fixture $path (Get-Bytes $c);$script:qualifiedContinuation=Read-ToolingContinuation $path $cert.Thumbprint
+  Confirm-ToolingContinuation $record $continuedInputs
+  $script:sourceLease=[IO.File]::Open((Join-Path $Output '.source.lock'),'OpenOrCreate','ReadWrite','None')
+  try{Restore-ToolingContinuationResidue $owner $BuildSource $Commit}finally{$script:sourceLease.Dispose();$script:sourceLease=$null}
+  Require ((Get-ResidueInventory (Join-Path $Output 'source-residue/continuation-1/source')) -ceq $c.residueInventory) 'Authenticated compiler preservation changed inventory'
+  Require ([IO.File]::ReadAllText((Join-Path $shared 'retained')) -ceq 'shared compiler bytes') 'Authenticated preservation changed shared cache'
+  Write-Output 'WINDOWS_NATIVE: authenticated compiler-junction continuation preservation PASS'
+ }
  foreach($case in @('qualification','signature','prefix','inputs','result','old-residue','new-residue','missing-first','wrong-signer','signed-result','cache-lock')){
   New-ContinuationFixture $case
   switch($case){

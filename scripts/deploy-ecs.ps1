@@ -704,6 +704,14 @@ function Get-PinnedResidueJunction([string]$Root,$Item) {
   # npm workspace junctions may survive Git retirement. Never follow them.
   if(!$IsWindows -or !$Item.PSIsContainer -or $Item.LinkType -cne 'Junction') {throw 'Linked residue is not recoverable.'}
   $relative=[IO.Path]::GetRelativePath($Root,$Item.FullName).Replace('\','/')
+  if($relative -ceq 'apps/desktop/node_modules/.cache/hermes-react-compiler'){
+    # The maintained Initialize-ReactCompilerCache creates this one shared
+    # cache junction. Preserve the link; never walk or adopt its target.
+    $target=[IO.Path]::GetFullPath((Join-Path $BuildCache 'react-compiler/desktop'))
+    if(@($Item.Target).Count -ne 1 -or [string]$Item.Target -ine $target){throw 'Compiler residue junction escapes its maintained cache.'}
+    Assert-NoReparseAncestor $target
+    return $target
+  }
   if(!$relative.StartsWith('node_modules/',[StringComparison]::Ordinal)){throw 'Linked residue is not recoverable.'}
   $lock=Get-SourceGit $Repository @('show',($Commit+':package-lock.json')) | ConvertFrom-Json -AsHashtable
   $pin=$lock.packages[$relative]
@@ -720,8 +728,21 @@ function Get-PinnedResidueJunction([string]$Root,$Item) {
 function Get-ResidueInventory([string]$Root) {
   Assert-NoReparseAncestor $Root
   $top=@(Get-ChildItem -LiteralPath $Root -Force)
-  if($top.Count -ne 1 -or $top[0].Name -cne 'node_modules' -or !$top[0].PSIsContainer){
-    throw 'Recovery accepts only node_modules-only generated residue.'
+  $hasApps=@($top|Where-Object Name -CEQ 'apps').Count -eq 1
+  $modules=@($top|Where-Object Name -CEQ 'node_modules')
+  if($top.Count -ne (1+[int]$hasApps) -or $modules.Count -ne 1 -or !$modules[0].PSIsContainer){
+    throw 'Recovery accepts only generated node_modules and the pinned compiler cache scaffold.'
+  }
+  if($hasApps){
+    $path=Join-Path $Root 'apps'
+    foreach($name in @('desktop','node_modules','.cache','hermes-react-compiler')){
+      $item=Get-Item -LiteralPath $path -Force
+      if(!$item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $item.LinkType){throw 'Unexpected compiler residue scaffold.'}
+      $children=@(Get-ChildItem -LiteralPath $path -Force)
+      if($children.Count -ne 1 -or $children[0].Name -cne $name){throw 'Unexpected compiler residue scaffold.'}
+      $path=Join-Path $path $name
+    }
+    $null=Get-PinnedResidueJunction $Root (Get-Item -LiteralPath $path -Force)
   }
   $pending=[Collections.Generic.Stack[string]]::new();$pending.Push($Root)
   $entries=[Collections.Generic.List[string]]::new()
