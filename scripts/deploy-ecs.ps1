@@ -471,25 +471,39 @@ function Confirm-ToolingTransition($Record,[string]$Inputs,[switch]$RequireExist
   } finally {foreach($lease in $leases){$lease.Dispose()}}
 }
 function Preserve-ToolingPreparationFailure($Previous) {
-  if(!$ToolingQualification -or !$script:qualifiedTooling){return $false}
   foreach($name in @('result','commit','signing','installation','publication')){
     if(!$Previous.PSObject.Properties[$name]){return $false}
   }
-  if($Previous.result -cnotin @('FAIL','STOP') -or $Previous.commit -cne $Commit -or
+  $application=if($Commit){$Commit}else{$SourceCommit}
+  if($Previous.result -cnotin @('FAIL','STOP') -or $Previous.commit -cne $application -or
      $Previous.signing -cne 'NOT_RUN' -or $Previous.installation -cne 'NOT_RUN' -or $Previous.publication -cne 'NOT_RUN'){
     return $false
   }
   foreach($name in @('sha256','signedMsix','unsignedSha256','plan')){
     if($Previous.PSObject.Properties[$name] -and $Previous.$name){return $false}
   }
+  $eventType='tooling-preparation-failure';$contract='semantier-tooling-transition-v1'
+  if(!$ToolingQualification -or !$script:qualifiedTooling){
+    # Input verification has already pinned the complete unsigned package. A
+    # retained preparation STOP is not an older signed release receipt.
+    if($Commit -or !$NativeUpdateFrom -or !$NativePublishOnly -or !$SkipLocalInstall -or !$OssSetupQualification){return $false}
+    $build=Read-CommitBuild $script:statusLog
+    if($Msix -ine (Join-Path $Output 'unsigned.msix') -or !$build -or $build.stage -cne 'built' -or $build.commit -cne $SourceCommit -or
+      ($build.version+'.0') -cne $Version -or $build.msix -ine $Msix -or
+      $build.request -ine (Join-Path $Output 'channel-request.json') -or
+      $build.sha256 -cne $ExpectedInputSha256 -or (Hash $Msix) -cne $ExpectedInputSha256){return $false}
+    $request=Get-Content -LiteralPath $build.request -Raw | ConvertFrom-Json
+    if($request.buildId -cne $BuildId -or $request.commit -cne $SourceCommit -or $request.version -cne $build.version){return $false}
+    $eventType='build-preparation-failure';$contract='semantier-built-package-resume-v1'
+  }
   $binding=$Previous | ConvertTo-Json -Depth 32 -Compress
   foreach($line in [IO.File]::ReadLines($script:statusLog)){
     try{$event=$line | ConvertFrom-Json -ErrorAction Stop}catch{continue}
-    if(!$event -or !$event.PSObject.Properties['type'] -or $event.type -cne 'tooling-preparation-failure'){continue}
-    if($event.contract -cne 'semantier-tooling-transition-v1' -or $event.previous -cne $binding){throw 'Conflicting historical preparation failure.'}
+    if(!$event -or !$event.PSObject.Properties['type'] -or $event.type -cne $eventType){continue}
+    if($event.contract -cne $contract -or $event.previous -cne $binding){throw 'Conflicting historical preparation failure.'}
     return $true
   }
-  Write-RunEvent @{type='tooling-preparation-failure';contract='semantier-tooling-transition-v1';
+  Write-RunEvent @{type=$eventType;contract=$contract;
     at=[DateTime]::UtcNow.ToString('o');previous=$binding}
   return $true
 }
@@ -2319,7 +2333,7 @@ $invocationTooling=if($receipt.Contains('tooling')){$receipt.tooling}else{$null}
 if($NativeUpdateFrom -and (Test-Path -LiteralPath (Join-Path $Output 'result.json'))){
   $priorOutcome=Get-Content -LiteralPath (Join-Path $Output 'result.json') -Raw | ConvertFrom-Json
   if($priorOutcome.result -in @('FAIL','STOP')){
-    $receipt.previousFailure=@{result=$priorOutcome.result;error=$priorOutcome.error;finishedAt=$priorOutcome.finishedAt}
+    $receipt.previousFailure=@{result=$priorOutcome.result;error=$priorOutcome.error;finishedAt=$(if($priorOutcome.PSObject.Properties['finishedAt']){$priorOutcome.finishedAt}else{$null})}
   }
 }
 if($Commit -and $built.PSObject.Properties['tooling']){$receipt.tooling=$built.tooling}
