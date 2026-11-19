@@ -15,7 +15,7 @@ from hermes_cli import release_channels as protocol
 from scripts.releases import channel1
 
 
-def package(stage, sequence):
+def package(stage, sequence, *, version=None):
     stage.mkdir(parents=True, exist_ok=True)
     request = {
         'schema': 1, 'buildId': f'{sequence:032x}', 'channel': 'semantier-acceptance',
@@ -28,6 +28,9 @@ def package(stage, sequence):
                      'appId': 'com.semantier.agent.acceptance', 'appNamePascal': 'SemantierAgentAcceptance',
                      'artifactNamePascal': 'SemantierAgent', 'cliName': 'semantier-agent-acceptance',
                      'msixAppIdWithOrg': 'Semantier.Agent.Acceptance', 'windowsExecutableName': 'Semantier Agent'}}
+    if version is not None:
+        request.update(buildId=version,windowsVersion=version,version='.'.join(version.split('.')[:3]),semantierScope='semantier-windows-x64/v1')
+        request['releaseTag']='v'+request['version']
     path = stage/'SemantierAgent.msix'
     # Disposable ZIP metadata fixture, never an installable/signed application.
     with zipfile.ZipFile(path, 'w') as archive:
@@ -851,7 +854,7 @@ def test_public_oss_stage_uses_verified_snapshot_without_full_readback(tmp_path,
     monkeypatch.setattr(oss_release,'stage',full_readback)
     output=tmp_path/'public-staged.json'
     result=channel1.stage_oss(stage_dir/'SemantierAgent.msix',metadata,output,release_bytes=True)
-    assert roles==['upload','publish']
+    assert roles==['publish']
     assert seen==[{'buildId':original['manifest']['request']['buildId'],**original['manifest']['packages'][0]['artifact']}]
     assert result==json.loads(output.read_bytes()) and result['fullDownloadVerification']=='PENDING'
 
@@ -930,3 +933,24 @@ def test_retirement_after_oss_cutover_removes_old_ecs_stable_without_touching_ac
         assert old.exists() and (root/'releases/SemantierAgent.msix').is_file()
         assert (recovery/'recovery.json').is_file()
     assert channel1.sha(root/channel1.POINTER)==current
+
+
+def test_direct_oss_version_path_uses_real_prepared_metadata_without_private_role(tmp_path,monkeypatch):
+    from agents.client_operations import oss_release
+    stage=tmp_path/'stage';package(stage,132,version='1.2.132.4')
+    roles=[];calls=[]
+    def assume(kind):
+        assert kind=='publish'
+        roles.append(kind);return object()
+    monkeypatch.setattr(oss_release,'assume_role',assume)
+    monkeypatch.setattr(channel1.subprocess,'check_output',lambda *a,**k:'D:\\fixture.msix')
+    monkeypatch.setattr(channel1.subprocess,'run',lambda *a,**k:types.SimpleNamespace(returncode=0))
+    class Public:
+        def __init__(self,credentials):pass
+        def put_once(self,key,path,digest):calls.append(('PUT',key))
+        def head_identity(self,key,digest,size):calls.append(('HEAD',key))
+    monkeypatch.setattr(oss_release,'ReleaseObjects',Public)
+    result=channel1.stage_oss(stage/'SemantierAgent.msix',stage/'channel1-metadata.json',tmp_path/'direct.json',release_bytes=True)
+    assert result['key']=='releases/channel-builds/1.2.132.4/SemantierAgent.msix'
+    assert result['storagePolicy']=='DIRECT_PUBLISH' and roles==['publish']
+    assert [method for method,key in calls]==['PUT','HEAD']

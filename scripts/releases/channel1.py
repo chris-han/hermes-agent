@@ -385,7 +385,7 @@ def _apply_route(path, body):
 
 
 def _native_route_body(before, old_id, new_id):
-    if not re.fullmatch('[a-f0-9]{32}', old_id) or old_id == new_id:
+    if not re.fullmatch(r'(?:[a-f0-9]{32}|(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3})', old_id) or old_id == new_id:
         raise ValueError('Invalid route baseline')
     text = before.decode()
     for name in ('SemantierAgent.msix', 'build.json', 'native-graph.json'):
@@ -466,7 +466,7 @@ def _verify_oss_head(row):
     artifact = row['artifact']
     if (row.get('native', {}).get('schema') != 2
             or row['native'].get('packageBase') != 'https://assets.semantier.cn'
-            or not re.fullmatch(r'releases/channel-builds/[a-f0-9]{32}/SemantierAgent\.msix', artifact['key'])):
+            or not re.fullmatch(r'releases/channel-builds/(?:[a-f0-9]{32}|(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3})/SemantierAgent\.msix', artifact['key'])):
         raise ValueError('OSS release origin invalid')
     connection = http.client.HTTPSConnection('assets.semantier.cn', timeout=30)
     try:
@@ -749,7 +749,7 @@ def retire_package(root, *, build_id, package_sha256, expected_previous_sha256,
     """
     from contextlib import nullcontext
     root = Path(root).absolute()
-    if not re.fullmatch('[0-9a-f]{32}', build_id) or not re.fullmatch('[0-9a-f]{64}', package_sha256):
+    if not re.fullmatch(r'(?:[a-f0-9]{32}|(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3})', build_id) or not re.fullmatch('[0-9a-f]{64}', package_sha256):
         raise ValueError('Explicit immutable package identity required')
     _safe(root.parent, root.name)
     with _lock(root) if apply else nullcontext():
@@ -831,7 +831,7 @@ def retire_package(root, *, build_id, package_sha256, expected_previous_sha256,
             _safe(root.parent, relative)
             owner = relative.parts[0]
             known = (path == package or (active_oss and path == stable) or path == root/'releases/.channel1-restore.tmp'
-                     or re.fullmatch(r'\.channel1-recovery-[0-9a-f]{32}', owner)
+                     or re.fullmatch(r'\.channel1-recovery-(?:[a-f0-9]{32}|(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3})', owner)
                      or re.fullmatch(r'\.semantier-stage-[0-9a-f]{32}', owner)
                      or re.fullmatch(r'\.msix-rollback-\d+-[A-Za-z0-9TZ]+', owner))
             if not known:
@@ -894,10 +894,14 @@ def stage_oss(package, metadata, output, signature_package=None, release_bytes=F
     from agents.client_operations.oss_release import candidate_from_manifest, stage, Objects, assume_role
     package = Path(package).resolve()
     # Fail before cloud writes if the required scoped identity is unavailable.
-    credentials = assume_role('upload')
+    credentials = None if release_bytes else assume_role('upload')
     promotion_credentials = assume_role('publish') if release_bytes else None
     m = json.loads(Path(metadata).read_text())
-    candidate_from_manifest(m['manifest'])  # Validate ASCII pins before constructing the native command.
+    if release_bytes:
+        from hermes_cli import release_channels as protocol
+        protocol.validate_manifest(m['manifest'], _record(m['manifest'], None, protocol), BASE, allow_native=True)
+    else:
+        candidate_from_manifest(m['manifest'])  # Validate ASCII pins before constructing the native command.
     windows_path = subprocess.check_output(['wslpath', '-w', str(Path(signature_package).resolve() if signature_package else package)], text=True).strip()
     escaped = windows_path.replace("'", "''")
     script = ("$ErrorActionPreference='Stop';$p='"+escaped+"';"
@@ -920,7 +924,7 @@ def stage_oss(package, metadata, output, signature_package=None, release_bytes=F
     if release_bytes:
         from agents.client_operations.oss_release import stage_release_bytes, ReleaseObjects
         result = stage_release_bytes(package, {'buildId': request['buildId'], **row['artifact']},
-                                     Objects(credentials), ReleaseObjects(promotion_credentials))
+                                     None, ReleaseObjects(promotion_credentials))
         output = Path(output)
         encoded = (json.dumps(result, sort_keys=True, separators=(',', ':'))+'\n').encode()
         if output.exists() and output.read_bytes() != encoded:

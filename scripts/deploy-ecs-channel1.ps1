@@ -92,6 +92,7 @@ function Test-NativeReleasePreflight {
   }
   elseif($saved){if(($saved.version+'.0') -cne $ExpectedVersion){throw 'Saved reservation differs from requested version'}}
   elseif(([Version]($ledger.version+'.0')).Build+1 -ne ([Version]$ExpectedVersion).Build){throw 'Next version reservation differs from explicit target'}
+  if($SupersededBuildOutput){$null=Remove-SupersededUnsignedInput $SupersededBuildOutput}
   if((Get-PSDrive ([IO.Path]::GetPathRoot($Output).Substring(0,1))).Free -lt 12GB){throw 'Insufficient native build space'}
   $code=@'
 import hashlib,json,pathlib,sys
@@ -250,7 +251,7 @@ function Invoke-OssByteOperation([string]$Mode,[string]$Artifact,[string]$Metada
   $code=@'
 import hashlib,importlib.util,json,os,sys
 from pathlib import Path
-root,mode,artifact,metadata,output,core_sha,publisher_sha,protocol_sha=sys.argv[1:]
+root,mode,artifact,metadata,output,core_sha,publisher_sha,protocol_sha,previous_setup_sha=sys.argv[1:]
 root=Path(root)
 cli=Path.home()/'.local/bin/aliyun'
 if not cli.is_file() or not os.access(cli,os.X_OK):raise ValueError('Existing WSL account CLI unavailable')
@@ -269,7 +270,7 @@ else:
  if not artifact.is_file() or artifact.is_symlink() or not 0<artifact.stat().st_size<=2097152:raise ValueError('Small signed Setup required')
  with artifact.open('rb') as stream:sha=hashlib.file_digest(stream,'sha256').hexdigest()
  objects=oss_release.ReleaseObjects(oss_release.assume_role('publish'));key='releases/installers/semantier-setup-ch1.exe'
- objects.put_once(key,artifact,sha,content_type='application/octet-stream');objects.head_identity(key,sha,artifact.stat().st_size)
+ objects.put_once(key,artifact,sha,content_type='application/octet-stream',expected_previous_sha256=None if previous_setup_sha=='-' else previous_setup_sha);objects.head_identity(key,sha,artifact.stat().st_size)
  objects.verify(key,sha,artifact.stat().st_size)
  result={'state':'OSS_SETUP_OBJECT_VERIFIED_NOT_SELECTED','key':key,'sha256':sha,'size':artifact.stat().st_size}
  encoded=(json.dumps(result,sort_keys=True,separators=(',',':'))+chr(10)).encode()
@@ -280,7 +281,8 @@ print(json.dumps(result,separators=(',',':')))
   $encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($code))
   $entry="import base64;exec(base64.b64decode('$encoded'))"
   Report-Status ('Scoped WSL OSS operation: '+$Mode+'; no active pointer write')
-  $body=& $wsl -d $OssWslDistro --exec ("$OssRuntimeRoot/.venv/bin/python") -B -c $entry $OssRuntimeRoot $Mode $linuxArtifact $linuxMetadata $linuxResult (Get-OssSourceHash $core) (Get-OssSourceHash $publisher) (Get-OssSourceHash $protocol)
+  $previousSetup=if($Mode -ceq 'setup' -and $OssPreviousSetupSha256){$OssPreviousSetupSha256}else{'-'}
+  $body=& $wsl -d $OssWslDistro --exec ("$OssRuntimeRoot/.venv/bin/python") -B -c $entry $OssRuntimeRoot $Mode $linuxArtifact $linuxMetadata $linuxResult (Get-OssSourceHash $core) (Get-OssSourceHash $publisher) (Get-OssSourceHash $protocol) $previousSetup
   if($LASTEXITCODE -ne 0){throw 'Scoped WSL OSS byte operation failed; no credential or authority fallback'}
   $result=($body -join "`n")|ConvertFrom-Json
   if($result.state -cnotin @('OSS_BYTES_STAGED_NOT_ACTIVE','OSS_SETUP_OBJECT_VERIFIED_NOT_SELECTED')){throw 'Unexpected OSS byte operation result'}

@@ -4,7 +4,6 @@ import hashlib
 import json
 from pathlib import Path
 import re
-from uuid import uuid4
 import sys
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path: sys.path.insert(0,str(ROOT))
@@ -19,7 +18,7 @@ IDENTITY={'token':'b0fdc2a7e4b08d16','displayName':'Semantier Agent Acceptance',
 def is_acceptance_request(value):
     return (value.get('semantierScope')=='semantier-windows-x64/v1' and value.get('identity')==IDENTITY
             and value.get('channel')=='semantier-acceptance' and value.get('repository')=='chris-han/hermes-agent'
-            and re.fullmatch(r'0\.0\.[1-9][0-9]*',value.get('version','')) is not None)
+            and re.fullmatch(r'(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*)){2}',value.get('version','')) is not None)
 
 
 def acceptance_request(*,commit,controller,version,source_version,base):
@@ -27,7 +26,7 @@ def acceptance_request(*,commit,controller,version,source_version,base):
     sequence=int(version.split('.')[2])
     if sequence>65535:raise ValueError('acceptance sequence exceeds Windows version range')
     base=public_base(base)
-    value=dict(schema=1,buildId=uuid4().hex,channel='semantier-acceptance',sequence=sequence,
+    value=dict(schema=1,buildId=version+'.0',channel='semantier-acceptance',sequence=sequence,
                repository='chris-han/hermes-agent',commit=commit,controllerCommit=controller,
                sourceVersion=source_version,version=version,windowsVersion=version+'.0',
                releaseTag='v'+version,identity=IDENTITY,bundleEnv={'HERMES_HOME':None,'HERMES_DATA_DIR_SUFFIX':'-semantier-acceptance'},publicBase=base,

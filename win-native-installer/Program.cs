@@ -147,6 +147,7 @@ internal static class Program {
     string command="$ErrorActionPreference='Stop'; $s=Get-AuthenticodeSignature -LiteralPath '"+file.Replace("'","''")+"'; if($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -cne 'CN=Semantier Technology, O=Semantier Technology' -or $s.SignerCertificate.Thumbprint -cne '57BF15739B4AA447842EAF388856A01B4E5029FF'){exit 1}";
     string shell=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe");
     var info=new ProcessStartInfo(shell,"-NoProfile -NonInteractive -EncodedCommand "+Convert.ToBase64String(Encoding.Unicode.GetBytes(command))){UseShellExecute=false,CreateNoWindow=true};
+    info.EnvironmentVariables["PSModulePath"]=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","Modules");
     using(var process=Process.Start(info)){
       if(process==null)throw new IOException("Cannot start Windows signature verifier.");
       if(!process.WaitForExit(600000)){process.Kill();throw new IOException("Windows signature verification timed out.");}

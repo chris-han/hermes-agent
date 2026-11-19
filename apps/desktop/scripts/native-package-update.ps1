@@ -212,7 +212,7 @@ function Initialize-NativeUpdate($RequestPath, [int]$ParentId, [long]$ParentBirt
  if($association -and $association.Uri){throw 'Native association migration is not qualified'}
  $rows=@(Read-NativeUpdateGraph $request)
  $directory=[IO.Path]::GetFullPath($request.journalDirectory)
- if($request.targetBuildId -cnotmatch '^[a-f0-9]{32}$' -or $request.targetCommit -cnotmatch '^[a-f0-9]{40}$' -or @($rows|Where-Object{($_.key -split '/')[2] -cne $request.targetBuildId}).Count){throw 'Native target source/build binding mismatch'}
+ if($request.targetBuildId -cnotmatch '^(?:[a-f0-9]{32}|(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3})$' -or $request.targetCommit -cnotmatch '^[a-f0-9]{40}$' -or @($rows|Where-Object{($_.key -split '/')[2] -cne $request.targetBuildId}).Count){throw 'Native target source/build binding mismatch'}
  if([IO.Path]::GetFileName($directory) -cnotmatch ('^native-'+$request.manifestSha256+'-[a-f0-9]{32}$')){throw 'Native journal binding mismatch'}
  $cursor=Get-Item -LiteralPath (Split-Path -Parent $directory) -Force
  while($cursor){if($cursor.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Native journal reparse path refused'};$cursor=$cursor.Parent}
@@ -282,12 +282,13 @@ function Read-NativeUpdateGraph($request) {
  if($request.schema -eq 2){
   if($request.base -cne 'https://cloud.semantier.cn' -or $request.packageBase -cne 'https://assets.semantier.cn'){throw 'Native package origin invalid'}
  }elseif($request.PSObject.Properties['packageBase']){throw 'Legacy native request cannot select package origin'}
+ if($request.targetBuildId -match '\.' -and ($request.targetBuildId -cne $request.version -or @($request.targetBuildId.Split('.')|Where-Object{[int]$_ -gt 65535}).Count)){throw 'Version directory does not match native target'}
  $graph=$request.graph;$rows=@($graph.objects);$byKey=@{};$main=0;$bundle=0;$identities=@{}
  $single=$rows.Count -eq 1 -and $rows[0].kind -ceq 'main-package'
  $maximum=if($single){68719476736L}else{480000000L}
  if($graph.schema -ne 1 -or $graph.transport -cne 'windows-package-uri' -or $graph.payloadInventorySha256 -cnotmatch '^[a-f0-9]{64}$' -or !$rows.Count -or $rows.Count -gt 64){throw 'Native graph invalid'}
  foreach($row in $rows){
-  if($row.key -cnotmatch '^releases/channel-builds/[a-f0-9]{32}/[A-Za-z0-9_./+-]+\.(msix|msixbundle)$' -or $row.key -match '(^|/)\.{1,2}(/|$)' -or $byKey.ContainsKey($row.key) -or ($row.size -isnot [int] -and $row.size -isnot [long]) -or $row.size -le 0 -or $row.size -gt $maximum -or $row.sha256 -cnotmatch '^[a-f0-9]{64}$' -or $row.identity -cne $request.identity -or $row.publisher -cne $request.publisher -or $row.version -cne $request.version -or $row.kind -cnotin @('main-bundle','main-package','asset-package')){throw 'Native object binding mismatch'}
+  if($row.key -cnotmatch '^releases/channel-builds/(?:[a-f0-9]{32}|(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3})/[A-Za-z0-9_./+-]+\.(msix|msixbundle)$' -or $row.key -match '(^|/)\.{1,2}(/|$)' -or $byKey.ContainsKey($row.key) -or ($row.size -isnot [int] -and $row.size -isnot [long]) -or $row.size -le 0 -or $row.size -gt $maximum -or $row.sha256 -cnotmatch '^[a-f0-9]{64}$' -or $row.identity -cne $request.identity -or $row.publisher -cne $request.publisher -or $row.version -cne $request.version -or $row.kind -cnotin @('main-bundle','main-package','asset-package')){throw 'Native object binding mismatch'}
   $digest=[Convert]::FromBase64String($row.nativeDigest)
   if($digest.Length -ne 32 -or [Convert]::ToBase64String($digest) -cne $row.nativeDigest){throw 'Native digest invalid'}
   if($row.kind -ceq 'main-package'){$main++;if($row.arch -cne 'x64' -or @($row.references).Count){throw 'Native main invalid'}}

@@ -53,6 +53,12 @@ def require_commit(value: object) -> str:
 
 
 def build_prefix(build_id: object) -> str:
+    # Old immutable manifests remain readable; new Semantier builds emit the
+    # canonical Windows version, never a mutable alias or a random directory.
+    if isinstance(build_id, str) and re.fullmatch(r"(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3}", build_id):
+        if any(int(part) > 65535 for part in build_id.split(".")):
+            raise ChannelError("Version build ID exceeds Windows range")
+        return "releases/channel-builds/" + build_id + "/"
     return "releases/channel-builds/" + _match(r"[a-f0-9]{32}", build_id, "build ID") + "/"
 
 
@@ -146,8 +152,15 @@ def validate_request(value: object, *, repository: str | None = None,
         require_commit(request["controllerCommit"])
     _match(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", request.get("sourceVersion"), "source version")
     versions = package_versions(request.get("sequence"))
+    if "." in request["buildId"] and (request["buildId"] != request.get("windowsVersion")
+            or request.get("semantierScope") != "semantier-windows-x64/v1"):
+        raise ChannelError("Version build namespace does not match signed Windows version")
     if policy == "preview":
-        if (request.get("version"), request.get("windowsVersion")) != versions:
+        if "." in request["buildId"]:
+            actual_version = ".".join(request["windowsVersion"].split(".")[:3])
+            if request.get("version") != actual_version or request.get("releaseTag") != "v"+actual_version:
+                raise ChannelError("Release version does not match the signed Windows version")
+        elif (request.get("version"), request.get("windowsVersion")) != versions:
             raise ChannelError("Channel package version does not match sequence")
     else:
         _match(
@@ -168,7 +181,7 @@ def validate_request(value: object, *, repository: str | None = None,
                 raise ChannelError("Archive ref does not name the release version")
         # Stable uses the Store quad with revision zero; canary uses its UTC
         # yy.mmdd.hh.mmss package version.
-        pattern = r"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" if policy == "canary-release" else r"[0-9]+\.[0-9]+\.[0-9]+\.0"
+        pattern = r"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" if policy == "canary-release" or "." in request["buildId"] else r"[0-9]+\.[0-9]+\.[0-9]+\.0"
         quad = _match(pattern, request.get("windowsVersion"), "Windows version")
         if any(int(part) > 65535 for part in quad.split(".")):
             raise ChannelError("Invalid Windows version")
