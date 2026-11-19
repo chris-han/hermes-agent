@@ -132,6 +132,41 @@ describe('actOnActivePreview (drive_preview tool)', () => {
     }
   })
 
+  it('exposes the new form refs only through their original session runner', async () => {
+    const tabId = openPreview(urlTarget('https://example.com/budgets'), 'budget-owner')!
+    document.body.innerHTML =
+      '<div><label>预算名称</label><input></div><div><label>预算备注</label><textarea></textarea></div>'
+
+    const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
+      left: 0,
+      top: 0,
+      right: 80,
+      bottom: 30,
+      width: 80,
+      height: 30
+    } as DOMRect)
+
+    const run = vi.fn(async (code: string) => await new Function('return ' + code)())
+    cleanups.push(registerPreviewScriptRunner(tabId, run))
+
+    try {
+      const inventory = await actOnActivePreview({ kind: 'elements', full: true }, undefined, 'budget-owner')
+      expect(inventory.elements?.map(e => e.label)).toEqual(['预算名称', '预算备注'])
+      const ref = inventory.elements![0].ref
+      const before = run.mock.calls.length
+      expect((await actOnActivePreview({ kind: 'click', ref }, undefined, 'other-session')).success).toBe(false)
+      expect(run).toHaveBeenCalledTimes(before)
+      expect((await actOnActivePreview({ kind: 'type', ref, text: 'fixture budget' }, undefined, 'budget-owner')).success).toBe(
+        true
+      )
+      expect(document.querySelector('input')!.value).toBe('fixture budget')
+    } finally {
+      rect.mockRestore()
+      document.body.replaceChildren()
+      delete (window as unknown as { __hermesActHolder?: unknown }).__hermesActHolder
+    }
+  })
+
   it('inventories controls across frames and routes a frame click through real input', async () => {
     const tabId = openBrowserTab()
     const token = '12345678-1234-1234-1234-123456789abc'

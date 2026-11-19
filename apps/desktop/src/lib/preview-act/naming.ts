@@ -52,7 +52,16 @@ export function namingKit(doc: Document): NamingKit {
     }
 
     const labelledBy = el.getAttribute('aria-labelledby')
-    const labelled = labelledBy ? doc.getElementById(labelledBy) : null
+
+    const labelledText = labelledBy
+      ? labelledBy
+          .split(/\s+/)
+          .map(id => doc.getElementById(id)?.textContent || '')
+          .join(' ')
+          .trim()
+      : ''
+
+    const labelled = labelledText ? { textContent: labelledText } : null
     const text = ((labelled || el).textContent || '').trim().replace(/\s+/g, ' ')
 
     if (text) {
@@ -72,6 +81,41 @@ export function namingKit(doc: Document): NamingKit {
 
       if (value) {
         return clamp(value, 80)
+      }
+    }
+
+    if (el.matches('input,textarea,select')) {
+      // Many component libraries paint an adjacent label without wiring `for`.
+      // Stop before a shared row: one label must describe exactly one field.
+      for (let row = el.parentElement; row && row !== doc.body; row = row.parentElement) {
+        const fields = row.querySelectorAll('input:not([type="hidden"]),textarea,select')
+
+        if (fields.length !== 1) {
+          break
+        }
+
+        const labels = row.querySelectorAll('label:not([for])')
+
+        if (labels.length === 1 && !(labels[0] as HTMLLabelElement).control) {
+          const name = (labels[0].textContent || '').trim().replace(/\s+/g, ' ')
+
+          if (name) {
+            return clamp(name, 80)
+          }
+        }
+      }
+
+      // This is an inspection identity, explicitly not an accessible name.
+      for (const attr of ['id', 'data-testid']) {
+        const identity = el.getAttribute(attr)
+
+        if (
+          identity &&
+          Array.from(doc.querySelectorAll('[' + attr + ']')).filter(node => node.getAttribute(attr) === identity)
+            .length === 1
+        ) {
+          return clamp('Unlabeled ' + el.tagName.toLowerCase() + ': ' + identity, 80)
+        }
       }
     }
 
