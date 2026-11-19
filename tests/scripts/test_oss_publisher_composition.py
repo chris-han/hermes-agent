@@ -109,3 +109,36 @@ if(!$refused -or $script:downloads -ne 1){throw 'Interrupted one-shot was replay
                            str(tmp_path),str(metadata),str(package),sys.executable],capture_output=True,text=True,timeout=40,check=False)
     assert result.returncode==0,result.stderr
     assert result.stdout.startswith('PASS: attempt checkpoint')
+
+
+def test_signed_resume_preserves_oss_owner_and_one_shot_contract(tmp_path):
+    pwsh=shutil.which('pwsh')
+    if not pwsh:
+        pytest.skip('PowerShell required')
+    script=tmp_path/'resume.ps1'
+    script.write_text(r'''
+param($Source,$Directory)
+$ErrorActionPreference='Stop';Set-StrictMode -Version Latest
+$ast=[Management.Automation.Language.Parser]::ParseFile($Source,[ref]$null,[ref]$null)
+$f=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Restore-SignedRelease'},$true)
+. ([scriptblock]::Create($f.Extent.Text))
+$BuildPython='fixture-python';$Output=$Directory
+$binding=@{mode='Prod';skipLocalInstall=$true;nativePublishOnly=$true;setupContract='cloud-channel-oss-native-v3';channelContract='current-only-channel-metadata-v1';
+ inputSha256=('a'*64);source=('b'*40);version='0.0.131.0';build=('c'*32);signer='fixture';target='fixture';root='fixture';origin='https://cloud.semantier.cn';profile='fixture';
+ nativeUpdateFrom='0.0.125.0';expectedVersion='0.0.131.0';expectedChannelSha256=('d'*64);nativeUserData='fixture';recoveryMsix='fixture';profileSampleManifest='fixture';criticalFileManifest='fixture';
+ ossRuntimeRoot='/home/fixture/selected';ossWslDistro='selected-distro';ossSetupQualification=$true}
+function Read-RunCheckpoint($Path){return [pscustomobject]@{binding=($binding|ConvertTo-Json -Compress);completed=[pscustomobject]@{signed=$true};receipt=[pscustomobject]@{sha256=('e'*64)}}}
+function Hash($Path){return 'e'*64}
+function Assert-SignedResumeContract($Saved){}
+Restore-SignedRelease
+if($OssRuntimeRoot -cne '/home/fixture/selected' -or $OssWslDistro -cne 'selected-distro' -or !$OssSetupQualification){throw 'OSS resume owner changed'}
+$binding.Remove('ossSetupQualification')
+$refused=$false
+try{Restore-SignedRelease}catch{$refused=$true}
+if(!$refused){throw 'Historical signed run silently adopted the OSS contract'}
+'PASS: bound OSS resume restored; historical contract refused'
+''')
+    result=subprocess.run([pwsh,'-NoProfile','-NonInteractive','-File',str(script),str(ROOT/'scripts/deploy-ecs.ps1'),str(tmp_path)],
+                          capture_output=True,text=True,timeout=30,check=False)
+    assert result.returncode==0,result.stderr
+    assert result.stdout.startswith('PASS: bound OSS resume')

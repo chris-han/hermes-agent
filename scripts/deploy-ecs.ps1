@@ -1029,13 +1029,16 @@ function Restore-SignedRelease {
   if(!$saved -or !$saved.completed.PSObject.Properties['signed']){throw 'No retained signed checkpoint; resume STOP, never rebuild.'}
   $binding=$saved.binding | ConvertFrom-Json
   if($binding.mode -cne 'Prod' -or !$binding.skipLocalInstall -or !$binding.nativePublishOnly -or
-     $binding.setupContract -cne 'cloud-channel-oss-native-v3' -or $binding.channelContract -cne 'current-only-channel-metadata-v1'){
+     $binding.setupContract -cne 'cloud-channel-oss-native-v3' -or $binding.channelContract -cne 'current-only-channel-metadata-v1' -or
+     !$binding.PSObject.Properties['ossSetupQualification'] -or !$binding.ossSetupQualification -or
+     !$binding.PSObject.Properties['ossRuntimeRoot'] -or !$binding.PSObject.Properties['ossWslDistro']){
     throw 'Unsupported signed checkpoint publication contract.'
   }
   $map=@{ExpectedInputSha256='inputSha256';SourceCommit='source';Version='version';BuildId='build';Thumbprint='signer';
     SshTarget='target';RemoteRoot='root';PublicBase='origin';UserProfile='profile';NativeUpdateFrom='nativeUpdateFrom';
     ExpectedVersion='expectedVersion';ExpectedChannelSha256='expectedChannelSha256';NativeUserData='nativeUserData';
-    RecoveryMsix='recoveryMsix';ProfileSampleManifest='profileSampleManifest';CriticalFileManifest='criticalFileManifest'}
+    RecoveryMsix='recoveryMsix';ProfileSampleManifest='profileSampleManifest';CriticalFileManifest='criticalFileManifest';
+    OssRuntimeRoot='ossRuntimeRoot';OssWslDistro='ossWslDistro';OssSetupQualification='ossSetupQualification'}
   foreach($key in $map.Keys){Set-Variable -Scope Script -Name $key -Value $binding.($map[$key]) -WhatIf:$false}
   if($binding.PSObject.Properties['channelRecoveryMsix']){$script:ChannelRecoveryMsix=[string]$binding.channelRecoveryMsix}
   $script:SkipLocalInstall=$true;$script:NativePublishOnly=$true
