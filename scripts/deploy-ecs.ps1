@@ -142,7 +142,7 @@ function Assert-NativeReleaseOptions {
   }
   if(($Commit -cnotmatch '^[a-f0-9]{40}$' -and (!$NativePublishOnly -or $SourceCommit -cnotmatch '^[a-f0-9]{40}$')) -or $ExpectedChannelSha256 -cnotmatch '^[a-f0-9]{64}$' -or
      $NativeUpdateFrom -cnotmatch '^(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3}$' -or $ExpectedVersion -cnotmatch '^(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3}$' -or
-     [Version]$ExpectedVersion -le [Version]$NativeUpdateFrom -or !$RecoveryMsix -or
+     [Version]$ExpectedVersion -le [Version]$NativeUpdateFrom -or (!$RecoveryMsix -and (!$OssSetupQualification -or !$ChannelRecoveryMsix)) -or
      (!$OssSetupQualification -and (!$NativeUserData -or !$ProfileSampleManifest -or !$CriticalFileManifest))){throw 'Native release requires bound baseline/target, pointer SHA256, recovery package, user data and profile manifests.'}
 }
 function Get-ProfileFileHolders([string[]]$Files) {

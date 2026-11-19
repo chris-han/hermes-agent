@@ -37,7 +37,7 @@ function Test-NativeGateway($Package,[string]$ProfileHome) {
   return @{pid=$process.ProcessId;birth=$process.CreationDate.ToUniversalTime().ToString('o');home=$ProfileHome;executable=$process.ExecutablePath;sid=$sid;session=$process.SessionId}
 }
 function Test-NativeChannelRecovery($Remote,[string]$Path) {
-  if($Path -ine $RecoveryMsix){Require-Signature $Path}
+  if($OssSetupQualification -or $Path -ine $RecoveryMsix){Require-Signature $Path}
   if((Hash $Path) -cne $Remote.packageSha256){throw 'Signed channel recovery and ECS baseline package mismatch'}
   $archive=[IO.Compression.ZipFile]::OpenRead($Path)
   try{[xml]$manifest=Read-ZipText $archive 'AppxManifest.xml'}finally{$archive.Dispose()}
@@ -48,6 +48,15 @@ function Test-NativeChannelRecovery($Remote,[string]$Path) {
   }
   if([Version]$ExpectedVersion -le [Version]$version){throw 'Native target must advance both installed and published baselines'}
   return @{path=$Path;version=$version;sha256=$Remote.packageSha256}
+}
+function Get-NativeLocalRecovery($Package) {
+  if($BuildMode -ceq 'Prod' -and $OssSetupQualification -and $NativePublishOnly -and $SkipLocalInstall){
+    return @{result='NOT_RUN_PUBLISH_ONLY_NO_INSTALL';path=$null;signature=$null;sha256=$null}
+  }
+  Require-Signature $RecoveryMsix
+  $signature=Get-PackageSignatureHash $RecoveryMsix
+  if((Hash (Join-Path $Package.InstallLocation 'AppxSignature.p7x')) -cne $signature){throw 'Recovery package does not match installed baseline signature'}
+  return @{result='VERIFIED_LOCAL_RECOVERY';path=$RecoveryMsix;signature=$signature;sha256=(Hash $RecoveryMsix)}
 }
 function Test-NativeReleasePreflight {
   if($RemoteRoot -cnotmatch '^/opt/[A-Za-z0-9_/-]+/releases$' -or $RemoteRoot.Contains('/../') -or
@@ -60,9 +69,8 @@ function Test-NativeReleasePreflight {
     $package[0].Architecture.ToString() -ine 'X64'){throw 'Installed baseline identity/version/status mismatch'}
   $certificate=Get-Item ('Cert:/CurrentUser/My/'+$Thumbprint)
   if(!$certificate.HasPrivateKey -or $certificate.Subject -cne $publisher -or $certificate.NotAfter.ToUniversalTime() -le [DateTime]::UtcNow){throw 'Native release signer unavailable'}
-  Require-Signature $RecoveryMsix
-  $signature=Get-PackageSignatureHash $RecoveryMsix
-  if((Hash (Join-Path $package[0].InstallLocation 'AppxSignature.p7x')) -cne $signature){throw 'Recovery package does not match installed baseline signature'}
+  $localRecovery=Get-NativeLocalRecovery $package[0]
+  $signature=$localRecovery.signature
   if($OssSetupQualification -and $NativePublishOnly -and $SkipLocalInstall){
     # This path never starts a package deployment or touches the installed profile.
     $journalReadiness=@{result='NOT_RUN_PUBLISH_ONLY_NO_INSTALL'}
@@ -92,7 +100,7 @@ function Test-NativeReleasePreflight {
   }
   elseif($saved){if(($saved.version+'.0') -cne $ExpectedVersion){throw 'Saved reservation differs from requested version'}}
   elseif(([Version]($ledger.version+'.0')).Build+1 -ne ([Version]$ExpectedVersion).Build){throw 'Next version reservation differs from explicit target'}
-  if($SupersededBuildOutput -and !$PreflightOnly){$null=Remove-SupersededUnsignedInput $SupersededBuildOutput}
+  if($SupersededBuildOutput -and !$PreflightOnly -and (Get-PSDrive ([IO.Path]::GetPathRoot($Output).Substring(0,1))).Free -lt 12GB){$null=Remove-SupersededUnsignedInput $SupersededBuildOutput}
   if((Get-PSDrive ([IO.Path]::GetPathRoot($Output).Substring(0,1))).Free -lt 12GB){throw 'Insufficient native build space'}
   $code=@'
 import hashlib,json,pathlib,sys
@@ -103,10 +111,15 @@ r=json.loads(body);h=r['nativeHead'];m=root/h['manifestKey'];b=m.read_bytes()
 assert hashlib.sha256(b).hexdigest()==h['sha256'];manifest=json.loads(b)
 assert manifest['request']['identity']['msixAppIdWithOrg']==identity and r['state']=='active'
 row=manifest['packages'][0];a=root/row['artifact']['key']
-with a.open('rb') as stream:assert hashlib.file_digest(stream,'sha256').hexdigest()==row['artifact']['sha256']
-assert a.samefile(root/'releases/SemantierAgent.msix')
+if row.get('native',{}).get('schema')==2:
+ assert row['native']['packageBase']=='https://assets.semantier.cn'
+ assert row['artifact']['key']=='releases/channel-builds/'+h['buildId']+'/SemantierAgent.msix'
+ assert not a.exists(),'OSS release must not have an ECS package body'
+else:
+ with a.open('rb') as stream:assert hashlib.file_digest(stream,'sha256').hexdigest()==row['artifact']['sha256']
+ assert a.samefile(root/'releases/SemantierAgent.msix')
+ assert (root/'releases/installers/semantier-setup-ch1.exe').is_file()
 assert (root/row['feed']['key']).is_file()
-assert (root/'releases/installers/semantier-setup-ch1.exe').is_file()
 print(json.dumps({'pointerSha256':expected,'record':r,'manifest':manifest,'packageSha256':row['artifact']['sha256'],
  'caddySha256':hashlib.sha256(pathlib.Path('/opt/semantier-cloud-live-v1/Caddyfile').read_bytes()).hexdigest()}))
 '@
@@ -114,10 +127,11 @@ print(json.dumps({'pointerSha256':expected,'record':r,'manifest':manifest,'packa
   $remote=Ssh "printf '%s' '$encoded' | base64 -d | python3 - '$RemoteRoot' '$ExpectedChannelSha256' '$identity'"
   $remote=$remote | ConvertFrom-Json
   $channelRecovery=Test-NativeChannelRecovery $remote $(if($ChannelRecoveryMsix){$ChannelRecoveryMsix}else{$RecoveryMsix})
-  $public=Test-NativePublic $remote.manifest $channelRecovery.path -Active -LegacyBaseline
-  return @{result='PASS';stage='READ_ONLY_PREFLIGHT';producedAt=[DateTime]::UtcNow.ToString('o');source=$script:SourceBinding;
+  $legacyBaseline=$remote.manifest.packages[0].native.schema -ne 2
+  $public=Test-NativePublic $remote.manifest $channelRecovery.path -Active -LegacyBaseline:$legacyBaseline
+  return @{result='PASS';stage=$(if($PreflightOnly){'READ_ONLY_PREFLIGHT'}else{'PREPUBLICATION_PREFLIGHT'});producedAt=[DateTime]::UtcNow.ToString('o');source=$script:SourceBinding;
     journalReadiness=$journalReadiness;baseline=$NativeUpdateFrom;target=$ExpectedVersion;family=$package[0].PackageFamilyName;signature=$signature;
-    recoveryMsix=$RecoveryMsix;recoverySha256=(Hash $RecoveryMsix);channelRecovery=$channelRecovery;remote=$remote;gateway=$gateway;files=$samples;
+    localBaselineRecovery=$localRecovery.result;recoveryMsix=$localRecovery.path;recoverySha256=$localRecovery.sha256;channelRecovery=$channelRecovery;remote=$remote;gateway=$gateway;files=$samples;
     visibleWindow=$(if($window){'PRESENT'}else{'NOT_OBSERVED_NO_UI_ACCEPTANCE'});
     public=$public;profileManifests=$profileManifests;llmCalls=0}
 }
