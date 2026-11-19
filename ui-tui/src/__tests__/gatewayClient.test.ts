@@ -144,12 +144,14 @@ describe('GatewayClient websocket attach mode', () => {
     vi.useFakeTimers()
     delete process.env.HERMES_TUI_GATEWAY_URL
     delete process.env.HERMES_TUI_SIDECAR_URL
+
     const gw = new GatewayClient(async () => ({
       url: 'ws://gateway.test/api/ws',
       protocols: [],
       instance_id: 'owner',
       profile_id: 'fixture'
     }))
+
     const events: any[] = []
     gw.on('event', event => events.push(event))
 
@@ -225,12 +227,14 @@ describe('GatewayClient websocket attach mode', () => {
     vi.useFakeTimers()
     delete process.env.HERMES_TUI_GATEWAY_URL
     delete process.env.HERMES_TUI_SIDECAR_URL
+
     const gw = new GatewayClient(async () => ({
       url: 'ws://gateway.test/api/ws',
       protocols: [],
       instance_id: 'owner',
       profile_id: 'fixture'
     }))
+
     const events: any[] = []
     gw.on('event', event => events.push(event))
 
@@ -272,12 +276,14 @@ describe('GatewayClient websocket attach mode', () => {
     vi.useFakeTimers()
     delete process.env.HERMES_TUI_GATEWAY_URL
     delete process.env.HERMES_TUI_SIDECAR_URL
+
     const gw = new GatewayClient(async () => ({
       url: 'ws://gateway.test/api/ws',
       protocols: [],
       instance_id: 'owner',
       profile_id: 'fixture'
     }))
+
     const events: any[] = []
     gw.on('event', event => events.push(event))
 
@@ -288,8 +294,10 @@ describe('GatewayClient websocket attach mode', () => {
       const socket = FakeWebSocket.instances[0]!
       socket.open()
       await vi.advanceTimersByTimeAsync(0)
+
       const frames = (ws: InstanceType<typeof FakeWebSocket>) =>
         ws.sent.map(text => JSON.parse(text) as { id: number; method: string; params: any })
+
       const first = frames(socket).find(frame => frame.method === 'runtime.describe')!
       socket.message(JSON.stringify({ jsonrpc: '2.0', id: first.id, error: { code: -32000, message: 'owner busy' } }))
       await vi.advanceTimersByTimeAsync(0)
@@ -332,12 +340,14 @@ describe('GatewayClient websocket attach mode', () => {
     vi.useFakeTimers()
     delete process.env.HERMES_TUI_GATEWAY_URL
     const grant = { url: 'ws://gateway.test/api/ws', protocols: [], instance_id: 'owner', profile_id: 'fixture' }
+
     const bootstrap = vi
       .fn()
       .mockResolvedValueOnce(grant)
       .mockRejectedValueOnce(new Error('owner stopped'))
       .mockRejectedValueOnce(new Error('owner stopped'))
       .mockResolvedValue(grant)
+
     const gw = new GatewayClient(bootstrap)
     const events: any[] = []
     gw.on('event', event => events.push(event))
@@ -370,12 +380,14 @@ describe('GatewayClient websocket attach mode', () => {
     vi.useFakeTimers()
     delete process.env.HERMES_TUI_GATEWAY_URL
     vi.stubEnv('HERMES_TUI_TOOL_PROGRESS', 'verbose')
+
     const gw = new GatewayClient(async () => ({
       url: 'ws://gateway.test/api/ws',
       protocols: [],
       instance_id: 'owner',
       profile_id: 'fixture'
     }))
+
     gw.on('event', () => undefined)
 
     try {
@@ -426,12 +438,14 @@ describe('GatewayClient websocket attach mode', () => {
     vi.useFakeTimers()
     delete process.env.HERMES_TUI_GATEWAY_URL
     vi.stubEnv('HERMES_TUI_TOOL_PROGRESS', 'verbose')
+
     const gw = new GatewayClient(async () => ({
       url: 'ws://gateway.test/api/ws',
       protocols: [],
       instance_id: 'owner',
       profile_id: 'fixture'
     }))
+
     gw.on('event', () => undefined)
 
     try {
@@ -442,12 +456,15 @@ describe('GatewayClient websocket attach mode', () => {
       socket.open()
       await vi.advanceTimersByTimeAsync(0)
       const frames = () => socket.sent.map(text => JSON.parse(text) as { id: number; method: string; params: any })
+
       const last = (method: string) =>
         frames()
           .filter(f => f.method === method)
           .at(-1)!
+
       const answer = (method: string, body: object) =>
         socket.message(JSON.stringify({ jsonrpc: '2.0', id: last(method).id, ...body }))
+
       // The owner keys a local session by request_id, exactly like create_local_session.
       const minted = new Map<string, string>()
 

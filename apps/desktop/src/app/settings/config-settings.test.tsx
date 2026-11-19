@@ -14,7 +14,10 @@ import type { ConfigSettings as ConfigSettingsType } from './config-settings'
 // writable one; narrow the import back so tests can drive it.
 const scopeProfileMock = $settingsRequestProfile as unknown as { set: (value: string) => void }
 
-vi.mock('./model-settings',()=>({ModelSettings:()=> <div>Cloud model controller</div>,ModelSettingsSkeleton:()=> <div>Model loading</div>}))
+vi.mock('./model-settings', () => ({
+  ModelSettings: () => <div>Cloud model controller</div>,
+  ModelSettingsSkeleton: () => <div>Model loading</div>
+}))
 
 const getHermesConfigRecord = vi.fn()
 const getHermesConfigSchema = vi.fn()
@@ -158,23 +161,40 @@ describe('ConfigSettings autosave', () => {
   })
 })
 
- it('opens Cloud Main directly without inventing a Native config/schema dependency', async () => {
-  $connection.set({baseUrl:'https://cloud.example',mode:'remote',connectionId:'cloud',transport:'semantier-workspace-http',workspaceScope:{userId:'a',workspaceId:'wa',organizationId:'org'}} as never)
+it('opens Cloud Main directly without inventing a Native config/schema dependency', async () => {
+  $connection.set({
+    baseUrl: 'https://cloud.example',
+    mode: 'remote',
+    connectionId: 'cloud',
+    transport: 'semantier-workspace-http',
+    workspaceScope: { userId: 'a', workspaceId: 'wa', organizationId: 'org' }
+  } as never)
   getHermesConfigRecord.mockRejectedValue(new Error('unsupported Native config'))
   getHermesConfigSchema.mockRejectedValue(new Error('unsupported Native schema'))
-  const queryClient=new QueryClient({defaultOptions:{queries:{retry:false}}})
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 
   try {
-   render(<QueryClientProvider client={queryClient}><MemoryRouter><ConfigSettings activeSectionId="model" importInputRef={createRef()} subpage="main" /></MemoryRouter></QueryClientProvider>)
-   expect(await screen.findByText('Cloud model controller')).toBeTruthy()
-   expect(getHermesConfigSchema).not.toHaveBeenCalled()
-  } finally {$connection.set(null);queryClient.clear()}
- })
-
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <ConfigSettings activeSectionId="model" importInputRef={createRef()} subpage="main" />
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+    expect(await screen.findByText('Cloud model controller')).toBeTruthy()
+    expect(getHermesConfigSchema).not.toHaveBeenCalled()
+  } finally {
+    $connection.set(null)
+    queryClient.clear()
+  }
+})
 
 describe('ConfigSettings fallback Apply owner', () => {
   it('keeps removal local, rejects a failed Apply, and retries exactly the sparse ordered chain', async () => {
-    const chain = [{ provider: 'custom:a', model: 'same', base_url: 'http://fixture-a/v1', reasoning_effort: 'high' }, { provider: 'custom:b', model: 'same', key_env: 'SYNTHETIC_KEY' }]
+    const chain = [
+      { provider: 'custom:a', model: 'same', base_url: 'http://fixture-a/v1', reasoning_effort: 'high' },
+      { provider: 'custom:b', model: 'same', key_env: 'SYNTHETIC_KEY' }
+    ]
     getHermesConfigRecord.mockResolvedValue({ fallback_providers: chain, agent: { reasoning_effort: 'medium' } })
     saveHermesConfig.mockRejectedValueOnce(new Error('synthetic disk failure')).mockResolvedValue({ ok: true })
     renderConfigSettings('model')

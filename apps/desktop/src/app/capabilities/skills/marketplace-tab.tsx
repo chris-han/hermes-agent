@@ -12,7 +12,15 @@ import { notifyError } from '@/store/notifications'
 import { DetailColumn, ListColumn, MasterDetail } from '../../master-detail'
 import { InventoryItems, InventoryRow, InventorySelect } from '../inventory'
 
-export function MarketplaceTab({ profile, query, initialSelected }: { profile: ProfileScope; query: string; initialSelected?: string }) {
+export function MarketplaceTab({
+  profile,
+  query,
+  initialSelected
+}: {
+  profile: ProfileScope
+  query: string
+  initialSelected?: string
+}) {
   const { t } = useI18n()
   const c = useInventoryCopy()
   const [search, setSearch] = useState(query)

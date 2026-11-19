@@ -54,7 +54,11 @@ const frameRunners = new Map<string, PreviewFrameRunner>()
 export function registerPreviewFrameRunner(tabId: string, runner: PreviewFrameRunner): () => void {
   frameRunners.set(tabId, runner)
 
-  return () => { if (frameRunners.get(tabId) === runner) {frameRunners.delete(tabId)} }
+  return () => {
+    if (frameRunners.get(tabId) === runner) {
+      frameRunners.delete(tabId)
+    }
+  }
 }
 
 export function activePreviewFrameRunner(owner?: PreviewOwner): PreviewFrameRunner | null {
@@ -63,19 +67,36 @@ export function activePreviewFrameRunner(owner?: PreviewOwner): PreviewFrameRunn
   return (tab && frameRunners.get(tab.id)) || null
 }
 
-type FrameBridge = (payload: { webContentsId: number; operation: 'list' | 'run' | 'mapPoint' | 'input' | 'dispose'; token?: string; code?: string; point?: { x: number; y: number }; event?: PreviewInputEvent }) => Promise<any>
+type FrameBridge = (payload: {
+  webContentsId: number
+  operation: 'list' | 'run' | 'mapPoint' | 'input' | 'dispose'
+  token?: string
+  code?: string
+  point?: { x: number; y: number }
+  event?: PreviewInputEvent
+}) => Promise<any>
 type Guest = { getWebContentsId?: () => number }
 
 /** Bind every trip to the exact webview that started it. */
 export function createPreviewFrameRunner(getGuest: () => Guest | null, bridge: FrameBridge): PreviewFrameRunner {
-  const invoke = async (payload: { operation: 'list' | 'run' | 'mapPoint' | 'input'; token?: string; code?: string; point?: { x: number; y: number }; event?: PreviewInputEvent }) => {
+  const invoke = async (payload: {
+    operation: 'list' | 'run' | 'mapPoint' | 'input'
+    token?: string
+    code?: string
+    point?: { x: number; y: number }
+    event?: PreviewInputEvent
+  }) => {
     const guest = getGuest()
     const webContentsId = guest?.getWebContentsId?.()
 
-    if (!guest || typeof webContentsId !== 'number') {throw new Error('PANE_UNAVAILABLE')}
+    if (!guest || typeof webContentsId !== 'number') {
+      throw new Error('PANE_UNAVAILABLE')
+    }
     const result = await bridge({ ...payload, webContentsId })
 
-    if (getGuest() !== guest || guest.getWebContentsId?.() !== webContentsId) {throw new Error('STALE_TARGET')}
+    if (getGuest() !== guest || guest.getWebContentsId?.() !== webContentsId) {
+      throw new Error('STALE_TARGET')
+    }
 
     return result
   }
@@ -95,7 +116,9 @@ export async function readPreviewFrameText(runner: PreviewFrameRunner): Promise<
   for (const frame of frames) {
     const text = await runner.run(frame.token, 'document.body ? document.body.innerText : ""')
 
-    if (typeof text === 'string' && text.trim()) {pieces.push(text)}
+    if (typeof text === 'string' && text.trim()) {
+      pieces.push(text)
+    }
   }
 
   return pieces.join('\n')

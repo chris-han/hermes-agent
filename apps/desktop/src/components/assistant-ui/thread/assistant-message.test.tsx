@@ -515,9 +515,16 @@ describe('server Bot author attribution', () => {
   it('renders the customized Bot name beside its assistant business message', async () => {
     const base = assistantMessage()
 
-    const assistant = { ...base, metadata: { ...base.metadata, custom: {
-      ...base.metadata?.custom, botAuthor: { botId: 'bot_a', displayName: 'My custom Winman' }
-    } } } as ThreadMessage
+    const assistant = {
+      ...base,
+      metadata: {
+        ...base.metadata,
+        custom: {
+          ...base.metadata?.custom,
+          botAuthor: { botId: 'bot_a', displayName: 'My custom Winman' }
+        }
+      }
+    } as ThreadMessage
 
     render(<Harness assistant={assistant} />)
     const label = await screen.findByText('My custom Winman')

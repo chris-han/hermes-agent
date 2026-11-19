@@ -25,7 +25,17 @@ const createBudgetedLoop = typeof sdk === 'undefined' ? undefined : sdk.createBu
 // solids remain render-only so any bot that picked one during the experiments
 // keeps its look.
 const AVATAR_SHAPES: AvatarShape[] = ['circle', 'squircle', 'pill', 'triangle', 'hexagon', 'cloud', 'drop']
-export const AVATAR_PICKER_SHAPES = ['circle', 'blob', 'squircle', 'square', 'pill', 'triangle', 'hexagon', 'cloud', 'drop']
+export const AVATAR_PICKER_SHAPES = [
+  'circle',
+  'blob',
+  'squircle',
+  'square',
+  'pill',
+  'triangle',
+  'hexagon',
+  'cloud',
+  'drop'
+]
 
 /** xorshift PRNG seeded from a string — stable across sessions/platforms. */
 function sigilRng(text: string) {
@@ -1134,7 +1144,11 @@ export function avatarColor(color: null | string | undefined, name: string): str
   return color || profileColor(name) || PRIMARY_AVATAR_COLOR
 }
 
-export function botAppearance(name: string, meta: BotMeta | null | undefined, owner?: RosterRow | null): AvatarAppearance {
+export function botAppearance(
+  name: string,
+  meta: BotMeta | null | undefined,
+  owner?: RosterRow | null
+): AvatarAppearance {
   // The primary profile is literally named "default"; the SDK's profileColor
   // can hand it a near-black that renders as an ugly black square, and any
   // auto-seeded color in local bot-meta would otherwise stick. Give the

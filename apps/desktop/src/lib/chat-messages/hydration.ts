@@ -40,13 +40,20 @@ const CONTEXT_REF_RE = /@(file|folder|url|image|tool|terminal):(?:"[^"\n]+"|'[^'
 function persistedImageRefs(text: string) {
   const suffix = /\n\n((?:\[Image attached(?: at)?: [^\n]+\]\n)+)((?:\[screenshot\](?:\n|$))+)$/.exec(text)
 
-  if (!suffix) { return extractImageRefs(text) }
+  if (!suffix) {
+    return extractImageRefs(text)
+  }
   const paths = [...suffix[1].matchAll(/^\[Image attached(?: at)?: (.+)\]$/gm)].map(match => match[1])
 
-  if (paths.length !== suffix[2].split('[screenshot]').length - 1) { return extractImageRefs(text) }
+  if (paths.length !== suffix[2].split('[screenshot]').length - 1) {
+    return extractImageRefs(text)
+  }
   const extracted = extractImageRefs(text.slice(0, suffix.index))
 
-  return { cleanedText: extracted.cleanedText, refs: [...extracted.refs, ...paths.map(path => `@image:${formatRefValue(path)}`)] }
+  return {
+    cleanedText: extracted.cleanedText,
+    refs: [...extracted.refs, ...paths.map(path => `@image:${formatRefValue(path)}`)]
+  }
 }
 
 // Gateway routing note for Discord turns (gateway/run_inbound.py::discord_triggering_note).
@@ -206,13 +213,16 @@ function parseDisplayMetadata(metadata: SessionMessage['display_metadata']): nul
 }
 
 function messageBotAuthor(message: SessionMessage): ChatMessage['botAuthor'] {
-  if (message.role !== 'assistant') { return undefined }
+  if (message.role !== 'assistant') {
+    return undefined
+  }
   const metadata = parseDisplayMetadata(message.display_metadata)
   const botId = metadata?.author_bot_id
   const displayName = metadata?.author_display_name
 
   return typeof botId === 'string' && botId.trim() && typeof displayName === 'string' && displayName.trim()
-    ? { botId, displayName } : undefined
+    ? { botId, displayName }
+    : undefined
 }
 
 // `agent/conversation_loop.py::_failed_turn_display_metadata`: the failed turn's error card,
@@ -484,7 +494,8 @@ export function toChatMessages(messages: SessionMessage[]): ChatMessage[] {
     // optimistic composer already uses) and render them via the dedicated
     // attachments row below the bubble instead. The leading `@file:` block
     // (attached files, large pastes) moves there too, for the same parity.
-    const imageRefExtraction = displayRole === 'user' && rawDisplayContent ? persistedImageRefs(rawDisplayContent) : null
+    const imageRefExtraction =
+      displayRole === 'user' && rawDisplayContent ? persistedImageRefs(rawDisplayContent) : null
     const fileRefExtraction = imageRefExtraction ? splitLeadingAttachmentRefs(imageRefExtraction.cleanedText) : null
     const displayContent = fileRefExtraction ? fileRefExtraction.text : rawDisplayContent
     const liftedRefs = [...(fileRefExtraction?.refs ?? []), ...(imageRefExtraction?.refs ?? [])]
@@ -556,9 +567,12 @@ export function toChatMessages(messages: SessionMessage[]): ChatMessage[] {
 
     const botAuthor = messageBotAuthor(message)
 
-    if (message.role === 'assistant' && activeAssistantIndex !== null &&
-        (result[activeAssistantIndex]?.botAuthor?.botId !== botAuthor?.botId ||
-         result[activeAssistantIndex]?.botAuthor?.displayName !== botAuthor?.displayName)) {
+    if (
+      message.role === 'assistant' &&
+      activeAssistantIndex !== null &&
+      (result[activeAssistantIndex]?.botAuthor?.botId !== botAuthor?.botId ||
+        result[activeAssistantIndex]?.botAuthor?.displayName !== botAuthor?.displayName)
+    ) {
       flushPendingTools(index)
       activeAssistantIndex = null
     }

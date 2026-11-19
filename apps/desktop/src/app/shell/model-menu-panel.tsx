@@ -54,7 +54,12 @@ export function ModelMenuPanel({ onFollowDefaultModel, ...props }: ModelMenuPane
   const testing = testingOwner === testToken
   const testOwnerRef = useRef(testToken)
   testOwnerRef.current = testToken
-  useEffect(() => () => { testOwnerRef.current = '' }, [])
+  useEffect(
+    () => () => {
+      testOwnerRef.current = ''
+    },
+    []
+  )
   const journeyCopy = providerJourneyCopy(locale)
   const testLabel = journeyCopy.test
 
@@ -64,21 +69,34 @@ export function ModelMenuPanel({ onFollowDefaultModel, ...props }: ModelMenuPane
 
     const description = journeyCopy.cost
 
-    if (!(await confirm({ title: `${testLabel}: ${provider} / ${model}`, description, confirmLabel: testLabel }))) { return }
+    if (!(await confirm({ title: `${testLabel}: ${provider} / ${model}`, description, confirmLabel: testLabel }))) {
+      return
+    }
 
-    if (testOwnerRef.current !== captured) { return }
+    if (testOwnerRef.current !== captured) {
+      return
+    }
     setTestingOwner(captured)
 
     try {
       const result = await testProviderModel(provider, model, { connectionId: ownerConnectionId, profile })
 
-      if (testOwnerRef.current !== captured) { return }
-      notify({ kind: result.ok ? 'success' : 'error', title: testLabel,
-        message: `${provider} / ${model}: ${providerTestStatus(locale, result.status)}` })
+      if (testOwnerRef.current !== captured) {
+        return
+      }
+      notify({
+        kind: result.ok ? 'success' : 'error',
+        title: testLabel,
+        message: `${provider} / ${model}: ${providerTestStatus(locale, result.status)}`
+      })
     } catch (error) {
-      if (testOwnerRef.current === captured) { notifyError(error, testLabel) }
+      if (testOwnerRef.current === captured) {
+        notifyError(error, testLabel)
+      }
     } finally {
-      if (testOwnerRef.current === captured) { setTestingOwner(null) }
+      if (testOwnerRef.current === captured) {
+        setTestingOwner(null)
+      }
     }
   }
 
@@ -114,15 +132,21 @@ export function ModelMenuPanel({ onFollowDefaultModel, ...props }: ModelMenuPane
       // a custom slug the row lacks is still what the user selected.
       queryClient.setQueryData<ModelOptionsResult>(queryKey, next)
       void queryClient.invalidateQueries({
-        predicate: query => query.queryKey[0] === 'model-options' && query.queryKey[1] === profile &&
+        predicate: query =>
+          query.queryKey[0] === 'model-options' &&
+          query.queryKey[1] === profile &&
           query.queryKey[2] !== (activeSessionId || 'global') &&
-          query.queryKey[3] === 'owner' && query.queryKey[4] === ownerKey
+          query.queryKey[3] === 'owner' &&
+          query.queryKey[4] === ownerKey
       })
     } catch {
       // Reload this source's snapshot so a failed refresh can surface its stale marker.
       void queryClient.invalidateQueries({
-        predicate: query => query.queryKey[0] === 'model-options' && query.queryKey[1] === profile &&
-          query.queryKey[3] === 'owner' && query.queryKey[4] === ownerKey
+        predicate: query =>
+          query.queryKey[0] === 'model-options' &&
+          query.queryKey[1] === profile &&
+          query.queryKey[3] === 'owner' &&
+          query.queryKey[4] === ownerKey
       })
     } finally {
       setRefreshing(false)
@@ -135,8 +159,16 @@ export function ModelMenuPanel({ onFollowDefaultModel, ...props }: ModelMenuPane
       footer={
         <>
           <DropdownMenuItem
-            disabled={testing || !controller.current.provider || !controller.current.model || connection?.transport === 'semantier-workspace-http'}
-            onSelect={event => { event.preventDefault(); void testModel() }}
+            disabled={
+              testing ||
+              !controller.current.provider ||
+              !controller.current.model ||
+              connection?.transport === 'semantier-workspace-http'
+            }
+            onSelect={event => {
+              event.preventDefault()
+              void testModel()
+            }}
           >
             <Codicon name="beaker" size="0.75rem" />
             {testLabel}

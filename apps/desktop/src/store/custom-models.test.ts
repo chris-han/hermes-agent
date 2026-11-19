@@ -106,7 +106,6 @@ describe('resetModelVisibilityKeepingCustoms', () => {
   })
 })
 
-
 it('keeps manual IDs in their exact source/profile scope, including visibility reset', () => {
   $customModels.set([])
   const row = { slug: 'fixture', name: 'Fixture', models: [] }

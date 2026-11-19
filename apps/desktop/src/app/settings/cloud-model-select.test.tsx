@@ -16,11 +16,42 @@ afterEach(cleanup)
 it('Settings searches provider/model terms together and commits the public id', async () => {
   const onChange = vi.fn()
 
-  const provider = { slug: 'semantier-cloud', name: 'Semantier Model Provider', authenticated: true,
-    eligible_models: ['gpt-4o', 'qwen3.5-plus'], models: ['gpt-4o', 'qwen3.5-plus'],
-    model_profiles: { 'gpt-4o': { label: 'GPT-4o', context_window: 128000, max_output_tokens: 1024, provider_id: 'AZURE_OPENAI', provider_display: 'Azure OpenAI', provider_aliases: ['az'], source_model_id: 'deployment-gpt-4o' }, 'qwen3.5-plus': { label: 'Qwen', context_window: 128000, max_output_tokens: 1024, provider_id: 'DASHSCOPE', provider_display: 'Alibaba DashScope' } } }
+  const provider = {
+    slug: 'semantier-cloud',
+    name: 'Semantier Model Provider',
+    authenticated: true,
+    eligible_models: ['gpt-4o', 'qwen3.5-plus'],
+    models: ['gpt-4o', 'qwen3.5-plus'],
+    model_profiles: {
+      'gpt-4o': {
+        label: 'GPT-4o',
+        context_window: 128000,
+        max_output_tokens: 1024,
+        provider_id: 'AZURE_OPENAI',
+        provider_display: 'Azure OpenAI',
+        provider_aliases: ['az'],
+        source_model_id: 'deployment-gpt-4o'
+      },
+      'qwen3.5-plus': {
+        label: 'Qwen',
+        context_window: 128000,
+        max_output_tokens: 1024,
+        provider_id: 'DASHSCOPE',
+        provider_display: 'Alibaba DashScope'
+      }
+    }
+  }
 
-  render(<ModelSelect aria-label="Main model" models={provider.models} onValueChange={onChange} provider={provider} providerSlug="semantier-cloud" value="qwen3.5-plus" />)
+  render(
+    <ModelSelect
+      aria-label="Main model"
+      models={provider.models}
+      onValueChange={onChange}
+      provider={provider}
+      providerSlug="semantier-cloud"
+      value="qwen3.5-plus"
+    />
+  )
   fireEvent.click(screen.getByRole('combobox', { name: 'Main model' }))
   fireEvent.change(screen.getByPlaceholderText('Search models'), { target: { value: ' AZURE GpT-4o ' } })
   await waitFor(() => expect(screen.getAllByRole('option').map(n => n.textContent)).toEqual(['GPT-4o · Azure OpenAI']))
@@ -31,10 +62,26 @@ it('Settings searches provider/model terms together and commits the public id', 
 it('Settings searches combined BYOK provider/model terms without changing the manual route', async () => {
   const onChange = vi.fn()
 
-  const provider = { slug: 'offer-mvl-azure-search', name: 'Azure local search fixture (synthetic)', authenticated: true,
-    models: ['gpt-4o', 'gpt-4o-mini'], discovery_state: 'fresh' as const, discovery_source_id: 'fixture-source' }
+  const provider = {
+    slug: 'offer-mvl-azure-search',
+    name: 'Azure local search fixture (synthetic)',
+    authenticated: true,
+    models: ['gpt-4o', 'gpt-4o-mini'],
+    discovery_state: 'fresh' as const,
+    discovery_source_id: 'fixture-source'
+  }
 
-  render(<ModelSelect aria-label="BYOK model" models={provider.models} onValueChange={onChange} provider={provider} providerSlug={provider.slug} searchable value="gpt-4o" />)
+  render(
+    <ModelSelect
+      aria-label="BYOK model"
+      models={provider.models}
+      onValueChange={onChange}
+      provider={provider}
+      providerSlug={provider.slug}
+      searchable
+      value="gpt-4o"
+    />
+  )
   fireEvent.click(screen.getByRole('combobox', { name: 'BYOK model' }))
   fireEvent.change(screen.getByPlaceholderText('Model'), { target: { value: '  AZURE gpt-4o  ' } })
   await waitFor(() => expect(screen.getAllByRole('option').map(n => n.textContent)).toEqual(['gpt-4o', 'gpt-4o-mini']))
@@ -46,16 +93,34 @@ it('Settings searches combined BYOK provider/model terms without changing the ma
 it('retains an incomplete model with its configuration issue while other models stay usable', async () => {
   const onChange = vi.fn()
 
-  const provider = { slug: 'semantier-cloud', name: 'Semantier Model Provider', authenticated: true,
-    eligible_models: ['good', 'unknown-id'], models: ['good', 'unknown-id'],
+  const provider = {
+    slug: 'semantier-cloud',
+    name: 'Semantier Model Provider',
+    authenticated: true,
+    eligible_models: ['good', 'unknown-id'],
+    models: ['good', 'unknown-id'],
     model_profiles: {
       good: { label: 'Good', context_window: 128000, max_output_tokens: 1024 },
       'unknown-id': { label: 'Unknown model', context_window: null, max_output_tokens: 1024 }
-    } }
+    }
+  }
 
-  render(<ModelSelect aria-label="Main model" models={provider.models} onValueChange={onChange} provider={provider} providerSlug="semantier-cloud" value="good" />)
+  render(
+    <ModelSelect
+      aria-label="Main model"
+      models={provider.models}
+      onValueChange={onChange}
+      provider={provider}
+      providerSlug="semantier-cloud"
+      value="good"
+    />
+  )
   fireEvent.click(screen.getByRole('combobox', { name: 'Main model' }))
-  await waitFor(() => expect(screen.getByRole('option', { name: /Unknown model.*context_window/ }).getAttribute('aria-disabled')).toBe('true'))
+  await waitFor(() =>
+    expect(screen.getByRole('option', { name: /Unknown model.*context_window/ }).getAttribute('aria-disabled')).toBe(
+      'true'
+    )
+  )
   expect(screen.getByRole('option', { name: 'Good' }).getAttribute('aria-disabled')).not.toBe('true')
   expect(onChange).not.toHaveBeenCalled()
 })

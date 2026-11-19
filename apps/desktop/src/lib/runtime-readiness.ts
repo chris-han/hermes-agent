@@ -132,7 +132,16 @@ export function interpretRuntimeReadiness(
     typeof signals.setup?.provider_configured === 'boolean' ? Boolean(signals.setup.provider_configured) : undefined
 
   const runtimeOk = typeof signals.runtime?.ok === 'boolean' ? Boolean(signals.runtime.ok) : undefined
-  const runtimeFailure = normalizeMessage(signals.runtime?.source === 'semantier-cloud' && signals.runtime.error_code ? translateNow('onboarding.cloudSignInError', decodeCloudSignInError({code: signals.runtime.error_code}).code, 'default') : signals.runtime?.error) ?? normalizeMessage(signals.runtimeError)
+  const runtimeFailure =
+    normalizeMessage(
+      signals.runtime?.source === 'semantier-cloud' && signals.runtime.error_code
+        ? translateNow(
+            'onboarding.cloudSignInError',
+            decodeCloudSignInError({ code: signals.runtime.error_code }).code,
+            'default'
+          )
+        : signals.runtime?.error
+    ) ?? normalizeMessage(signals.runtimeError)
   const setupFailure = normalizeMessage(signals.setupError)
 
   // Route facts the check reported, carried through untouched so consumers
@@ -213,12 +222,15 @@ export async function evaluateRuntimeReadiness(
   const signals = await fetchRuntimeReadinessSignals(requestGateway, options.requestedProvider)
   const result = interpretRuntimeReadiness(signals, options)
 
-  if (signals.runtime?.source !== 'semantier-cloud') { return result }
+  if (signals.runtime?.source !== 'semantier-cloud') {
+    return result
+  }
 
   // Only the selected Cloud route reads Cloud account readiness. BYOK/local
   // routes never enumerate other provider accounts or perform inference probes.
   const [{ createBillingApi }, { cloudServiceStatus }] = await Promise.all([
-    import('@/app/settings/billing/api'), import('./model-service-status')
+    import('@/app/settings/billing/api'),
+    import('./model-service-status')
   ])
 
   const modelService = cloudServiceStatus(await createBillingApi(requestGateway).fetchBillingState())
@@ -226,11 +238,25 @@ export async function evaluateRuntimeReadiness(
   const ready = result.ready && modelService.state === 'ready'
 
   const codes: Record<ModelServiceStatus['state'], string> = {
-    setup: 'cloud_authorization_required', ready: 'cloud_catalog_unavailable',
-    plan: 'cloud_model_access_missing', preparing: 'cloud_provisioning_pending',
-    expired: 'cloud_entitlement_restricted', credit: 'cloud_entitlement_restricted',
-    reauth: 'cloud_credential_expired', denied: 'cloud_model_access_missing', unavailable: 'cloud_metadata_unavailable'
+    setup: 'cloud_authorization_required',
+    ready: 'cloud_catalog_unavailable',
+    plan: 'cloud_model_access_missing',
+    preparing: 'cloud_provisioning_pending',
+    expired: 'cloud_entitlement_restricted',
+    credit: 'cloud_entitlement_restricted',
+    reauth: 'cloud_credential_expired',
+    denied: 'cloud_model_access_missing',
+    unavailable: 'cloud_metadata_unavailable'
   }
 
-  return { ...result, modelService, ready, reason: ready ? null : result.reason || modelService.detail || translateNow('onboarding.cloudSignInError', codes[modelService.state], 'default') }
+  return {
+    ...result,
+    modelService,
+    ready,
+    reason: ready
+      ? null
+      : result.reason ||
+        modelService.detail ||
+        translateNow('onboarding.cloudSignInError', codes[modelService.state], 'default')
+  }
 }

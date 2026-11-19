@@ -18,7 +18,11 @@ import {
 } from './local-gateway'
 import { closeGatewayTicketBridges, createGatewayTicketResolver } from './local-gateway-python'
 import { looksBinary, previewFileMetadata } from './main_file_preview'
-import { assertWorkspaceScope, registerSemantierWorkspaceIpc, workspace as semantierWorkspace } from './semantier-workspace-ipc'
+import {
+  assertWorkspaceScope,
+  registerSemantierWorkspaceIpc,
+  workspace as semantierWorkspace
+} from './semantier-workspace-ipc'
 import { registerSemantierFeedbackIpc } from './updater/semantier-feedback-ipc'
 
 const workspaceAccountGenerations = new Map<string, number>()
@@ -442,7 +446,13 @@ import {
 import { wireOauthSessionResponse } from './oauth-session-response'
 import { listWindowsProcesses, reapPackageRootedProcesses } from './package-process-reap'
 import { createParentStartMarkerResolver } from './parent-process-identity'
-import { bundledPayload, installIdForRoot, type PayloadInfo, payloadPythonPath, requireBundledPayload } from './payload-backend'
+import {
+  bundledPayload,
+  installIdForRoot,
+  type PayloadInfo,
+  payloadPythonPath,
+  requireBundledPayload
+} from './payload-backend'
 import { petOverlayClickThrough, shouldPopInOnOverlayClosed } from './pet-overlay'
 import { placePetOverlay, registerPetOverlayIpc } from './pet-overlay-ipc'
 import {
@@ -649,11 +659,20 @@ import { configureChannel1Quic, createDesktopUpdateFetches } from './updater/cha
 import { markChannelArtifactHandoff, retireInstalledChannelArtifacts } from './updater/channel-artifact-cache'
 import { inspectRunningChannelApp } from './updater/channel-native'
 import { ChannelStrategy } from './updater/channel-strategy'
-import { createNativeUriAppInstallerStrategy, inspectNativePackageUriEligibility, recoverNativeUpdateHome, verifyPreparedChannelInstaller } from './updater/channel-windows-host'
+import {
+  createNativeUriAppInstallerStrategy,
+  inspectNativePackageUriEligibility,
+  recoverNativeUpdateHome,
+  verifyPreparedChannelInstaller
+} from './updater/channel-windows-host'
 import { type CheckoutStrategy, createCheckoutStrategy } from './updater/checkout'
 import { readSourceUpdate, sourceChannelName, type SourceUpdate } from './updater/checkout-source'
 import { DeliverySources } from './updater/delivery-source'
-import { assertApplicationMainFrame, broadcastDeliverySourceCheck, registerDeliverySourceIpc } from './updater/delivery-source-ipc'
+import {
+  assertApplicationMainFrame,
+  broadcastDeliverySourceCheck,
+  registerDeliverySourceIpc
+} from './updater/delivery-source-ipc'
 import { ExternalStrategy } from './updater/external'
 import { readUpdatesFeedBaseFromConfig, resolveFeedBaseUrl } from './updater/feed-config'
 import { createChannelMacStrategy, createMacStrategy } from './updater/mac-client'
@@ -665,7 +684,12 @@ import {
   type RelaunchRegistration
 } from './updater/relaunch'
 import { startUpdateRelaunchWaiter } from './updater/relaunch-waiter'
-import { assertPackagedChannelSelection, packagedChannelSelection, savePackagedChannel, supportsPackagedChannels } from './updater/semantier-channel'
+import {
+  assertPackagedChannelSelection,
+  packagedChannelSelection,
+  savePackagedChannel,
+  supportsPackagedChannels
+} from './updater/semantier-channel'
 import { preflightStateDb } from './updater/state-db-preflight'
 import { createStoreStrategy } from './updater/store-client'
 import { UpdateWorkGuard } from './updater/work-review'
@@ -1806,7 +1830,6 @@ const PREVIEW_LANGUAGE_BY_EXT = {
   '.yml': 'yaml',
   '.zsh': 'shell'
 }
-
 
 app.setName(APP_NAME)
 
@@ -3498,14 +3521,22 @@ async function checkUpdates(opts: { force?: boolean } = {}): Promise<UpdaterStat
 
   try {
     const status = await updateOperation.check(() => checkUpdatesForSelection(opts))
-    const selection = process.platform === 'win32' ? packagedChannelSelection(INSTALL_STAMP?.channelBuild, DESKTOP_UPDATE_CONFIG_PATH) : null
+    const selection =
+      process.platform === 'win32'
+        ? packagedChannelSelection(INSTALL_STAMP?.channelBuild, DESKTOP_UPDATE_CONFIG_PATH)
+        : null
 
     return selection ? { ...status, releaseChannel: selection.choice } : status
   } finally {
     updateChecks -= 1
 
     if (canSelectDeliverySource()) {
-      broadcastDeliverySourceCheck(deliverySources, updateOperation.checkStatus, BrowserWindow.getAllWindows(), rememberLog)
+      broadcastDeliverySourceCheck(
+        deliverySources,
+        updateOperation.checkStatus,
+        BrowserWindow.getAllWindows(),
+        rememberLog
+      )
     }
   }
 }
@@ -3554,7 +3585,11 @@ const deliverySources = new DeliverySources(
 )
 
 function canSelectDeliverySource(): boolean {
-  return process.platform === 'win32' && INSTALL_STAMP?.updateMechanism === 'app-installer' && Boolean(INSTALL_STAMP.channelBuild)
+  return (
+    process.platform === 'win32' &&
+    INSTALL_STAMP?.updateMechanism === 'app-installer' &&
+    Boolean(INSTALL_STAMP.channelBuild)
+  )
 }
 
 const desktopMetrics: DesktopSharedMetrics = registerDesktopSharedMetrics()
@@ -3577,18 +3612,26 @@ async function createPackagedUpdateStrategy(): Promise<UpdaterStrategy | null> {
 
   if (INSTALL_STAMP?.channelBuild && (mechanism === 'electron-updater' || mechanism === 'app-installer')) {
     const installedBuild = INSTALL_STAMP.channelBuild
-    const selectedBuild = packagedChannelSelection(installedBuild, DESKTOP_UPDATE_CONFIG_PATH, resolveDesktopFeedBaseUrl())?.build ?? installedBuild
+    const selectedBuild =
+      packagedChannelSelection(installedBuild, DESKTOP_UPDATE_CONFIG_PATH, resolveDesktopFeedBaseUrl())?.build ??
+      installedBuild
     const build = canSelectDeliverySource() ? { ...selectedBuild, publicBase: deliverySources.base() } : selectedBuild
     const installed = await inspectRunningChannelApp(installedBuild)
 
     if (process.platform === 'win32') {
       await retireInstalledChannelArtifacts(path.join(app.getPath('userData'), 'updates'), {
-        buildId: installedBuild.buildId, version: installed.nativeVersion,
-        identity: installedBuild.identity.msixAppIdWithOrg, publisher: installed.signer
+        buildId: installedBuild.buildId,
+        version: installed.nativeVersion,
+        identity: installedBuild.identity.msixAppIdWithOrg,
+        publisher: installed.signer
       })
     }
 
-    semantierObservations.reconcile({version: installed.nativeVersion, family: installed.packageFamilyName ?? '', buildId: build.buildId})
+    semantierObservations.reconcile({
+      version: installed.nativeVersion,
+      family: installed.packageFamilyName ?? '',
+      buildId: build.buildId
+    })
 
     // Platform/arch/signing are the channel's own preconditions. The Python
     // payload is not: electron-updater swaps the .app without it, and the
@@ -3601,11 +3644,17 @@ async function createPackagedUpdateStrategy(): Promise<UpdaterStrategy | null> {
       throw new Error('Channel updates require a supported packaged application')
     }
 
-    const nativeEligibility = process.platform === 'win32' && installed.packageFullName
-      ? await inspectNativePackageUriEligibility(installed.packageFullName).catch(() => ({supported:false, reason:'native-capability-query-unavailable'}))
-      : {supported:false, reason:'not-windows-package'}
+    const nativeEligibility =
+      process.platform === 'win32' && installed.packageFullName
+        ? await inspectNativePackageUriEligibility(installed.packageFullName).catch(() => ({
+            supported: false,
+            reason: 'native-capability-query-unavailable'
+          }))
+        : { supported: false, reason: 'not-windows-package' }
 
-    if (!nativeEligibility.supported && process.platform === 'win32') {rememberLog(`[updates] native URI eligibility: ${nativeEligibility.reason}`)}
+    if (!nativeEligibility.supported && process.platform === 'win32') {
+      rememberLog(`[updates] native URI eligibility: ${nativeEligibility.reason}`)
+    }
 
     return new ChannelStrategy({
       build,
@@ -3617,20 +3666,29 @@ async function createPackagedUpdateStrategy(): Promise<UpdaterStrategy | null> {
         platform: process.platform,
         arch: process.arch,
         signer: installed.signer,
-        nativePackageUri:nativeEligibility.supported
+        nativePackageUri: nativeEligibility.supported
       }),
       reviewApplyTarget: target => {
         const review = updateWorkGuard.review(
           `${target.manifest.request.buildId}:${target.package.artifact.sha256}`,
-          installed.nativeVersion, target.package.version, updateWorkToken
+          installed.nativeVersion,
+          target.package.version,
+          updateWorkToken
         )
 
         return review ? { ok: false, error: 'active-work-review', workReview: review } : null
       },
       onApplyTarget: async target => {
-        semantierObservations.begin({release_id: target.manifest.request.buildId, build_id: target.manifest.request.buildId,
-          target_sha256: target.package.artifact.sha256, target_version: target.package.version,
-          package_family: installed.packageFamilyName ?? ''}, installed.nativeVersion)
+        semantierObservations.begin(
+          {
+            release_id: target.manifest.request.buildId,
+            build_id: target.manifest.request.buildId,
+            target_sha256: target.package.artifact.sha256,
+            target_version: target.package.version,
+            package_family: installed.packageFamilyName ?? ''
+          },
+          installed.nativeVersion
+        )
       },
       nativeFactory: (target: ChannelTarget): UpdaterStrategy => createNativePackagedStrategy(mechanism, target)
     })
@@ -3640,7 +3698,11 @@ async function createPackagedUpdateStrategy(): Promise<UpdaterStrategy | null> {
 }
 
 const { metadata: fetchDesktopUpdate, artifact: fetchDesktopArtifact } = createDesktopUpdateFetches(
-  process.platform, (input, init) => electronNet.fetch(input instanceof URL ? input.href : input, init), session, channel1QuicAvailable)
+  process.platform,
+  (input, init) => electronNet.fetch(input instanceof URL ? input.href : input, init),
+  session,
+  channel1QuicAvailable
+)
 
 function createNativePackagedStrategy(
   mechanism: UpdaterStrategy['mechanism'],
@@ -3682,7 +3744,9 @@ function createNativePackagedStrategy(
           const rollback = await markChannelArtifactHandoff(path.join(app.getPath('userData'), 'updates'), file)
           const error = await shell.openPath(file)
 
-          if (error) { await rollback?.() }
+          if (error) {
+            await rollback?.()
+          }
 
           return error
         }
@@ -3755,8 +3819,6 @@ function createNativePackagedStrategy(
 
   return new ExternalStrategy(INSTALL_STAMP)
 }
-
-
 
 /**
  * The checkout updater strategy (windows-handoff / posix-handoff). The flow
@@ -3869,7 +3931,8 @@ async function teardownBundledBackend(): Promise<void> {
 
   if (IS_WINDOWS && INSTALL_STAMP?.updateMechanism === 'app-installer' && INSTALL_STAMP.channelBuild) {
     const connections = await Promise.all([
-      backendConnectionState.getPromise(), ...[...backendPool.values()].map(entry => entry.connectionPromise)
+      backendConnectionState.getPromise(),
+      ...[...backendPool.values()].map(entry => entry.connectionPromise)
     ])
 
     await drainNativePackageGateways(connections, stopLocalGatewayOwnerForPackageUpdate)
@@ -4594,12 +4657,18 @@ async function releaseBackendLock(updateRoot: string, tag: string): Promise<{ un
 //
 // Detection (checkUpdates / commit changelog / "N behind") stays in the UI;
 // only this apply action changed.
-async function applyUpdates(token?: unknown, expectedReleaseChannel?: unknown, requireSelection = false): Promise<UpdaterApplyResultWire> {
+async function applyUpdates(
+  token?: unknown,
+  expectedReleaseChannel?: unknown,
+  requireSelection = false
+): Promise<UpdaterApplyResultWire> {
   return updateOperation.apply(async (): Promise<UpdaterApplyResultWire> => {
     if (requireSelection && process.platform === 'win32') {
       const selection = packagedChannelSelection(INSTALL_STAMP?.channelBuild, DESKTOP_UPDATE_CONFIG_PATH)
 
-      if (selection) { assertPackagedChannelSelection(selection.choice, expectedReleaseChannel) }
+      if (selection) {
+        assertPackagedChannelSelection(selection.choice, expectedReleaseChannel)
+      }
     }
 
     updateInFlight = true
@@ -4625,10 +4694,16 @@ async function applyUpdates(token?: unknown, expectedReleaseChannel?: unknown, r
       const strategy: UpdaterStrategy = packaged ?? resolveCheckoutUpdateStrategy()
       let result: UpdaterApplyResultWire
 
-      try { result = await desktopMetrics.trackUpdateApply(packaged, strategy) }
-      catch (error) { semantierObservations.failed('native_update_failed'); throw error }
+      try {
+        result = await desktopMetrics.trackUpdateApply(packaged, strategy)
+      } catch (error) {
+        semantierObservations.failed('native_update_failed')
+        throw error
+      }
 
-      if (!result.ok && !result.workReview) {semantierObservations.failed('native_update_refused')}
+      if (!result.ok && !result.workReview) {
+        semantierObservations.failed('native_update_refused')
+      }
       handedOff = result.handedOff === true
 
       return result
@@ -6279,7 +6354,9 @@ async function buildReadinessHealthProbe(baseUrl, authMode, token) {
 // that is not that exact case surfaces unchanged.
 async function waitForRemoteHermes(remote) {
   // Workspace readiness was checked through its authenticated identity owner.
-  if (remote.transport === 'semantier-workspace-http') { return }
+  if (remote.transport === 'semantier-workspace-http') {
+    return
+  }
 
   try {
     await waitForHermes(remote.baseUrl, remote.token, undefined, remote.authMode, remote.headers)
@@ -6734,7 +6811,16 @@ function buildApplicationMenu() {
   template.push({
     label: 'Help',
     role: 'help',
-    submenu: [checkForUpdatesItem, {label: app.getLocale().startsWith('zh') ? '发送诊断' : 'Send diagnostics', click: () => {const target = BrowserWindow.getFocusedWindow() ?? mainWindow; target?.webContents.send('semantier:feedback:open')}}]
+    submenu: [
+      checkForUpdatesItem,
+      {
+        label: app.getLocale().startsWith('zh') ? '发送诊断' : 'Send diagnostics',
+        click: () => {
+          const target = BrowserWindow.getFocusedWindow() ?? mainWindow
+          target?.webContents.send('semantier:feedback:open')
+        }
+      }
+    ]
   })
 
   return Menu.buildFromTemplate(template)
@@ -10434,7 +10520,9 @@ async function resolveRemoteBackend(
   }
 
   if (route.kind !== 'ssh' && route.transport === 'semantier-workspace-http') {
-    if (!route.connectionId) { throw new Error('Workspace HTTP requires its registered connection owner.') }
+    if (!route.connectionId) {
+      throw new Error('Workspace HTTP requires its registered connection owner.')
+    }
 
     // Legacy primary/prewarm callers must keep the selected registry transport.
     // Reuse the same authenticated HTTP descriptor as explicit registry dials.
@@ -10857,7 +10945,11 @@ function sendConnectionApplied() {
 // scoped to that connection. Without this, a removed remote/cloud source keeps
 // its renderer WebSocket open and streaming as a ghost, and an edited one
 // keeps talking to the OLD endpoint indefinitely.
-function broadcastConnectionsChanged(payload: { connectionId: string; reason: 'removed' | 'saved' | 'updated' | 'account-changed'; authenticated?: boolean }) {
+function broadcastConnectionsChanged(payload: {
+  connectionId: string
+  reason: 'removed' | 'saved' | 'updated' | 'account-changed'
+  authenticated?: boolean
+}) {
   for (const win of BrowserWindow.getAllWindows()) {
     const { webContents } = win
 
@@ -11048,16 +11140,33 @@ async function ensureRegistryBackend(
     if (selectedProfile !== 'default') {
       const owner = await client.winman()
 
-      if (owner.profile.name !== selectedProfile) { throw new Error('This Native profile is unavailable in the current workspace.') }
-      assertWorkspaceScope(await client.identity(), { userId: identity.user.user_id,
-        workspaceId: identity.workspace.id, organizationId: identity.organization_id })
+      if (owner.profile.name !== selectedProfile) {
+        throw new Error('This Native profile is unavailable in the current workspace.')
+      }
+      assertWorkspaceScope(await client.identity(), {
+        userId: identity.user.user_id,
+        workspaceId: identity.workspace.id,
+        organizationId: identity.organization_id
+      })
     }
 
     return {
-      baseUrl: origin, transport: source.transport, mode: 'remote', remoteKind: 'cloud',
-      connectionId: source.id, profile: selectedProfile, registryScoped: true,
-      workspaceScope: { userId: identity.user.user_id, workspaceId: identity.workspace.id, organizationId: identity.organization_id },
-      token: '', wsUrl: '', logs: [], ...getWindowState()
+      baseUrl: origin,
+      transport: source.transport,
+      mode: 'remote',
+      remoteKind: 'cloud',
+      connectionId: source.id,
+      profile: selectedProfile,
+      registryScoped: true,
+      workspaceScope: {
+        userId: identity.user.user_id,
+        workspaceId: identity.workspace.id,
+        organizationId: identity.organization_id
+      },
+      token: '',
+      wsUrl: '',
+      logs: [],
+      ...getWindowState()
     }
   }
 
@@ -11971,12 +12080,16 @@ async function stopLocalGatewayOwnerForPackageUpdate(ownerProfile: string): Prom
   updateWorkGuard.assertBeforeStop()
 
   const result = await runGatewayEnsure(
-    { ...backend, env: desktopBackendSpawnEnv(backend.env || {}) }, resolveHermesCwd(), HERMES_HOME,
+    { ...backend, env: desktopBackendSpawnEnv(backend.env || {}) },
+    resolveHermesCwd(),
+    HERMES_HOME,
     profileBackendParentEnv({ hermesHome: HERMES_HOME, profile: ownerProfile }),
     { label: 'native package Gateway shutdown' }
   )
 
-  if (result.code !== 0) {throw new Error('Gateway shutdown was not confirmed; native package update was not started.')}
+  if (result.code !== 0) {
+    throw new Error('Gateway shutdown was not confirmed; native package update was not started.')
+  }
   rememberLog(`[updates] native package Gateway shutdown confirmed for ${ownerProfile}`)
 }
 
@@ -14114,9 +14227,13 @@ function createWindow() {
 
   const createdMainWindow = mainWindow
   createdMainWindow.webContents.on('did-fail-load', (_event, code, _description, _url, isMainFrame) => {
-    if(isMainFrame && code !== -3) {void journeyObservations?.rendererState(true)}
+    if (isMainFrame && code !== -3) {
+      void journeyObservations?.rendererState(true)
+    }
   })
-  createdMainWindow.webContents.on('did-finish-load', () => { void journeyObservations?.rendererState(false) })
+  createdMainWindow.webContents.on('did-finish-load', () => {
+    void journeyObservations?.rendererState(false)
+  })
   registerChatWindow(createdMainWindow)
   const defaultRoute = desktopProfilePreferences.getDefault()
 
@@ -14547,7 +14664,10 @@ ipcMain.handle('hermes:connection', async (event, profile) => {
   const ownSource = readDesktopConnectionsRegistry().connections.find(item => item.id === ownRoute?.connectionId)
 
   if (ownRoute?.registryScoped && ownSource?.transport === 'semantier-workspace-http') {
-    return connectDesktopProfileRoute({ ...ownRoute, profile: typeof profile === 'string' && profile ? profile : ownRoute.profile }, event.sender)
+    return connectDesktopProfileRoute(
+      { ...ownRoute, profile: typeof profile === 'string' && profile ? profile : ownRoute.profile },
+      event.sender
+    )
   }
 
   const route = resolveDesktopConnectionRequest(
@@ -16605,9 +16725,10 @@ async function dispatchRegistryApiRequest(
     const { client } = semantierWorkspace(connection.baseUrl)
     assertWorkspaceScope(await client.identity(), request.workspaceScope)
 
-    const result = method === 'GET'
-      ? await workspaceDesktopRead(client, request.path, connection.profile)
-      : await client.setMainModel(request.body, request.workspaceScope)
+    const result =
+      method === 'GET'
+        ? await workspaceDesktopRead(client, request.path, connection.profile)
+        : await client.setMainModel(request.body, request.workspaceScope)
 
     assertWorkspaceScope(await client.identity(), request.workspaceScope)
 
@@ -16778,29 +16899,42 @@ const personalFileSync = createFileSyncIpc(senderId => {
   return source?.transport === 'semantier-workspace-http' ? new URL(source.url).origin : null
 })
 
-registerSemantierWorkspaceIpc((origin, authenticated) => {
-  for (const source of readDesktopConnectionsRegistry().connections) {
-    if (source.transport !== 'semantier-workspace-http' || new URL(source.url).origin !== origin) { continue }
-    workspaceAccountGenerations.set(source.id, (workspaceAccountGenerations.get(source.id) || 0) + 1)
-    sshRosterCache.delete(source.id)
-    rosterSourceErrors.delete(source.id)
-    connectionInstallIds.delete(source.id)
-
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (windowConnectionRoutes.get(win.webContents.id)?.connectionId === source.id) {
-        recordWindowConnectionRoute(win.webContents, { connectionId: source.id, profile: 'default', registryScoped: true })
+registerSemantierWorkspaceIpc(
+  (origin, authenticated) => {
+    for (const source of readDesktopConnectionsRegistry().connections) {
+      if (source.transport !== 'semantier-workspace-http' || new URL(source.url).origin !== origin) {
+        continue
       }
-    }
+      workspaceAccountGenerations.set(source.id, (workspaceAccountGenerations.get(source.id) || 0) + 1)
+      sshRosterCache.delete(source.id)
+      rosterSourceErrors.delete(source.id)
+      connectionInstallIds.delete(source.id)
 
-    broadcastConnectionsChanged({ connectionId: source.id, reason: 'account-changed', authenticated })
-  }
-}, origin => personalFileSync.accountChanging(origin))
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (windowConnectionRoutes.get(win.webContents.id)?.connectionId === source.id) {
+          recordWindowConnectionRoute(win.webContents, {
+            connectionId: source.id,
+            profile: 'default',
+            registryScoped: true
+          })
+        }
+      }
+
+      broadcastConnectionsChanged({ connectionId: source.id, reason: 'account-changed', authenticated })
+    }
+  },
+  origin => personalFileSync.accountChanging(origin)
+)
 
 ipcMain.handle('hermes:api', async (event, request) => {
   const ownRoute = windowConnectionRoutes.get(event.sender.id)
   const ownSource = readDesktopConnectionsRegistry().connections.find(item => item.id === ownRoute?.connectionId)
 
-  if (!apiRequestRegistryConnectionId(request) && ownRoute?.registryScoped && ownSource?.transport === 'semantier-workspace-http') {
+  if (
+    !apiRequestRegistryConnectionId(request) &&
+    ownRoute?.registryScoped &&
+    ownSource?.transport === 'semantier-workspace-http'
+  ) {
     // Untagged calls in this Cloud window cannot fall through to the local/Nous owner.
     // A missing expected account scope still fails the HTTP authorization guard.
     request = { ...request, connectionId: ownRoute.connectionId }
@@ -17141,7 +17275,11 @@ ipcMain.handle('hermes:context-menu:guest-add-word', (_event, payload) => {
   }
 })
 
-registerPreviewFramesIpc(ipcMain, id => electronWebContents.fromId(id) || undefined, () => session.fromPartition('persist:hermes-preview'))
+registerPreviewFramesIpc(
+  ipcMain,
+  id => electronWebContents.fromId(id) || undefined,
+  () => session.fromPartition('persist:hermes-preview')
+)
 
 ipcMain.handle('hermes:capturePreview', async (_event, payload) => {
   const guest = electronWebContents.fromId(Number(payload?.webContentsId))
@@ -17211,8 +17349,8 @@ let updateWorkToken: unknown
 const updateWorkGuard = new UpdateWorkGuard(() => ({
   work: mergeActiveWork([...activeWorkByWebContents.values(), lastActiveWorkSeen]),
   revision: activeWorkRevision,
-  stopsWork: (process.platform === 'win32' && INSTALL_STAMP?.updateMechanism === 'app-installer') ||
-    quitStopsBackendWork()
+  stopsWork:
+    (process.platform === 'win32' && INSTALL_STAMP?.updateMechanism === 'app-installer') || quitStopsBackendWork()
 }))
 
 // Synchronous, webContents-independent cache of the most recent active-work
@@ -17277,7 +17415,9 @@ ipcMain.on('hermes:active-work', (event, payload) => {
 
   const work = normalizeActiveWork(payload)
 
-  if (JSON.stringify(activeWorkByWebContents.get(id)) !== JSON.stringify(work)) { activeWorkRevision += 1 }
+  if (JSON.stringify(activeWorkByWebContents.get(id)) !== JSON.stringify(work)) {
+    activeWorkRevision += 1
+  }
   activeWorkByWebContents.set(id, work)
   lastActiveWorkSeen = work
   updateStreamThrottleFromActiveWork()
@@ -17841,8 +17981,9 @@ ipcMain.handle('hermes:updates:channel:set', async (event, name: unknown): Promi
   assertApplicationViewer(event)
 
   if (process.platform === 'win32' && supportsPackagedChannels(INSTALL_STAMP?.channelBuild)) {
-    updateOperation.changeSelection(() => savePackagedChannel(DESKTOP_UPDATE_CONFIG_PATH, name,
-      (file, text) => writeSecretFileAtomic(file, text)))
+    updateOperation.changeSelection(() =>
+      savePackagedChannel(DESKTOP_UPDATE_CONFIG_PATH, name, (file, text) => writeSecretFileAtomic(file, text))
+    )
 
     return checkUpdates({ force: true })
   }
@@ -18487,8 +18628,16 @@ app.on('open-url', (event, url) => {
 })
 
 app.whenReady().then(async () => {
-  void personalFileSync.restore().catch(() => { /* Settings exposes reconnection; never reset pair state. */ })
-  journeyObservations = new JourneyObservations(app.getPath('userData'), process.env.SEMANTIER_CLOUD_PUBLIC_ORIGIN ?? '', () => semantierObservations.status().journeyEnabled, (input, init) => electronNet.fetch(input, init), app.getVersion())
+  void personalFileSync.restore().catch(() => {
+    /* Settings exposes reconnection; never reset pair state. */
+  })
+  journeyObservations = new JourneyObservations(
+    app.getPath('userData'),
+    process.env.SEMANTIER_CLOUD_PUBLIC_ORIGIN ?? '',
+    () => semantierObservations.status().journeyEnabled,
+    (input, init) => electronNet.fetch(input, init),
+    app.getVersion()
+  )
   void journeyObservations.firstOpen()
   // Post-update relaunch detection (App Installer arm): when the previous
   // version wrote the one-shot pending-relaunch marker before quitting into
@@ -18842,9 +18991,13 @@ function quitIfNoSurfaceLeft() {
   }
 }
 
-const holdQuitForWorkspaceWork = (event: Electron.Event) => heldQuitForActiveWork(event) || personalFileSync.holdQuit(
-  event, () => app.quit(), () => dialog.showErrorBox('File Sync', 'The sync process has not stopped. Retry after pausing File Sync.')
-)
+const holdQuitForWorkspaceWork = (event: Electron.Event) =>
+  heldQuitForActiveWork(event) ||
+  personalFileSync.holdQuit(
+    event,
+    () => app.quit(),
+    () => dialog.showErrorBox('File Sync', 'The sync process has not stopped. Retry after pausing File Sync.')
+  )
 
 app.on('before-quit', event => {
   // Runs ahead of every teardown below, so "Keep Running" leaves the app

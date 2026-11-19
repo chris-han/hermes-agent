@@ -22,13 +22,17 @@ export const $settingsScopeProfile = computed([$settingsScopeOverride, $activeGa
 // Default is the canonical root after the native migration. Never borrow a
 // local preference on another connection's independently owned profile roster.
 const $desktopLocalDefault = computed([$defaultProfileRoute, $connection, $profiles], (route, connection, profiles) => {
-  const localSource = connection?.mode === 'local' &&
-    (!connection.connectionId || connection.connectionId === LOCAL_CONNECTION_ID)
+  const localSource =
+    connection?.mode === 'local' && (!connection.connectionId || connection.connectionId === LOCAL_CONNECTION_ID)
 
   const localPreference = route && (!route.connectionId || route.connectionId === LOCAL_CONNECTION_ID)
 
-  return localSource && localPreference && route.profile === 'default' &&
-    profiles.some(profile => profile.name === route.profile) ? route.profile : null
+  return localSource &&
+    localPreference &&
+    route.profile === 'default' &&
+    profiles.some(profile => profile.name === route.profile)
+    ? route.profile
+    : null
 })
 
 // Lifecycle migration owns retirement. Never conceal a still-live profile.
@@ -42,11 +46,14 @@ export const $settingsScopeProfiles = $profiles
 // loudly. Until the roster has loaded (no is_default entry yet) the root
 // profile's canonical key is assumed, so an unknown default fails loud, not
 // quiet.
-export const $settingsScopeEditsNonDefault = computed([$settingsScopeProfile, $profiles, $desktopLocalDefault], (selected, profiles, desktopDefault) => {
-  const defaultProfile = profiles.find(profile => profile.is_default)
+export const $settingsScopeEditsNonDefault = computed(
+  [$settingsScopeProfile, $profiles, $desktopLocalDefault],
+  (selected, profiles, desktopDefault) => {
+    const defaultProfile = profiles.find(profile => profile.is_default)
 
-  return selected !== (desktopDefault ?? normalizeProfileKey(defaultProfile?.name))
-})
+    return selected !== (desktopDefault ?? normalizeProfileKey(defaultProfile?.name))
+  }
+)
 
 // ── Request-scope form (THE value to hand to API helpers) ──────────────────
 // The store contract and the API contract disagree about `null`:
