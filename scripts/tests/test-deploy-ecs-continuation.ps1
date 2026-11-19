@@ -69,6 +69,56 @@ try{
  [IO.File]::AppendAllText((Join-Path $Output 'result.json')," `n")
  $script:sourceLease=[IO.File]::Open((Join-Path $Output '.source.lock'),'OpenOrCreate','ReadWrite','None')
  try{Restore-ToolingContinuationResidue $owner $BuildSource $Commit}finally{$script:sourceLease.Dispose();$script:sourceLease=$null}
+ # A subsequent preparation failure requires a new signed predecessor-linked snapshot.
+ $null=[IO.Directory]::CreateDirectory((Join-Path $BuildSource 'node_modules'))
+ [IO.File]::WriteAllText((Join-Path $BuildSource 'node_modules/generated'),'third')
+ $previous=@(Get-Content $statusLog|Where-Object {$_ -match '"type":"tooling-continuation"'}|ConvertFrom-Json|Where-Object type -eq 'tooling-continuation')[-1]
+ $c.sequence=2
+ $c|Add-Member previousContinuationBindingSha256 (Get-ToolingBytesHash ([Text.Encoding]::UTF8.GetBytes($previous.binding)))
+ $c.checkpointPrefixLength=(Get-Item $statusLog).Length;$c.checkpointPrefixSha256=Hash $statusLog
+ $c.residueInventory=Get-ResidueInventory $BuildSource;$c.protectedBinding=Assert-ResidueBindings $BuildSource $Commit
+ $chainHistory=[IO.File]::ReadAllText($statusLog)
+ $chainQualification=Get-Bytes $c
+ $priorFile=Join-Path $Output 'source-residue/continuation-1/source/node_modules/generated'
+ foreach($badChain in @('predecessor','gap','prior-signature','prior-residue','incomplete-recovery','unknown-recovery')){
+  $script:c=[Text.Encoding]::UTF8.GetString($chainQualification)|ConvertFrom-Json
+  [IO.File]::WriteAllText($statusLog,$chainHistory)
+  switch($badChain){
+   'predecessor' {$c.previousContinuationBindingSha256='0'*64}
+   'gap' {$c.sequence=3}
+   'prior-residue' {[IO.File]::WriteAllText($priorFile,'tampered')}
+   'prior-signature' {
+    $rows=@(Get-Content $statusLog|Where-Object { $_.Trim() }|ConvertFrom-Json)
+    $e=@($rows|Where-Object type -eq 'tooling-continuation')[0];$b=$e.binding|ConvertFrom-Json
+    $sig=[Convert]::FromBase64String($b.signature);$sig[-1]=$sig[-1] -bxor 1;$b.signature=[Convert]::ToBase64String($sig)
+    $e.binding=$b|ConvertTo-Json -Compress
+    $c.previousContinuationBindingSha256=Get-ToolingBytesHash ([Text.Encoding]::UTF8.GetBytes($e.binding))
+    $lines=$chainHistory -split "`n";for($j=0;$j -lt $lines.Count;$j++){if($lines[$j] -match '"type":"tooling-continuation"'){$lines[$j]=$e|ConvertTo-Json -Depth 10 -Compress}}
+    [IO.File]::WriteAllText($statusLog,($lines -join "`n"))
+   }
+   'incomplete-recovery' {[IO.File]::WriteAllText($statusLog,($chainHistory -replace '(?m)^.*"phase":"preserved".*"type":"source-residue-continuation".*$',''))
+    # Hashtable serialization order is unspecified: filter the event semantically.
+    $lines=@($chainHistory -split "`n"|Where-Object {if(!$_.Trim()){$true}else{$e=$_|ConvertFrom-Json;!($e.type -eq 'source-residue-continuation' -and $e.phase -eq 'preserved')}})
+    [IO.File]::WriteAllText($statusLog,($lines -join "`n"))
+   }
+   'unknown-recovery' {Write-RunEvent @{type='source-residue-continuation';binding=('0'*64);phase='intent'}}
+  }
+  $c.checkpointPrefixLength=(Get-Item $statusLog).Length;$c.checkpointPrefixSha256=Hash $statusLog
+  Sign-Fixture $path (Get-Bytes $c);$script:qualifiedContinuation=Read-ToolingContinuation $path $cert.Thumbprint
+  Reject {Confirm-ToolingContinuation $record $continuedInputs} '*'
+  Require (!(Test-Path (Join-Path $Output 'source-residue/continuation-2'))) ('Bad chain moved residue: '+$badChain)
+  [IO.File]::WriteAllText($priorFile,'second')
+ }
+ [IO.File]::WriteAllText($statusLog,$chainHistory)
+ $script:c=[Text.Encoding]::UTF8.GetString($chainQualification)|ConvertFrom-Json
+ Sign-Fixture $path (Get-Bytes $c);$script:qualifiedContinuation=Read-ToolingContinuation $path $cert.Thumbprint
+ Confirm-ToolingContinuation $record $continuedInputs
+ $script:sourceLease=[IO.File]::Open((Join-Path $Output '.source.lock'),'OpenOrCreate','ReadWrite','None')
+ try{Restore-ToolingContinuationResidue $owner $BuildSource $Commit}finally{$script:sourceLease.Dispose();$script:sourceLease=$null}
+ Require ([IO.File]::ReadAllText((Join-Path $Output 'source-residue/continuation-2/source/node_modules/generated')) -ceq 'third') 'Third residue lost'
+ Require ([IO.File]::ReadAllText((Join-Path $Output 'source-residue/continuation-1/source/node_modules/generated')) -ceq 'second') 'Predecessor residue changed'
+ $once=[IO.File]::ReadAllText($statusLog);Confirm-ToolingContinuation $record $continuedInputs
+ Require ([IO.File]::ReadAllText($statusLog) -ceq $once) 'Chain replay duplicated history'
  foreach($case in @('qualification','signature','prefix','inputs','result','old-residue','new-residue','missing-first','wrong-signer','signed-result','cache-lock')){
   New-ContinuationFixture $case
   switch($case){
@@ -112,5 +162,5 @@ try{
    } finally {$script:sourceLease.Dispose();$script:sourceLease=$null}
    Require (@(Get-Content $statusLog|Where-Object {$_ -match '"type":"source-residue-continuation"'}).Count -eq 2) 'Interruption lost or duplicated recovery phases'
   }
- Write-Output 'PASS: legacy repeated-recovery RED; signed continuation, exact-once admission, both residues, replay and rejection matrix'
+ Write-Output 'PASS: legacy repeated-recovery RED; signed continuation, exact-once admission, chained residues, predecessor authentication, replay and rejection matrix'
 } finally {if($script:sourceLease){$script:sourceLease.Dispose()};Remove-Item $root -Recurse -Force;$cert.Dispose();$rsa.Dispose()}

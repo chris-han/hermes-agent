@@ -3,21 +3,27 @@
 function Get-ToolingBytesHash([byte[]]$Bytes) {
   return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Bytes)).ToLowerInvariant()
 }
-function Read-ToolingContinuation([string]$Path,[string]$Signer) {
-  Assert-NoReparseAncestor $Path;Assert-NoReparseAncestor ($Path+'.p7s')
-  $bytes=[IO.File]::ReadAllBytes($Path);$signature=[IO.File]::ReadAllBytes(($Path+'.p7s'))
+function ConvertFrom-SignedToolingContinuation([byte[]]$Bytes,[byte[]]$Signature,[string]$Signer) {
   $cms=[Security.Cryptography.Pkcs.SignedCms]::new([Security.Cryptography.Pkcs.ContentInfo]::new($bytes),$true)
   $cms.Decode($signature);$cms.CheckSignature($true)
   if($cms.SignerInfos.Count -ne 1 -or $cms.SignerInfos[0].Certificate.Thumbprint -cne $Signer){throw 'Continuation signer is not the release authority.'}
   $q=[Text.Encoding]::UTF8.GetString($bytes)|ConvertFrom-Json
   if($q.contract -cne 'semantier-tooling-continuation-v1'){throw 'Unknown tooling continuation contract.'}
-  $script:continuationBytes=$bytes;$script:continuationSignature=$signature
+  return $q
+}
+function Read-ToolingContinuation([string]$Path,[string]$Signer) {
+  Assert-NoReparseAncestor $Path;Assert-NoReparseAncestor ($Path+'.p7s')
+  $bytes=[IO.File]::ReadAllBytes($Path);$signature=[IO.File]::ReadAllBytes(($Path+'.p7s'))
+  $q=ConvertFrom-SignedToolingContinuation $bytes $signature $Signer
+  $script:continuationBytes=$bytes;$script:continuationSignature=$signature;$script:continuationSigner=$Signer
   return $q
 }
 function Assert-ToolingContinuationIdentity($Q) {
+  $previous=if($Q.PSObject.Properties['previousContinuationBindingSha256']){$Q.previousContinuationBindingSha256}else{''}
+  if(($Q.sequence -eq 1 -and $previous) -or ($Q.sequence -gt 1 -and $previous -cnotmatch '^[a-f0-9]{64}$')){throw 'Invalid continuation predecessor.'}
   $original=$script:qualifiedTooling
   Assert-ToolingQualificationIdentity $original
-  if($Q.contract -cne 'semantier-tooling-continuation-v1' -or $Q.sequence -ne 1 -or
+  if($Q.contract -cne 'semantier-tooling-continuation-v1' -or ($Q.sequence -isnot [long] -and $Q.sequence -isnot [int]) -or $Q.sequence -lt 1 -or
     $Q.run -cne $Output -or $Q.applicationCommit -cne $Commit -or $Q.applicationRuntime -cne $original.applicationRuntime -or
     $Q.version -cne $original.version -or $Q.buildId -cne $BuildId -or $Q.originalInputs -cne $original.originalInputs -or
     $Q.originalQualificationSha256 -cne (Get-ToolingBytesHash $script:qualificationBytes) -or
@@ -74,10 +80,45 @@ function Confirm-ToolingContinuation($Record,[string]$Inputs) {
     $oldPrefix=[byte[]]::new($length);[Array]::Copy($bytes,$oldPrefix,$oldPrefix.Length)
     if((Get-ToolingBytesHash $oldPrefix) -cne $oldRecovery[0].logSha256.ToLowerInvariant()){throw 'Original recovery prefix changed.'}
 
-    $binding=[ordered]@{contract=$q.contract;sequence=1;qualification=[Convert]::ToBase64String($script:continuationBytes);signature=[Convert]::ToBase64String($script:continuationSignature)}|ConvertTo-Json -Compress
+    $binding=[ordered]@{contract=$q.contract;sequence=$q.sequence;qualification=[Convert]::ToBase64String($script:continuationBytes);signature=[Convert]::ToBase64String($script:continuationSignature)}|ConvertTo-Json -Compress
     $found=@($events|Where-Object type -eq 'tooling-continuation')
-    if($found.Count -gt 1 -or ($found.Count -eq 1 -and ($found[0].binding -cne $binding -or $found[0].sequence -ne 1))){throw 'Conflicting tooling continuation.'}
-    if(!$found.Count){
+    if($found.Count -lt ($q.sequence-1) -or $found.Count -gt $q.sequence){throw 'Conflicting tooling continuation sequence.'}
+    $previousBinding='';$knownRecoveries=@();$priorResidues=@()
+    for($i=0;$i -lt $found.Count;$i++){
+      $event=$found[$i];$stored=$event.binding|ConvertFrom-Json
+      if($event.sequence -ne ($i+1) -or $stored.sequence -ne ($i+1) -or $stored.contract -cne $q.contract){throw 'Continuation chain order changed.'}
+      $priorBytes=[Convert]::FromBase64String($stored.qualification)
+      $prior=ConvertFrom-SignedToolingContinuation $priorBytes ([Convert]::FromBase64String($stored.signature)) $script:continuationSigner
+      Assert-ToolingContinuationIdentity $prior
+      if($prior.sequence -ne ($i+1) -or ($i -gt 0 -and $prior.previousContinuationBindingSha256 -cne $previousBinding)){throw 'Continuation predecessor binding changed.'}
+      $n=[long]$prior.checkpointPrefixLength
+      if($n -gt $bytes.Length){throw 'Predecessor history truncated.'}
+      $priorPrefix=[byte[]]::new($n);[Array]::Copy($bytes,$priorPrefix,$n)
+      if((Get-ToolingBytesHash $priorPrefix) -cne $prior.checkpointPrefixSha256){throw 'Predecessor checkpoint changed.'}
+      if($i -lt ($q.sequence-1)){
+        $key=Get-ToolingBytesHash $priorBytes;$knownRecoveries+=,$key
+        $saved=Join-Path $Output ('source-residue/continuation-'+$prior.sequence+'/source')
+        $priorResidues+=@{path=$saved;inventory=$prior.residueInventory}
+        $recovery=@($events|Where-Object { $_.type -ceq 'source-residue-continuation' -and $_.binding -ceq $key })
+        if($recovery.Count -ne 2 -or $recovery[0].phase -cne 'intent' -or $recovery[1].phase -cne 'preserved'){throw 'Predecessor recovery incomplete.'}
+        foreach($r in $recovery){if($r.destination -cne $saved -or $r.inventory -cne $prior.residueInventory){throw 'Predecessor recovery binding changed.'}}
+        $n=[long]$recovery[0].logLength
+        if($n -le 0 -or $n -gt $bytes.Length){throw 'Predecessor recovery prefix invalid.'}
+        $recoveryPrefix=[byte[]]::new($n);[Array]::Copy($bytes,$recoveryPrefix,$n)
+        if((Get-ToolingBytesHash $recoveryPrefix) -cne $recovery[0].logSha256){throw 'Predecessor recovery history changed.'}
+        if((Get-ResidueInventory $saved) -cne $prior.residueInventory){throw 'Predecessor preserved residue changed.'}
+      } elseif($event.binding -cne $binding){throw 'Conflicting tooling continuation.'}
+      $previousBinding=Get-ToolingBytesHash ([Text.Encoding]::UTF8.GetBytes($event.binding))
+    }
+    if($q.sequence -gt 1){
+      $previousEvent=$found[$q.sequence-2]
+      if((Get-ToolingBytesHash ([Text.Encoding]::UTF8.GetBytes($previousEvent.binding))) -cne $q.previousContinuationBindingSha256){throw 'Continuation predecessor binding changed.'}
+    }
+    $currentKey=Get-ToolingBytesHash $script:continuationBytes
+    foreach($r in @($events|Where-Object type -eq 'source-residue-continuation')){
+      if($r.binding -cne $currentKey -and $r.binding -cnotin $knownRecoveries){throw 'Unknown continued residue history.'}
+    }
+    if($found.Count -lt $q.sequence){
       if($Record.stage -cne 'reserved' -or (Assert-ResidueBindings $BuildSource $Commit) -cne $q.protectedBinding -or
         (Get-ResidueInventory $BuildSource) -cne $q.residueInventory){throw 'Continuation snapshot changed before admission.'}
       Assert-NoResidueRegistration $BuildSource
@@ -86,9 +127,10 @@ function Confirm-ToolingContinuation($Record,[string]$Inputs) {
       foreach($name in @('sha256','signedMsix','unsignedSha256','plan')){if($result.PSObject.Properties[$name] -and $result.$name){throw 'Package-bearing result cannot enter preparation continuation.'}}
       if((Test-Path -LiteralPath $Record.msix) -or (Test-Path -LiteralPath (Join-Path $Output 'SemantierAgent.msix'))){throw 'Existing package cannot enter preparation continuation.'}
       if($result.result -cnotin @('FAIL','STOP')){throw 'Continuation requires a preparation-only failure.'}
-      Write-RunEvent @{type='tooling-continuation';contract=$q.contract;sequence=1;at=[DateTime]::UtcNow.ToString('o');binding=$binding}
+      Write-RunEvent @{type='tooling-continuation';contract=$q.contract;sequence=$q.sequence;at=[DateTime]::UtcNow.ToString('o');binding=$binding}
       $durable=[IO.File]::Open($script:statusLog,'Open','Write','Read');try{$durable.Flush($true)}finally{$durable.Dispose()}
     }
+    $script:continuationPriorResidues=$priorResidues
     $script:continuationConfirmed=$true
   } finally {foreach($l in $leases){$l.Dispose()}}
 }
@@ -109,13 +151,14 @@ function Restore-ToolingContinuationResidue($Owner,[string]$Source,[string]$Revi
     if($IsWindows -and (Get-Acl -LiteralPath $Output).GetOwner([Security.Principal.SecurityIdentifier]).Value -cne
       [Security.Principal.WindowsIdentity]::GetCurrent().User.Value){throw 'Foreign continuation run ownership.'}
     if((Get-ResidueInventory (Join-Path $Output 'source-residue/source')) -cne $q.originalResidueInventory){throw 'Original preserved residue changed.'}
-    $saved=Join-Path $Output 'source-residue/continuation-1/source';Assert-NoReparseAncestor $saved
+    $saved=Join-Path $Output ('source-residue/continuation-'+$q.sequence+'/source');Assert-NoReparseAncestor $saved
     $binding=Get-ToolingBytesHash $script:continuationBytes
     $intent=$null;$complete=$false
     foreach($line in [IO.File]::ReadLines($script:statusLog)){
       try{$event=$line|ConvertFrom-Json -ErrorAction Stop}catch{continue}
       if(!$event -or !$event.PSObject.Properties['type'] -or $event.type -cne 'source-residue-continuation'){continue}
-      if($event.binding -cne $binding -or $event.destination -cne $saved -or $event.inventory -cne $q.residueInventory){throw 'Conflicting continued residue history.'}
+      if($event.binding -cne $binding){continue} # Predecessors were authenticated and inventoried at admission.
+      if($event.destination -cne $saved -or $event.inventory -cne $q.residueInventory){throw 'Conflicting continued residue history.'}
       if($event.phase -ceq 'intent'){if($intent){throw 'Duplicate continued residue intent.'};$intent=$event}
       elseif($event.phase -ceq 'preserved'){if(!$intent -or $complete){throw 'Conflicting continued residue completion.'};$complete=$true}
       else {throw 'Unknown continued residue phase.'}
