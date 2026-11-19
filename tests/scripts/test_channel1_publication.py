@@ -1016,3 +1016,83 @@ def test_post_success_oss_retention_keeps_active_and_deletes_only_bound_previous
     receipt['publicationVerification']='PENDING';(current/'result.json').write_text(json.dumps(receipt))
     with pytest.raises(ValueError,match='qualification'):channel1.retire_oss_previous(current/'SemantierAgent.msix',current/'channel1-metadata.json',output)
     assert calls==[obsolete['key']]
+
+
+def test_successive_oss_releases_recover_without_any_ecs_msix(tmp_path, monkeypatch):
+    root = tmp_path / 'public'; root.mkdir()
+    monkeypatch.setattr(channel1, '_verify_oss_head', lambda row: None)
+    _, old_digest, old_metadata = package(tmp_path / 'old', 132, version='1.2.132.4')
+    channel1.publish(root, tmp_path / 'old', metadata_sha256=old_metadata,
+                     package_sha256=old_digest, protocol=protocol, metadata_only=True)
+    previous = (root / channel1.POINTER).read_bytes()
+    _, digest, metadata = package(tmp_path / 'new', 133, version='2.3.133.5')
+    (tmp_path / 'new/SemantierAgent.msix').unlink()
+    recovery = root.parent / '.channel1-recovery-oss-only'
+    channel1.publish(root, tmp_path / 'new', metadata_sha256=metadata,
+                     package_sha256=digest, protocol=protocol, metadata_only=True,
+                     expected_previous_sha256=hashlib.sha256(previous).hexdigest(), recovery=recovery)
+    saved = json.loads((recovery / 'recovery.json').read_bytes())
+    assert saved['schema'] == 2 and [row['key'] for row in saved['files']] == [channel1.POINTER]
+    for _ in range(3):
+        assert channel1.restore(root, recovery)['result'] == 'POINTER_RESTORED'
+        assert (root / channel1.POINTER).read_bytes() == previous
+    assert not list(root.rglob('*.msix')) and not list(recovery.rglob('*.msix'))
+
+
+def test_legacy_rollback_replay_does_not_leave_a_same_inode_temporary_alias(tmp_path):
+    root = tmp_path / 'public'; root.mkdir()
+    publish(root, tmp_path / 'old', 130)
+    previous = channel1.sha(root / channel1.POINTER)
+    _, digest, metadata = package(tmp_path / 'new', 131)
+    recovery = root.parent / '.channel1-recovery-legacy'
+    channel1.publish(root, tmp_path / 'new', metadata_sha256=metadata,
+                     package_sha256=digest, protocol=protocol,
+                     expected_previous_sha256=previous, recovery=recovery)
+    for _ in range(3):
+        channel1.restore(root, recovery)
+        assert not (root / 'releases/.channel1-restore.tmp').exists()
+    temporary = root / 'releases/.channel1-restore.tmp'
+    temporary.hardlink_to(recovery / '0')
+    channel1.restore(root, recovery)
+    assert not temporary.exists()
+    temporary.write_bytes(b'unknown-owner')
+    with pytest.raises(ValueError, match='Unreconciled rollback'):
+        channel1.restore(root, recovery)
+    assert temporary.read_bytes() == b'unknown-owner' and channel1.sha(root / channel1.POINTER) == previous
+
+
+@pytest.mark.parametrize('valid', [True, False])
+def test_retirement_validates_superseded_recovery_before_retiring_its_old_body(tmp_path, monkeypatch, valid):
+    root = tmp_path / 'public'; root.mkdir()
+    _, old_sha, _ = publish(root, tmp_path / 'old', 130)
+    (tmp_path / 'old/SemantierAgent.msix').unlink()
+    before = json.loads((root / channel1.POINTER).read_bytes())
+    request, digest, _ = package(tmp_path / 'pending', 131)
+    metadata = json.loads((tmp_path / 'pending/channel1-metadata.json').read_bytes())
+    recovery = root.parent / ('.channel1-recovery-' + request['buildId'])
+    channel1._save_recovery(root, recovery, channel1._record(metadata['manifest'], before, protocol), digest, protocol)
+    prefix = root / protocol.build_prefix(request['buildId']); prefix.mkdir(parents=True)
+    (prefix / 'build.json').write_bytes(protocol.canonical_json(metadata['manifest']))
+    (prefix / 'native-graph.json').write_bytes(protocol.canonical_json(metadata['graph']))
+    monkeypatch.setattr(channel1, '_verify_oss_head', lambda row: None)
+    _, current_sha, current_metadata = package(tmp_path / 'current', 132)
+    channel1.publish(root, tmp_path / 'current', metadata_sha256=current_metadata,
+                     package_sha256=current_sha, protocol=protocol, metadata_only=True,
+                     expected_previous_sha256=channel1.sha(root / channel1.POINTER),
+                     recovery=root.parent / ('.channel1-recovery-' + f'{132:032x}'))
+    pointer = channel1.sha(root / channel1.POINTER)
+    if not valid:
+        saved = json.loads((recovery / 'recovery.json').read_bytes())
+        saved['afterPointerSha256'] = 'f' * 64
+        (recovery / 'recovery.json').write_bytes(protocol.canonical_json(saved))
+    arguments = dict(build_id=f'{130:032x}', package_sha256=old_sha,
+                     expected_previous_sha256=pointer, apply=True, assert_inactive=lambda paths: None)
+    if valid:
+        assert channel1.retire_package(root, **arguments)['result'] == 'PACKAGE_RETIRED'
+        assert (recovery / 'recovery.retired').is_file()
+    else:
+        with pytest.raises(ValueError, match='Active or ambiguous recovery'):
+            channel1.retire_package(root, **arguments)
+        assert (root / 'releases/SemantierAgent.msix').exists()
+        assert (recovery / 'recovery.json').exists()
+    assert channel1.sha(root / channel1.POINTER) == pointer

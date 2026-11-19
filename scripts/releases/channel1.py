@@ -279,7 +279,11 @@ def _save_recovery(root, recovery, record, package_sha256, protocol, metadata_on
     pointer = root/POINTER
     if (recovery/'recovery.json').exists():
         saved = protocol.decode_json((recovery/'recovery.json').read_bytes())
+        schema = saved.get('schema', 1)
+        keys = [POINTER] if schema == 2 else ['releases/SemantierAgent.msix', 'releases/SemantierAgent.msix.sha256', POINTER]
         if (saved.get('delivery', 'ecs-package') != ('oss-metadata-only' if metadata_only else 'ecs-package')
+                or type(schema) is not int or schema not in (1, 2) or (schema == 2 and not metadata_only)
+                or [row['key'] for row in saved['files']] != keys
                 or saved['root'] != str(root) or saved['afterPackageSha256'] != package_sha256
                 or saved['afterPointerSha256'] != hashlib.sha256(protocol.canonical_json(record)).hexdigest()):
             raise ValueError('Recovery binding changed')
@@ -289,12 +293,14 @@ def _save_recovery(root, recovery, record, package_sha256, protocol, metadata_on
         return
     recovery.mkdir(mode=0o700, exist_ok=False)
     files = []
-    for index, key in enumerate(('releases/SemantierAgent.msix', 'releases/SemantierAgent.msix.sha256', POINTER)):
+    keys = (POINTER,) if metadata_only else ('releases/SemantierAgent.msix', 'releases/SemantierAgent.msix.sha256', POINTER)
+    for index, key in enumerate(keys):
         target = _safe(root, key)
         saved = recovery/str(index)
         os.link(target, saved)
         files.append({'key': key, 'saved': str(index), 'sha256': sha(saved)})
     _atomic(recovery/'recovery.json', protocol.canonical_json({
+        'schema': 2 if metadata_only else 1,
         'root': str(root), 'delivery': 'oss-metadata-only' if metadata_only else 'ecs-package',
         'beforePointerSha256': sha(pointer),
         'afterPointerSha256': hashlib.sha256(protocol.canonical_json(record)).hexdigest(),
@@ -311,26 +317,34 @@ def restore(root, recovery):
     saved = json.loads((recovery/'recovery.json').read_bytes())
     if saved['root'] != str(root):
         raise ValueError('Recovery root mismatch')
+    schema = saved.get('schema', 1)
+    if type(schema) is not int or schema not in (1, 2) or (schema == 2 and saved.get('delivery') != 'oss-metadata-only'):
+        raise ValueError('Unknown recovery schema')
+    metadata_recovery = schema == 2
     with _lock(root):
         if sha(root/POINTER) not in (saved['beforePointerSha256'], saved['afterPointerSha256']):
             raise ValueError('Concurrent pointer; refusing rollback')
         package = root/'releases/SemantierAgent.msix'
-        if sha(package) not in (saved['files'][0]['sha256'], saved['afterPackageSha256']):
+        if not metadata_recovery and sha(package) not in (saved['files'][0]['sha256'], saved['afterPackageSha256']):
             raise ValueError('Concurrent package; refusing rollback')
-        expected = ['releases/SemantierAgent.msix', 'releases/SemantierAgent.msix.sha256', POINTER]
+        expected = [POINTER] if metadata_recovery else ['releases/SemantierAgent.msix', 'releases/SemantierAgent.msix.sha256', POINTER]
         if [row['key'] for row in saved['files']] != expected:
             raise ValueError('Recovery target mismatch')
         for row in saved['files']:
             source = _safe(recovery, row['saved'])
             if sha(source) != row['sha256']:
                 raise ValueError('Recovery SHA256 mismatch')
-        old = json.loads((recovery/saved['files'][2]['saved']).read_bytes())
+        if saved['files'][-1]['sha256'] != saved['beforePointerSha256']:
+            raise ValueError('Recovery pointer binding mismatch')
+        old = json.loads((recovery/saved['files'][-1]['saved']).read_bytes())
         head = old.get('nativeHead') or old.get('head')
         body = _safe(root, head['manifestKey']).read_bytes()
         if hashlib.sha256(body).hexdigest() != head['sha256']:
             raise ValueError('Previous immutable manifest changed')
         row = json.loads(body)['packages'][0]
-        if sha(_safe(root, row['artifact']['key'])) != saved['files'][0]['sha256']:
+        if metadata_recovery and row.get('native', {}).get('schema') == 2:
+            _verify_oss_head(row)
+        elif sha(_safe(root, row['artifact']['key'])) != (row['artifact']['sha256'] if metadata_recovery else saved['files'][0]['sha256']):
             raise ValueError('Previous immutable package changed')
         if row.get('native') and sha(_safe(root, row['native']['graph']['key'])) != row['native']['graph']['sha256']:
             raise ValueError('Previous immutable graph changed')
@@ -347,8 +361,14 @@ def restore(root, recovery):
             if row['key'].endswith('.msix'):
                 temporary = target.with_name('.channel1-restore.tmp')
                 if temporary.exists():
-                    raise ValueError('Unreconciled rollback')
-                os.link(source, temporary); os.replace(temporary, target)
+                    if temporary.is_symlink() or not temporary.samefile(source):
+                        raise ValueError('Unreconciled rollback')
+                    if target.samefile(source):
+                        temporary.unlink()
+                    else:
+                        os.replace(temporary, target)
+                elif not target.samefile(source):
+                    os.link(source, temporary); os.replace(temporary, target)
                 _sync_directory(target.parent)
             else:
                 _atomic(target, source.read_bytes())
@@ -740,7 +760,7 @@ def _assert_package_inactive(paths):
 
 
 def retire_package(root, *, build_id, package_sha256, expected_previous_sha256,
-                   apply=False, assert_inactive=None):
+                   apply=False, assert_inactive=None, protocol=None):
     """Explicit retirement of one obsolete signed package and its known aliases.
 
     Completed rollback controls are retained as historical evidence, with their
@@ -748,6 +768,8 @@ def retire_package(root, *, build_id, package_sha256, expected_previous_sha256,
     Active pointers, unknown links and live owners block before any mutation.
     """
     from contextlib import nullcontext
+    if protocol is None:
+        from hermes_cli import release_channels as protocol
     root = Path(root).absolute()
     if not re.fullmatch(r'(?:[a-f0-9]{32}|(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3})', build_id) or not re.fullmatch('[0-9a-f]{64}', package_sha256):
         raise ValueError('Explicit immutable package identity required')
@@ -843,14 +865,43 @@ def retire_package(root, *, build_id, package_sha256, expected_previous_sha256,
         for recovery in root.parent.glob('.channel1-recovery-*/recovery.json'):
             _safe(root.parent, recovery.relative_to(root.parent))
             saved = json.loads(recovery.read_bytes())
-            if not any(row['sha256'] == package_sha256 for row in saved['files']):
+            references_package = any(row['sha256'] == package_sha256 for row in saved['files'])
+            if saved.get('schema') == 2 and saved['root'] == str(root):
+                if saved.get('delivery') != 'oss-metadata-only' or [r['key'] for r in saved['files']] != [POINTER]:
+                    raise ValueError('Ambiguous metadata recovery')
+                snapshot = _safe(recovery.parent, saved['files'][0]['saved'])
+                if sha(snapshot) != saved['beforePointerSha256'] or sha(snapshot) != saved['files'][0]['sha256']:
+                    raise ValueError('Rollback receipt byte binding mismatch')
+                old_record = json.loads(snapshot.read_bytes())
+                old_head = old_record.get('nativeHead') or old_record.get('head')
+                if old_head['manifestKey'] == protocol.build_prefix(build_id)+'build.json':
+                    if old_head['sha256'] != sha(_safe(root, old_head['manifestKey'])):
+                        raise ValueError('Rollback manifest byte binding mismatch')
+                    references_package = True
+            if not references_package:
                 continue
-            if (saved['root'] != str(root) or saved['afterPointerSha256'] != expected_previous_sha256
-                    or saved['afterPackageSha256'] != active_sha):
+            if saved['root'] != str(root):
                 raise ValueError('Active or ambiguous recovery transaction')
             for row in saved['files']:
                 if sha(_safe(recovery.parent, row['saved'])) != row['sha256']:
                     raise ValueError('Rollback receipt byte binding mismatch')
+            if saved['afterPointerSha256'] != expected_previous_sha256 or saved['afterPackageSha256'] != active_sha:
+                before = saved['files'][-1]
+                if before['key'] != POINTER or before['sha256'] != saved.get('beforePointerSha256'):
+                    raise ValueError('Active or ambiguous recovery transaction')
+                candidate_id = recovery.parent.name.removeprefix('.channel1-recovery-')
+                candidate_path = _safe(root, protocol.build_prefix(candidate_id)+'build.json')
+                if not candidate_path.is_file():
+                    raise ValueError('Active or ambiguous recovery transaction')
+                candidate = json.loads(candidate_path.read_bytes())
+                old_record = json.loads(_safe(recovery.parent, before['saved']).read_bytes())
+                after = _record(candidate, old_record, protocol)
+                protocol.validate_manifest(candidate, after, BASE, allow_native=True)
+                if (candidate['request']['buildId'] != candidate_id
+                        or candidate['request']['sequence'] >= head['sequence']
+                        or candidate['packages'][0]['artifact']['sha256'] != saved['afterPackageSha256']
+                        or hashlib.sha256(protocol.canonical_json(after)).hexdigest() != saved['afterPointerSha256']):
+                    raise ValueError('Active or ambiguous recovery transaction')
             retired = recovery.with_name('recovery.retired')
             if retired.exists():
                 raise ValueError('Conflicting retired recovery evidence')

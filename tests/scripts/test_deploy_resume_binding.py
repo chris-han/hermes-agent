@@ -166,3 +166,49 @@ def test_rollback_retirement_whatif_is_local_and_read_only(tmp_path):
     for extra in ('-Latest','-ResumeSigned','-SetupOnly'):
         result=subprocess.run([*command,extra],capture_output=True,text=True,timeout=30,check=False)
         assert result.returncode!=0 and not output.exists()
+
+
+def test_ssh_stdin_preserves_large_payload_and_credential_environment(tmp_path):
+    import os
+    import shutil
+    import sys
+    pwsh = shutil.which('pwsh')
+    if os.name == 'nt' or not pwsh:
+        pytest.skip('Portable native-executable fixture uses WSL PowerShell; Windows SSH is qualified on the release host')
+    fake = tmp_path / 'ssh.exe'
+    fake.write_text('#!' + sys.executable + '\n' + '''import sys,json,os
+payload=sys.stdin.read().rstrip('\\r\\n') if sys.argv[-1]=='READ_STDIN' else ''
+print(json.dumps({'length':len(payload),'force':os.environ.get('SSH_ASKPASS_REQUIRE'),'arguments':sys.argv[1:]}))
+''')
+    fake.chmod(0o700)
+    operator = Path(__file__).resolve().parents[2] / 'scripts/deploy-ecs.ps1'
+    script = tmp_path / 'stdin.ps1'
+    script.write_text(r'''param($Operator)
+$ErrorActionPreference='Stop';Set-StrictMode -Version Latest
+$e=$null;$t=$null;$ast=[Management.Automation.Language.Parser]::ParseFile($Operator,[ref]$t,[ref]$e)
+if($e){throw 'Operator parse failed'}
+foreach($name in @('Invoke-SshNative','Ssh')){
+ $f=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true)
+ . ([scriptblock]::Create($f.Extent.Text))
+}
+$CredentialsEnv='';$SshTarget='fixture';$script:sshOptions=@();$script:statusLog=$null;$script:askPassExe='fixture-helper'
+function Get-EcsSshPassword($Path){return $script:fixturePassword}
+$env:SSH_ASKPASS_REQUIRE='before-force';$env:SSH_ASKPASS='before-helper';$env:DISPLAY='before-display';$env:ALI_ECS_SSH_PASSWORD='before-password'
+$payload='a'*70000
+foreach($mode in @('','fixture-password')){
+ $script:fixturePassword=$mode
+ $r=(Ssh 'READ_STDIN' -InputText $payload)|ConvertFrom-Json
+ if($r.length -ne $payload.Length){throw 'Stdin payload changed or entered command-line arguments'}
+ if($mode -and $r.force -cne 'force'){throw 'Password transport omitted existing askpass scope'}
+ if($env:SSH_ASKPASS_REQUIRE -cne 'before-force' -or $env:SSH_ASKPASS -cne 'before-helper' -or $env:DISPLAY -cne 'before-display' -or $env:ALI_ECS_SSH_PASSWORD -cne 'before-password'){throw 'Credential environment leaked'}
+}
+$script:fixturePassword=''
+$r=(Ssh 'echo fixture')|ConvertFrom-Json
+if($r.length -ne 0 -or $r.arguments[-1] -notlike '*base64 -d | sh'){throw 'Existing command transport changed'}
+'BOUNDED_STDIN_TRANSPORT_PASS'
+''')
+    result = subprocess.run([pwsh, '-NoProfile', '-File', str(script), str(operator)],
+                            env={**os.environ, 'PATH': str(tmp_path) + os.pathsep + os.environ['PATH']},
+                            capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'BOUNDED_STDIN_TRANSPORT_PASS' in result.stdout

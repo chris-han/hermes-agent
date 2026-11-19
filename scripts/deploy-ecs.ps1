@@ -1232,14 +1232,15 @@ function Invoke-RollbackRetirement {
   if($IdentityFile){$script:sshOptions+=@('-i',(Resolve-Path -LiteralPath $IdentityFile).Path)}
   if(!(Get-EcsSshPassword $CredentialsEnv)){$script:sshOptions+=@('-o','BatchMode=yes')}
   $publisher=ConvertTo-ReleasePayload ([IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'releases/channel1.py')))
+  $retirementProtocol=ConvertTo-ReleasePayload ([IO.File]::ReadAllBytes((Join-Path $Repository 'hermes_cli/release_channels.py')))
   $arguments=@{root=$RemoteRoot;build_id=$RetireRollbackBuild;package_sha256=$RetireRollbackSha256;expected_previous_sha256=$ExpectedChannelSha256;apply=$true} | ConvertTo-Json -Compress
   $args64=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($arguments))
-  $body="import base64,gzip,json,types`nc=types.ModuleType('channel1');exec(gzip.decompress(base64.b64decode('$publisher')),c.__dict__)`nprint(json.dumps(c.retire_package(**json.loads(base64.b64decode('$args64')))))"
+  $body="import base64,gzip,json,types,sys`np=types.ModuleType('channel1_protocol');sys.modules[p.__name__]=p;exec(gzip.decompress(base64.b64decode('$retirementProtocol')),p.__dict__)`nc=types.ModuleType('channel1');exec(gzip.decompress(base64.b64decode('$publisher')),c.__dict__)`nprint(json.dumps(c.retire_package(**json.loads(base64.b64decode('$args64')),protocol=p)))"
   $encoded=ConvertTo-ReleasePayload ([Text.Encoding]::UTF8.GetBytes($body))
-  if($encoded.Length -gt 24000){throw 'Retirement payload exceeds native SSH size bound.'}
+  if($encoded.Length -gt 2097152){throw 'Retirement source payload exceeds its bounded stdin limit.'}
   $failed=$false
   try {
-    $result=Ssh "python3 -c 'import base64,gzip;exec(gzip.decompress(base64.b64decode(`"$encoded`")))'"
+    $result=Ssh "python3 -c 'import base64,gzip,sys;exec(gzip.decompress(base64.b64decode(sys.stdin.read())))'" -InputText $encoded
     $result=$result | ConvertFrom-Json
   } catch {
     $failed=$true
@@ -1530,9 +1531,9 @@ function Read-ZipText($Archive, [string]$Name) {
   $reader = New-Object IO.StreamReader($entry.Open())
   try { $reader.ReadToEnd() } finally { $reader.Dispose() }
 }
-function Invoke-SshNative([string]$Exe, [string[]]$Arguments) {
+function Invoke-SshNative([string]$Exe, [string[]]$Arguments, [string]$InputText) {
   $password=Get-EcsSshPassword $CredentialsEnv
-  if(!$password) { & $Exe @Arguments; return }
+  if(!$password) { if($PSBoundParameters.ContainsKey('InputText')){$InputText | & $Exe @Arguments}else{& $Exe @Arguments}; return }
   if(!$script:askPassExe) {
     $helperDirectory=Join-Path 'D:\repo\deliverables\work' ('ecs-ssh-askpass-'+[Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $helperDirectory | Out-Null
@@ -1562,19 +1563,23 @@ class AskPass {
     [Environment]::SetEnvironmentVariable('DISPLAY','semantier','Process')
     [Environment]::SetEnvironmentVariable('ALI_ECS_SSH_PASSWORD',$password,'Process')
     $Arguments=@('-o','PreferredAuthentications=password','-o','NumberOfPasswordPrompts=1')+$Arguments
-    & $Exe @Arguments
+    if($PSBoundParameters.ContainsKey('InputText')){$InputText | & $Exe @Arguments}else{& $Exe @Arguments}
   } finally {
     foreach($name in $names){[Environment]::SetEnvironmentVariable($name,$savedEnvironment[$name],'Process')}
     $password=$null
   }
 }
-function Ssh([string]$Command) {
+function Ssh([string]$Command, [string]$InputText) {
   # Base64 avoids Windows/POSIX quoting differences, including $ and newlines.
   $encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Command.Replace("`r",'')))
   $previousErrorPreference=$ErrorActionPreference
   try {
     $ErrorActionPreference='Continue'
-    $text = @(Invoke-SshNative 'ssh.exe' ($script:sshOptions + @($SshTarget,"printf '%s' '$encoded' | base64 -d | sh")) 2>&1)
+    if($PSBoundParameters.ContainsKey('InputText')){
+      $text = @(Invoke-SshNative 'ssh.exe' ($script:sshOptions + @($SshTarget,$Command)) -InputText $InputText 2>&1)
+    }else{
+      $text = @(Invoke-SshNative 'ssh.exe' ($script:sshOptions + @($SshTarget,"printf '%s' '$encoded' | base64 -d | sh")) 2>&1)
+    }
     $remoteExit=$LASTEXITCODE
   } finally {$ErrorActionPreference=$previousErrorPreference}
   if ($remoteExit -ne 0) {
