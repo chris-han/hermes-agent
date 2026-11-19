@@ -141,7 +141,7 @@ function Assert-NativeReleaseOptions {
     throw 'Native release requires NativePublishOnly, explicit Prod, SkipLocalInstall and exact source; incompatible release modes are forbidden.'
   }
   if(($Commit -cnotmatch '^[a-f0-9]{40}$' -and (!$NativePublishOnly -or $SourceCommit -cnotmatch '^[a-f0-9]{40}$')) -or $ExpectedChannelSha256 -cnotmatch '^[a-f0-9]{64}$' -or
-     $NativeUpdateFrom -cnotmatch '^\d+\.\d+\.\d+\.0$' -or $ExpectedVersion -cnotmatch '^\d+\.\d+\.\d+\.0$' -or
+     $NativeUpdateFrom -cnotmatch '^(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3}$' -or $ExpectedVersion -cnotmatch '^(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3}$' -or
      [Version]$ExpectedVersion -le [Version]$NativeUpdateFrom -or !$RecoveryMsix -or
      (!$OssSetupQualification -and (!$NativeUserData -or !$ProfileSampleManifest -or !$CriticalFileManifest))){throw 'Native release requires bound baseline/target, pointer SHA256, recovery package, user data and profile manifests.'}
 }
