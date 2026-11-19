@@ -240,7 +240,7 @@ function Get-OssSourceHash([string]$Path) {
   try{return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text)))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
 }
 function Invoke-OssByteOperation([string]$Mode,[string]$Artifact,[string]$Metadata,[string]$ResultPath) {
-  if($Mode -cnotin @('msix','setup') -or !$script:RuntimeRoot -or
+  if($Mode -cnotin @('msix','setup','retention') -or !$script:RuntimeRoot -or
      $OssRuntimeRoot -cnotmatch '^/home/[A-Za-z0-9_./-]+$' -or $OssRuntimeRoot.Contains('/../') -or
      $OssWslDistro -cnotmatch '^[A-Za-z0-9_.-]+$'){throw 'Invalid pinned WSL OSS owner configuration'}
   $wsl=Join-Path $env:SystemRoot 'System32/wsl.exe'
