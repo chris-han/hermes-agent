@@ -1029,6 +1029,22 @@ function Confirm-OssCachedDownload([string]$Package,[string]$Metadata,$PriorOutc
     # Preserve the actual failure before any recovery result is written.
     Write-RunEvent @{type='oss-cache-recovery-verification';at=[DateTime]::UtcNow.ToString('o');binding=$binding;previousOutcome=$PriorOutcome}
     Invoke-RetainedSetupVerifiers $SetupExe $download
+    # Keep the earlier COPY-era receipt as history; the unchanged byte owner
+    # now writes a direct-publication receipt for the same immutable object.
+    $staged=Join-Path $Output 'oss-staged.json'
+    if(Test-Path -LiteralPath $staged){
+      Assert-NoReparseAncestor $staged
+      $legacy=Get-Content -LiteralPath $staged -Raw|ConvertFrom-Json
+      if(!$legacy.PSObject.Properties['storagePolicy']){
+        if($legacy.buildId -cne $BuildId -or $legacy.key -cne $artifact.key -or
+          $legacy.sha256 -cne $receipt.sha256 -or $legacy.size -ne $artifact.size){throw 'Legacy byte receipt differs from the retained candidate'}
+        $preserved=Join-Path $Output 'oss-staged-legacy.json'
+        Assert-NoReparseAncestor $preserved
+        if(Test-Path -LiteralPath $preserved){throw 'Conflicting legacy byte receipt history'}
+        Write-RunEvent @{type='oss-direct-publication-handoff';at=[DateTime]::UtcNow.ToString('o');previous=$legacy;preserved=$preserved}
+        Move-Item -LiteralPath $staged -Destination $preserved
+      }
+    }
     if(Test-Path -LiteralPath $proof){
       $result=Get-Content -LiteralPath $proof -Raw|ConvertFrom-Json
       if($result.qualificationMode -cne 'CACHE_ONLY_RECOVERY' -or $result.sha256 -cne $receipt.sha256 -or
