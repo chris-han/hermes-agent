@@ -161,11 +161,16 @@ def test_live_route_uses_restart_only_when_admin_is_disabled(tmp_path, monkeypat
                         ['docker', 'exec', 'edge-id', 'caddy', 'reload', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile'])
 
 
+@pytest.mark.parametrize('legacy',[False,True])
 @pytest.mark.parametrize('failure', ['421', 'http1', 'wrong-bytes', 'wrong-graph', None])
-def test_native_public_probe_checks_real_response_predicates(tmp_path, monkeypatch, failure):
+def test_native_public_probe_checks_real_response_predicates(tmp_path, monkeypatch, failure,legacy):
     _, _, _ = package(tmp_path/'new', 122)
     data = json.loads((tmp_path/'new/channel1-metadata.json').read_bytes())
     manifest = data['manifest']; graph = protocol.canonical_json(data['graph'])
+    if legacy:
+        manifest['request']['publicBase']='https://download.semantier.cn'
+        manifest['packages'][0]['native']['schema']=1
+        del manifest['packages'][0]['native']['packageBase']
     probe = tmp_path/'probe.msix'; probe.write_bytes(bytes(range(256))*1024)
     manifest['packages'][0]['artifact']['size'] = probe.stat().st_size
     # Exercise the actual embedded Python probe, mocking only external HTTP.
@@ -179,7 +184,8 @@ def test_native_public_probe_checks_real_response_predicates(tmp_path, monkeypat
         def __enter__(self): return self
         def __exit__(self, *args): pass
         def get(self, url, **kwargs):
-            assert url.startswith('https://assets.semantier.cn/' if url.endswith('.msix') else 'https://cloud.semantier.cn/')
+            package_base='https://download.semantier.cn/' if legacy else 'https://assets.semantier.cn/'
+            assert url.startswith(package_base if url.endswith('.msix') else 'https://cloud.semantier.cn/')
             assert kwargs['allow_redirects'] is False
             status = 200; headers = {'Content-Type':'application/json','Cache-Control':'public,max-age=31536000,immutable'}; content = protocol.canonical_json(manifest)
             if url.endswith('native-graph.json'):
@@ -188,12 +194,12 @@ def test_native_public_probe_checks_real_response_predicates(tmp_path, monkeypat
                 start, end = map(int, kwargs['headers']['Range'][6:].split('-'))
                 content = probe.read_bytes()[start:end+1]
                 if failure == 'wrong-bytes': content = b'changed'
-                status = 421 if failure == '421' else 206
+                status = 421 if failure == '421' or (legacy and self.version==2) else 206
                 headers['Content-Range'] = f'bytes {start}-{end}/{manifest["packages"][0]["artifact"]["size"]}'
             return types.SimpleNamespace(status_code=status, content=content, headers=headers,
                                          http_version=2 if failure == 'http1' else self.version)
     monkeypatch.setitem(sys.modules, 'curl_cffi', types.SimpleNamespace(requests=types.SimpleNamespace(Session=Session), CurlOpt=types.SimpleNamespace(PROXY=1,MAXFILESIZE_LARGE=2)))
-    monkeypatch.setattr(sys, 'argv', ['probe', __import__('base64').b64encode(json.dumps(manifest).encode()).decode(), str(probe), 'False', 'False'])
+    monkeypatch.setattr(sys, 'argv', ['probe', __import__('base64').b64encode(json.dumps(manifest).encode()).decode(), str(probe), 'False', str(legacy)])
     if failure:
         with pytest.raises(AssertionError): exec(code, {})
     else:

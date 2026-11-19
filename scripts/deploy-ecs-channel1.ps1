@@ -189,11 +189,12 @@ for mode,negotiated in [('v2',3),('v3only',30)]:
    if key.endswith('build.json'):assert r.content==canonical
    else:assert hashlib.sha256(r.content).hexdigest()==row['native']['graph']['sha256']
    rows.append({'origin':'cloud-metadata','protocol':r.http_version,'status':r.status_code,'bytes':len(r.content)})
-with requests.Session(http_version='v1',trust_env=False,curl_options={CurlOpt.PROXY:b'',CurlOpt.MAXFILESIZE_LARGE:65536}) as c:
+with requests.Session(http_version='v2' if legacy else 'v1',trust_env=False,curl_options={CurlOpt.PROXY:b'',CurlOpt.MAXFILESIZE_LARGE:65536}) as c:
  for start,end in ((0,65535),(a['size']-65536,a['size']-1)):
   r=c.get(package_base+'/'+a['key'],headers={'Range':f'bytes={start}-{end}','Accept-Encoding':'identity'},allow_redirects=False,timeout=30)
   with open(sys.argv[2],'rb') as f:f.seek(start);expected=f.read(end-start+1)
   assert r.status_code==206 and len(r.content)==65536 and r.content==expected,(r.status_code,r.http_version)
+  assert not legacy or r.http_version==3
   assert r.headers['Content-Range']==f'bytes {start}-{end}/{a["size"]}' and not r.headers.get('Content-Encoding')
   rows.append({'origin':'oss-package','protocol':r.http_version,'status':r.status_code,'bytes':len(r.content),'range':r.headers['Content-Range']})
 print(json.dumps({'result':'CLOUD_METADATA_OSS_BOUNDED_RANGE_PASS','fullMsixTransfers':0,'responses':rows}))
