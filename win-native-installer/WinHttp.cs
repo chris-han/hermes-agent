@@ -56,6 +56,9 @@ static class BootstrapperWinHttp {
 sealed class NativeWinHttpRequests : IWinHttpRequests, IDisposable {
     readonly IntPtr session;
     readonly bool ossStandard;
+    internal long ReceivedBytes;
+    internal int OpenedResponses;
+    internal int LastProtocol=-1;
     // Opt-in staging only. Legacy production callers keep their exact behavior.
     public NativeWinHttpRequests(bool ossStandard=false) {
         this.ossStandard=ossStandard;
@@ -87,7 +90,8 @@ sealed class NativeWinHttpRequests : IWinHttpRequests, IDisposable {
                !long.TryParse(NativeWinHttp.Header(request,5,false),NumberStyles.None,CultureInfo.InvariantCulture,out length) || length<0)
                 throw new InvalidDataException("Invalid HTTP response headers.");
             string range=NativeWinHttp.Header(request,53,true);
-            var response=new NativeWinHttpResponse(connection,request,status,length,range,NativeWinHttp.UsedProtocol(request));connection=IntPtr.Zero;request=IntPtr.Zero;return response;
+            LastProtocol=NativeWinHttp.UsedProtocol(request);
+            var response=new NativeWinHttpResponse(connection,request,status,length,range,LastProtocol,n=>ReceivedBytes+=n);OpenedResponses++;connection=IntPtr.Zero;request=IntPtr.Zero;return response;
         } catch(Win32Exception error) {throw new IOException("Windows HTTP transport failed.",error);}
         finally {if(request!=IntPtr.Zero)NativeWinHttp.Close(request);if(connection!=IntPtr.Zero)NativeWinHttp.Close(connection);}
     }
@@ -96,15 +100,16 @@ sealed class NativeWinHttpResponse : IWinHttpResponse {
     readonly IntPtr connection,request;
     public int StatusCode {get;private set;} public long ContentLength {get;private set;} public string ContentRange {get;private set;} public int Protocol {get;private set;}
     public Stream Body {get;private set;}
-    public NativeWinHttpResponse(IntPtr c,IntPtr r,int status,long length,string range,int protocol){Protocol=protocol;connection=c;request=r;StatusCode=status;ContentLength=length;ContentRange=range;Body=new WinHttpReadStream(r);}
+    public NativeWinHttpResponse(IntPtr c,IntPtr r,int status,long length,string range,int protocol,Action<int> received){Protocol=protocol;connection=c;request=r;StatusCode=status;ContentLength=length;ContentRange=range;Body=new WinHttpReadStream(r,received);}
     public void Dispose(){Body.Dispose();NativeWinHttp.Close(request);NativeWinHttp.Close(connection);}
 }
 sealed class WinHttpReadStream : Stream {
     readonly IntPtr request;
-    public WinHttpReadStream(IntPtr r){request=r;}
+    readonly Action<int> received;
+    public WinHttpReadStream(IntPtr r,Action<int> callback){request=r;received=callback;}
     public override int Read(byte[] buffer,int offset,int count){
         if(offset!=0)throw new ArgumentOutOfRangeException("offset");uint read;
-        if(!NativeWinHttp.ReadData(request,buffer,(uint)count,out read))throw new IOException("Windows HTTP read failed.",new Win32Exception(Marshal.GetLastWin32Error()));return (int)read;
+        if(!NativeWinHttp.ReadData(request,buffer,(uint)count,out read))throw new IOException("Windows HTTP read failed.",new Win32Exception(Marshal.GetLastWin32Error()));received((int)read);return (int)read;
     }
     public override bool CanRead{get{return true;}} public override bool CanSeek{get{return false;}} public override bool CanWrite{get{return false;}}
     public override long Length{get{throw new NotSupportedException();}} public override long Position{get{throw new NotSupportedException();}set{throw new NotSupportedException();}}

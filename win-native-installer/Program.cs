@@ -20,7 +20,7 @@ using System.Xml.Linq;
 [assembly: System.Reflection.AssemblyProduct("Semantier Setup")]
 [assembly: System.Reflection.AssemblyCopyright("Copyright (c) 2026 Semantier Technology")]
 internal static class Program {
-  internal const string MsixUrl="https://download.semantier.cn/releases/SemantierAgent.msix";
+  internal const string MetadataUrl=ReleaseSelection.MetadataBase+"/"+ReleaseSelection.ChannelKey;
   const string Identity="Semantier.Agent.Acceptance",Publisher="CN=Semantier Technology, O=Semantier Technology";
   const long MaxBytes=12000000000;
   internal static string AppVersionString="latest";
@@ -35,13 +35,19 @@ internal static class Program {
       if(args.Length==2 && args[0]=="--describe-fixed-download"){File.WriteAllText(args[1],"local-adjacent-single-msix",new UTF8Encoding(false));return 0;}
       if(args.Length!=0)return 2;
 #else
-      if(args.Length==2 && args[0]=="--describe-fixed-download"){File.WriteAllText(args[1],MsixUrl,new UTF8Encoding(false));return 0;}
-      if(args.Length==1 && args[0]=="--probe-h3"){
-        using(var client=new NativeWinHttpRequests())using(var response=client.Open(new Uri(MsixUrl+".sha256"),0,true)){
-          string checksum=ReadChecksum(response);
-          if(response.Protocol!=2)throw new IOException("Expected HTTP/3.");
-          File.WriteAllText(Path.Combine(Path.GetTempPath(),"semantier-setup-h3-probe.json"),"{\"protocol\":\"h3\",\"url\":\""+MsixUrl+".sha256\",\"sha256\":\""+checksum+"\"}");
+      if(args.Length==2 && args[0]=="--describe-fixed-download"){File.WriteAllText(args[1],MetadataUrl,new UTF8Encoding(false));return 0;}
+      if(args.Length==4 && args[0]=="--probe-oss-transport"){
+        long size;if(!long.TryParse(args[2],out size) || size<=0 || size>2097152 || args[1].Length!=64 || !args[1].All(Uri.IsHexDigit))throw new ArgumentException("Invalid small EXE probe binding.");
+        using(var client=new NativeWinHttpRequests())using(var output=new MemoryStream()){
+          BootstrapperWinHttp.Download(client,new Uri(ReleaseSelection.PackageBase+"/releases/installers/semantier-setup-ch1.exe"),output,size,done=>{});
+          string observed;using(var hash=SHA256.Create())observed=BitConverter.ToString(hash.ComputeHash(output.ToArray())).Replace("-","").ToLowerInvariant();
+          if(observed!=args[1].ToLowerInvariant())throw new InvalidDataException("Small EXE transport SHA256 mismatch.");
+          File.WriteAllText(args[3],"{\"status\":\"PASS\",\"scope\":\"SMALL_EXE_TRANSPORT_ONLY_NO_INSTALL\",\"bytes\":"+client.ReceivedBytes+",\"responses\":"+client.OpenedResponses+",\"protocol\":"+client.LastProtocol+",\"sha256\":\""+observed+"\"}",new UTF8Encoding(false));
         }return 0;
+      }
+      if(args.Length==3 && args[0]=="--download-release"){
+        if(args[1].Length!=64 || !args[1].All(Uri.IsHexDigit))throw new ArgumentException("Invalid expected SHA256.");
+        Directory.CreateDirectory(args[2]);DownloadPackage(args[2],null,args[1]);return 0;
       }
       if(args.Length==2 && args[0]=="--verify-remote"){
         if(args[1].Length!=64 || !args[1].All(Uri.IsHexDigit))throw new ArgumentException("Invalid expected SHA-256.");
@@ -84,40 +90,58 @@ internal static class Program {
     try{return head?client.OpenHead(uri,true):client.Open(uri,0,true);}
     catch(IOException){return head?client.OpenHead(uri,false):client.Open(uri,0,false);}
   }
-  static string ReadChecksum(IWinHttpResponse response){
-    if(response.StatusCode!=200 || response.ContentLength<64 || response.ContentLength>4096)throw new InvalidDataException("Invalid checksum response.");
-    using(var memory=new MemoryStream()){
-      byte[] buffer=new byte[4096];int n;while((n=response.Body.Read(buffer,0,buffer.Length))>0){if(memory.Length+n>4096)throw new InvalidDataException("Checksum response too large.");memory.Write(buffer,0,n);}
-      if(memory.Length!=response.ContentLength)throw new InvalidDataException("Incomplete checksum response.");
-      string value=Encoding.ASCII.GetString(memory.ToArray()).Split(new[]{' ','\t','\r','\n'},StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()??"";
-      if(value.Length!=64 || !value.All(Uri.IsHexDigit))throw new InvalidDataException("Invalid SHA-256 sidecar.");return value.ToLowerInvariant();
+  internal static byte[] ReadMetadata(NativeWinHttpRequests client,string url){
+    if(!url.StartsWith(ReleaseSelection.MetadataBase+"/releases/",StringComparison.Ordinal))throw new InvalidDataException("Untrusted metadata origin.");
+    using(var response=Open(client,new Uri(url),false))using(var output=new MemoryStream()){
+      if(response.StatusCode!=200 || response.ContentLength<=0 || response.ContentLength>4194304)throw new InvalidDataException("Invalid metadata response.");
+      var buffer=new byte[65536];int n;
+      while((n=response.Body.Read(buffer,0,buffer.Length))>0){if(output.Length+n>response.ContentLength)throw new InvalidDataException("Metadata size mismatch.");output.Write(buffer,0,n);}
+      if(output.Length!=response.ContentLength)throw new InvalidDataException("Incomplete metadata.");return output.ToArray();
     }
   }
   internal static string DownloadPackage(string directory,Action<long,long> progress,string expected,Action<string> report=null){
-    using(var client=new NativeWinHttpRequests())for(int attempt=0;attempt<3;attempt++){
-      string wanted;using(var response=Open(client,new Uri(MsixUrl+".sha256"),false)){wanted=ReadChecksum(response);}
-      if(expected!=null && !string.Equals(wanted,expected,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Public release differs from expected SHA-256.");
-      long size;using(var head=Open(client,new Uri(MsixUrl),true)){
-        if(head.StatusCode!=200 || head.ContentLength<=0 || head.ContentLength>MaxBytes)throw new InvalidDataException("Invalid MSIX response.");size=head.ContentLength;
-      }
+    using(var metadata=new NativeWinHttpRequests())using(var client=new NativeWinHttpRequests()){
+      var release=ReleaseSelection.Resolve(url=>ReadMetadata(metadata,url));
+      if(expected!=null && !string.Equals(release.Sha256,expected,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Selected release differs from expected SHA256.");
+      using(var head=Open(client,release.Uri,true))if(head.StatusCode!=200 || head.ContentLength!=release.Size)throw new InvalidDataException("OSS package size mismatch.");
       string file=Path.Combine(directory,"SemantierAgent.msix");
-      using(var output=new FileStream(file,FileMode.Create,FileAccess.Write,FileShare.None)){
+      // CreateNew prevents an accidental second full download over retained evidence.
+      using(var output=new FileStream(file,FileMode.CreateNew,FileAccess.Write,FileShare.None)){
         var clock=Stopwatch.StartNew();long last=0;
-        BootstrapperWinHttp.Download(client,new Uri(MsixUrl),output,size,done=>{if(progress!=null && (done==size || clock.ElapsedMilliseconds-last>=200)){progress(done,size);last=clock.ElapsedMilliseconds;}});
+        BootstrapperWinHttp.Download(client,release.Uri,output,release.Size,done=>{if(progress!=null && (done==release.Size || clock.ElapsedMilliseconds-last>=200)){progress(done,release.Size);last=clock.ElapsedMilliseconds;}});
       }
       if(report!=null)report("Verifying package and publisher…");
       string observed;using(var stream=File.OpenRead(file))using(var sha=SHA256.Create()){observed=BitConverter.ToString(sha.ComputeHash(stream)).Replace("-","").ToLowerInvariant();}
-      if(string.Equals(wanted,observed,StringComparison.OrdinalIgnoreCase)){VerifyIdentity(file);return file;}
-      if(attempt==2)throw new InvalidDataException("MSIX SHA-256 mismatch; installation stopped.");Thread.Sleep(1000);
-    }throw new InvalidDataException("No matching release.");
+      if(observed!=release.Sha256)throw new InvalidDataException("MSIX SHA256 mismatch; no full-file retry.");
+      VerifyIdentity(file,release);VerifySignature(file);
+      var current=ReleaseSelection.Resolve(url=>ReadMetadata(metadata,url));
+      if(current.ManifestSha256!=release.ManifestSha256)throw new InvalidDataException("Selected release changed during download.");
+      File.WriteAllText(Path.Combine(directory,"download-receipt.json"),"{\"status\":\"DOWNLOADED_VERIFIED_NOT_INSTALLED\",\"buildId\":\""+release.BuildId+"\",\"version\":\""+release.Version+"\",\"sha256\":\""+observed+"\",\"origin\":\""+ReleaseSelection.PackageBase+"\",\"ossResponseBytes\":"+client.ReceivedBytes+",\"responses\":"+client.OpenedResponses+"}",new UTF8Encoding(false));
+      return file;
+    }
   }
-  internal static void VerifyIdentity(string file){
+  internal static void VerifyIdentity(string file,ReleaseSelection selected=null){
     using(var zip=ZipFile.OpenRead(file)){
       var entry=zip.GetEntry("AppxManifest.xml");if(entry==null)throw new InvalidDataException("Missing MSIX manifest.");
       using(var stream=entry.Open()){
         var identity=XDocument.Load(stream).Descendants().First(x=>x.Name.LocalName=="Identity");Version version;
-        if((string)identity.Attribute("Name")!=Identity || (string)identity.Attribute("Publisher")!=Publisher || (string)identity.Attribute("ProcessorArchitecture")!="x64" || !Version.TryParse((string)identity.Attribute("Version"),out version))throw new InvalidDataException("Unexpected MSIX identity/publisher/architecture."); AppVersionString=version.ToString(3);
-      }if(zip.GetEntry("AppxSignature.p7x")==null)throw new InvalidDataException("Unsigned MSIX.");
+        if((string)identity.Attribute("Name")!=Identity || (string)identity.Attribute("Publisher")!=Publisher || (string)identity.Attribute("ProcessorArchitecture")!="x64" || !Version.TryParse((string)identity.Attribute("Version"),out version))throw new InvalidDataException("Unexpected MSIX identity/publisher/architecture."); if(selected!=null && version.ToString()!=selected.Version)throw new InvalidDataException("Downloaded version differs from selected release.");AppVersionString=version.ToString(3);
+      }
+      if(selected!=null){
+        var stamp=zip.GetEntry("app/resources/install-stamp.json");if(stamp==null)throw new InvalidDataException("Missing package source stamp.");
+        using(var input=stamp.Open())using(var bytes=new MemoryStream()){if(stamp.Length>4194304)throw new InvalidDataException("Stamp exceeds limit.");input.CopyTo(bytes);selected.VerifyStamp(bytes.ToArray());}
+      }
+      if(zip.GetEntry("AppxSignature.p7x")==null)throw new InvalidDataException("Unsigned MSIX.");
+    }
+  }
+  internal static void VerifySignature(string file){
+    string command="$ErrorActionPreference='Stop'; $s=Get-AuthenticodeSignature -LiteralPath '"+file.Replace("'","''")+"'; if($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -cne 'CN=Semantier Technology, O=Semantier Technology' -or $s.SignerCertificate.Thumbprint -cne '57BF15739B4AA447842EAF388856A01B4E5029FF'){exit 1}";
+    string shell=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe");
+    var info=new ProcessStartInfo(shell,"-NoProfile -NonInteractive -EncodedCommand "+Convert.ToBase64String(Encoding.Unicode.GetBytes(command))){UseShellExecute=false,CreateNoWindow=true};
+    using(var process=Process.Start(info)){
+      if(process==null)throw new IOException("Cannot start Windows signature verifier.");
+      if(!process.WaitForExit(600000)){process.Kill();throw new IOException("Windows signature verification timed out.");}
+      if(process.ExitCode!=0)throw new InvalidDataException("MSIX signature or pinned publisher verification failed.");
     }
   }
   internal static X509Certificate2 PublisherCertificate(){
@@ -157,7 +181,7 @@ internal static class Program {
   internal static void Install(string file,Action<string> report=null){
     EnsurePublisherTrust(report);
     Log("Installing "+file+" for "+Environment.UserDomainName+"\\"+Environment.UserName);
-    string command="$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=New-Object Text.UTF8Encoding($false); try { Add-AppxPackage -Path '"+file.Replace("'","''")+"' -ForceApplicationShutdown -ForceUpdateFromAnyVersion } catch { [Console]::Error.WriteLine(($_ | Format-List * -Force | Out-String)); exit 1 }";
+    string command="$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=New-Object Text.UTF8Encoding($false); try { Add-AppxPackage -Path '"+file.Replace("'","''")+"' -ForceApplicationShutdown } catch { [Console]::Error.WriteLine(($_ | Format-List * -Force | Out-String)); exit 1 }";
     var info=new ProcessStartInfo("powershell.exe","-NoProfile -NonInteractive -OutputFormat Text -EncodedCommand "+Convert.ToBase64String(Encoding.Unicode.GetBytes(command))){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8};
     using(var process=Process.Start(info)){
       if(process==null)throw new IOException("Cannot start Windows installer.");

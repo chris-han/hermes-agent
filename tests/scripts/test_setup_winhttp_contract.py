@@ -13,7 +13,7 @@ def test_native_setup_download_contract_identity_and_resume(tmp_path):
     installer = repo / "win-native-installer"
     source = tmp_path / "Setup.cs"
     source.write_text("\n".join((installer / name).read_text(encoding="utf-8")
-                               for name in ("Program.cs", "WinHttp.cs", "InstallerWindow.cs")),
+                               for name in ("Program.cs", "ReleaseMetadata.cs", "WinHttp.cs", "InstallerWindow.cs")),
                       encoding="utf-8")
     for name, version, publisher in [("old", "0.0.87.0", "Semantier Technology"),
                                      ("new", "9.9.99.0", "Semantier Technology"),
@@ -48,7 +48,7 @@ class SetupContractTests {
     }
     if(!wrongCertificate)throw new Exception("Unpinned certificate accepted");
     InstallerWindow.SelfTest();
-    if(Program.MsixUrl!="https://download.semantier.cn/releases/SemantierAgent.msix")throw new Exception("Pinned or wrong URL");
+    if(Program.MetadataUrl!="https://cloud.semantier.cn/releases/channels/semantier-acceptance.json")throw new Exception("Pinned or wrong URL");
     Program.VerifyIdentity(Path.Combine(args[0],"old.msix"));
     Program.VerifyIdentity(Path.Combine(args[0],"new.msix"));
     bool rejected=false;try{Program.VerifyIdentity(Path.Combine(args[0],"wrong.msix"));}catch(InvalidDataException){rejected=true;}
@@ -68,7 +68,7 @@ class SetupContractTests {
     Program.VerifyIdentity(Program.ResolveLocalPackage(local));
     var requests=new Requests();
     using(var output=new MemoryStream()){
-      BootstrapperWinHttp.Download(requests,new Uri(Program.MsixUrl),output,6,total=>{});
+      BootstrapperWinHttp.Download(requests,new Uri("https://assets.semantier.cn/releases/channel-builds/"+new string('a',32)+"/SemantierAgent.msix"),output,6,total=>{});
       if(Encoding.ASCII.GetString(output.ToArray())!="abcdef" || requests.Calls!=3)throw new Exception("Resume or fallback failed");
     }
     if(typeof(Program).Assembly.GetReferencedAssemblies().Any(a=>a.Name=="System.Net.Http" || a.Name=="System.Private.CoreLib"))throw new Exception("Unexpected runtime dependency");
@@ -97,7 +97,7 @@ class SetupContractTests {
 ''', encoding="utf-8")
     compiler = Path(os.environ["WINDIR"]) / "Microsoft.NET/Framework64/v4.0.30319/csc.exe"
     executable = tmp_path / "Tests.exe"
-    references = ["System.Windows.Forms", "System.Drawing", "System.Xml.Linq",
+    references = ["System.Windows.Forms", "System.Drawing", "System.Xml.Linq", "System.Runtime.Serialization",
                   "System.IO.Compression", "System.IO.Compression.FileSystem"]
     subprocess.run([str(compiler), "/nologo", "/target:exe", "/platform:x64", "/define:TESTING", "/main:SetupContractTests",
                     f"/resource:{repo / 'apps/desktop/assets/icon.ico'},Semantier.icon.ico",

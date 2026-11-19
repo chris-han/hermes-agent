@@ -1024,7 +1024,7 @@ function Restore-SignedRelease {
   if(!$saved -or !$saved.completed.PSObject.Properties['signed']){throw 'No retained signed checkpoint; resume STOP, never rebuild.'}
   $binding=$saved.binding | ConvertFrom-Json
   if($binding.mode -cne 'Prod' -or !$binding.skipLocalInstall -or !$binding.nativePublishOnly -or
-     $binding.setupContract -cne 'verify-remote-expected-sha256-v2' -or $binding.channelContract -cne 'current-only-channel-metadata-v1'){
+     $binding.setupContract -cne 'cloud-channel-oss-native-v3' -or $binding.channelContract -cne 'current-only-channel-metadata-v1'){
     throw 'Unsupported signed checkpoint publication contract.'
   }
   $map=@{ExpectedInputSha256='inputSha256';SourceCommit='source';Version='version';BuildId='build';Thumbprint='signer';
@@ -1461,19 +1461,19 @@ function Upload([string]$Path, [string]$RemoteFile) {
 function Prepare-IndependentSetup {
   $setupName=if($LocalSetup){'semantier-setup-ch0.exe'}else{'semantier-setup-ch1.exe'}
   $setup=Join-Path $Output $setupName
-  $setupExpected=if($LocalSetup){'local-adjacent-single-msix'}else{"${PublicBase}/releases/SemantierAgent.msix"}
-  $setupContractVersion=$setupExpected+'|verify-remote-expected-sha256-v2'
+  $setupExpected=if($LocalSetup){'local-adjacent-single-msix'}else{"${PublicBase}/releases/channels/semantier-acceptance.json"}
+  $setupContractVersion=$setupExpected+'|cloud-channel-oss-native-v3'
   if($UpdateSetup -and !$receipt.Contains('setupExplicitUpdate')){$script:checkpoints.Remove('setup')}
   if($script:checkpoints.ContainsKey('setup')) {
     Require-Signature $setup
     Report-Status 'Reusing checkpointed signed Setup.'
   } else {
-  $setupExpected=if($LocalSetup){'local-adjacent-single-msix'}else{"${PublicBase}/releases/SemantierAgent.msix"}
+  $setupExpected=if($LocalSetup){'local-adjacent-single-msix'}else{"${PublicBase}/releases/channels/semantier-acceptance.json"}
   $setupIsReusable=$false
   # Do not execute an older cached Setup merely to discover its command-line API.
   # Only our own prior fixed-file builds carry this separate contract marker.
   $cachedContract=$SetupExe+'.fixed-msix-url.txt'
-  $setupContractVersion=$setupExpected+'|verify-remote-expected-sha256-v2'
+  $setupContractVersion=$setupExpected+'|cloud-channel-oss-native-v3'
   if (!$UpdateSetup -and (Test-Path -LiteralPath $SetupExe -PathType Leaf) -and
       (Get-Item -LiteralPath $SetupExe).Length -le 2097152 -and
       (Test-Path -LiteralPath $cachedContract -PathType Leaf) -and
@@ -1496,6 +1496,7 @@ function Prepare-IndependentSetup {
     New-Item -ItemType Directory -Path $setupWork -Force | Out-Null
     $installerSource=Join-Path $Repository 'win-native-installer'
     $source=[IO.File]::ReadAllText((Join-Path $installerSource 'Program.cs'))+"`n"+
+      [IO.File]::ReadAllText((Join-Path $installerSource 'ReleaseMetadata.cs'))+"`n"+
       [IO.File]::ReadAllText((Join-Path $installerSource 'WinHttp.cs'))+"`n"+
       [IO.File]::ReadAllText((Join-Path $installerSource 'InstallerWindow.cs'))
     [IO.File]::WriteAllText((Join-Path $setupWork 'Program.cs'),$source,$utf8)
@@ -1509,7 +1510,7 @@ function Prepare-IndependentSetup {
       ('/resource:'+(Join-Path $installerSource 'SemantierPublisher.cer')+',Semantier.publisher.cer'),
       ('/resource:'+(Join-Path $Repository 'apps\desktop\assets\icon.png')+',Semantier.logo.png'),
       '/reference:System.Windows.Forms.dll','/reference:System.Drawing.dll',
-      '/reference:System.Xml.Linq.dll','/reference:System.IO.Compression.dll',
+      '/reference:System.Xml.Linq.dll','/reference:System.Runtime.Serialization.dll','/reference:System.IO.Compression.dll',
       '/reference:System.IO.Compression.FileSystem.dll',(Join-Path $setupWork 'Program.cs'))
     if((Get-Item -LiteralPath $built).Length -gt 2097152){throw 'Native Setup exceeds the 2 MiB size budget.'}
     Sign-Copy $built $setup
@@ -2058,7 +2059,7 @@ function Publish-IndependentSetup {
   if(!$script:explicitOutput){
     $Output=Join-Path 'D:\repo\deliverables\work' ('ecs-setup-'+(Get-Date -Format 'yyyyMMdd-HHmmss')+'-'+[Guid]::NewGuid().ToString('N').Substring(0,8))
   }
-  $script:runBinding=([ordered]@{kind='setup';localSetup=[bool]$LocalSetup;signer=$Thumbprint;target=$SshTarget;root=$RemoteRoot;origin=$PublicBase;forceRebuild=[bool]$UpdateSetup;implementation='winhttp-framework-asimov-v2';contract='verify-remote-expected-sha256-v2'} | ConvertTo-Json -Compress)
+  $script:runBinding=([ordered]@{kind='setup';localSetup=[bool]$LocalSetup;signer=$Thumbprint;target=$SshTarget;root=$RemoteRoot;origin=$PublicBase;forceRebuild=[bool]$UpdateSetup;implementation='winhttp-framework-asimov-v2';contract='cloud-channel-oss-native-v3'} | ConvertTo-Json -Compress)
   if($WhatIfPreference){[ordered]@{kind='Setup only';output=$Output;update=[bool]$UpdateSetup;stages=$(if($LocalSetup){@('build signed offline Setup','verify signature and adjacent-file contract')}else{@('reuse or build signed Setup','verify signature and download contract','SFTP upload Setup only','activate Setup only')});msix='UNCHANGED';CH2='UNCHANGED'} | ConvertTo-Json;return}
   if(!$NewRun -and !$script:explicitOutput -and (Test-Path -LiteralPath (Split-Path -Parent $Output))){
     foreach($candidate in (Get-ChildItem 'D:\repo\deliverables\work' -Directory -Filter 'ecs-setup-*' | Sort-Object LastWriteTime -Descending)){
@@ -2088,7 +2089,7 @@ function Publish-IndependentSetup {
     $setup=Prepare-IndependentSetup
     if($LocalOnly){$receipt.result='SETUP_LOCAL_VERIFIED';Complete-Checkpoint 'finished';return}
     $remoteSetup="$RemoteRoot/releases/installers/semantier-setup-ch1.exe"
-    $contract="${PublicBase}/releases/SemantierAgent.msix|verify-remote-expected-sha256-v2"
+    $contract="${PublicBase}/releases/channels/semantier-acceptance.json|cloud-channel-oss-native-v3"
     if(!$script:checkpoints.ContainsKey('published')){
       if(!$receipt.Contains('remoteStage')){$receipt.remoteStage=$RemoteRoot.Substring(0,$RemoteRoot.LastIndexOf('/'))+'/.semantier-setup-stage-'+[Guid]::NewGuid().ToString('N')}
       $stage=[string]$receipt.remoteStage
@@ -2279,7 +2280,7 @@ $bindingFields=[ordered]@{mode=$BuildMode;skipLocalInstall=[bool]$SkipLocalInsta
   nativePublishOnly=[bool]$NativePublishOnly;
   nativeUserData=$NativeUserData;recoveryMsix=$RecoveryMsix;profileSampleManifest=$ProfileSampleManifest;criticalFileManifest=$CriticalFileManifest;
   signer=$Thumbprint;target=$SshTarget;root=$RemoteRoot;origin=$PublicBase;profile=$UserProfile;
-  setupContract='verify-remote-expected-sha256-v2';channelContract='current-only-channel-metadata-v1'}
+  setupContract='cloud-channel-oss-native-v3';channelContract='current-only-channel-metadata-v1'}
 if($ChannelRecoveryMsix){$bindingFields.channelRecoveryMsix=$ChannelRecoveryMsix}
 $script:runBinding=$bindingFields | ConvertTo-Json -Compress
 if (!$Commit -and !$NewRun -and !$PSBoundParameters.ContainsKey('Output')) {
@@ -2370,7 +2371,7 @@ try {
 
   # Setup has its own release run; routine MSIX publication never builds it.
   $remoteSetup="$RemoteRoot/releases/installers/semantier-setup-ch1.exe"
-  $setupContractVersion="${PublicBase}/releases/SemantierAgent.msix|verify-remote-expected-sha256-v2"
+  $setupContractVersion="${PublicBase}/releases/channels/semantier-acceptance.json|cloud-channel-oss-native-v3"
   if(!$LocalOnly -and $BuildMode -eq 'Prod') {
     $state=Ssh "if test -s '$remoteSetup' && test -f '$remoteSetup.contract.txt'; then cat '$remoteSetup.contract.txt'; else printf MISSING_OR_UNVERIFIED; fi"
     if($state.Trim() -cne $setupContractVersion){throw 'Compatible Setup is missing or unverified. Run -SetupOnly separately, then resume this MSIX run.'}
