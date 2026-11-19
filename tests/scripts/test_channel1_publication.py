@@ -642,7 +642,8 @@ def retirement_fixture(tmp_path):
     return root,old_package,recovery
 
 
-def test_explicit_retirement_removes_all_known_links_preserves_current_and_repeats(tmp_path):
+def test_explicit_retirement_removes_all_known_links_preserves_current_and_repeats(tmp_path,monkeypatch):
+    monkeypatch.setattr(channel1,'_verify_oss_head',lambda row:None)
     root,old,recovery=retirement_fixture(tmp_path)
     before={p:p.read_bytes() for p in root.rglob('*') if p.is_file()}
     kwargs=dict(build_id=f'{121:032x}',package_sha256=channel1.sha(old),
@@ -660,7 +661,8 @@ def test_explicit_retirement_removes_all_known_links_preserves_current_and_repea
 
 
 @pytest.mark.parametrize('blocker',['current','pointer','outside-link','live','pending-recovery','unknown-owner'])
-def test_explicit_retirement_fails_closed_before_changes(tmp_path,blocker):
+def test_explicit_retirement_fails_closed_before_changes(tmp_path,blocker,monkeypatch):
+    monkeypatch.setattr(channel1,'_verify_oss_head',lambda row:None)
     import os
     root,old,recovery=retirement_fixture(tmp_path)
     kwargs=dict(build_id=f'{121:032x}',package_sha256=channel1.sha(old),
@@ -681,6 +683,7 @@ def test_explicit_retirement_fails_closed_before_changes(tmp_path,blocker):
 
 @pytest.mark.parametrize('actor',[0,1001])
 def test_retirement_root_can_maintain_service_owned_directory(tmp_path,monkeypatch,actor):
+    monkeypatch.setattr(channel1,'_verify_oss_head',lambda row:None)
     root,old,_=retirement_fixture(tmp_path)
     original=Path.stat
     def observed(path,*args,**kwargs):
@@ -894,3 +897,36 @@ def test_oss_publication_head_never_reads_body_or_follows_redirect(tmp_path,monk
         with pytest.raises(ValueError):channel1._verify_oss_head(row)
     else:channel1._verify_oss_head(row)
     assert requests==[('HEAD','/'+row['artifact']['key'])]
+
+
+@pytest.mark.parametrize('public_ready',[True,False])
+def test_retirement_after_oss_cutover_removes_old_ecs_stable_without_touching_active_head(tmp_path,monkeypatch,public_ready):
+    root,_,_=retirement_fixture(tmp_path)
+    previous=channel1.sha(root/channel1.POINTER)
+    old=root/protocol.build_prefix(f'{122:032x}')/'SemantierAgent.msix'
+    old_sha=channel1.sha(old)
+    (tmp_path/'new/SemantierAgent.msix').unlink()
+    stage=tmp_path/'oss';request,new_sha,metadata_sha=package(stage,123)
+    recovery=tmp_path/('.channel1-recovery-'+request['buildId'])
+    monkeypatch.setattr(channel1,'_verify_oss_head',lambda row:None)
+    channel1.publish(root,stage,metadata_sha256=metadata_sha,package_sha256=new_sha,protocol=protocol,
+        expected_previous_sha256=previous,recovery=recovery,metadata_only=True)
+    current=channel1.sha(root/channel1.POINTER)
+    assert not (root/protocol.build_prefix(request['buildId'])/'SemantierAgent.msix').exists()
+    if not public_ready:
+        def unavailable(row):raise ValueError('Active OSS bytes unavailable')
+        monkeypatch.setattr(channel1,'_verify_oss_head',unavailable)
+    args=dict(build_id=f'{122:032x}',package_sha256=old_sha,expected_previous_sha256=current,assert_inactive=lambda paths:None)
+    if public_ready:
+        result=channel1.retire_package(root,**args,apply=True)
+        assert result['result']=='PACKAGE_RETIRED'
+        assert not old.exists() and not (root/'releases/SemantierAgent.msix').exists()
+        assert (recovery/'recovery.retired').is_file()
+        assert channel1.retire_package(root,**args,apply=True)['result']=='ALREADY_RETIRED'
+        with pytest.raises(ValueError,match='Active release'):
+            channel1.retire_package(root,build_id=request['buildId'],package_sha256=new_sha,expected_previous_sha256=current,apply=True)
+    else:
+        with pytest.raises(ValueError,match='unavailable'):channel1.retire_package(root,**args,apply=True)
+        assert old.exists() and (root/'releases/SemantierAgent.msix').is_file()
+        assert (recovery/'recovery.json').is_file()
+    assert channel1.sha(root/channel1.POINTER)==current

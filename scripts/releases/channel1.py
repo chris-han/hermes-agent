@@ -785,24 +785,30 @@ def retire_package(root, *, build_id, package_sha256, expected_previous_sha256,
             raise ValueError('Retirement artifact binding mismatch')
         package = _safe(root, key)
         stable = _safe(root, 'releases/SemantierAgent.msix')
-        active_sha = sha(stable)
         head = record.get('nativeHead') or record.get('head')
-        active = json.loads(_safe(root, head['manifestKey']).read_bytes())['packages']
-        if (record.get('state') != 'active' or len(active) != 1
-                or active[0]['artifact']['sha256'] != active_sha
-                or not _safe(root, active[0]['artifact']['key']).samefile(stable)):
+        active_manifest = json.loads(_safe(root, head['manifestKey']).read_bytes())
+        active = active_manifest['packages']
+        if record.get('state') != 'active' or len(active) != 1:
+            raise ValueError('Active package binding mismatch')
+        active_sha = active[0]['artifact']['sha256']
+        active_oss = active[0].get('native', {}).get('schema') == 2
+        if active_oss:
+            if active_manifest['request']['publicBase'] != BASE:
+                raise ValueError('Active OSS metadata origin mismatch')
+            _verify_oss_head(active[0])
+        elif (sha(stable) != active_sha or not _safe(root, active[0]['artifact']['key']).samefile(stable)):
             raise ValueError('Active stable package binding mismatch')
         if not package.exists():
             return {'result': 'ALREADY_RETIRED', 'buildId': build_id, 'sha256': package_sha256, 'reclaimedBytes': 0}
         info = package.stat()
-        if package.samefile(stable) or info.st_size != rows[0]['artifact']['size'] or sha(package) != package_sha256:
+        if (not active_oss and package.samefile(stable)) or info.st_size != rows[0]['artifact']['size'] or sha(package) != package_sha256:
             raise ValueError('Retired/current package integrity mismatch')
         actor = os.geteuid() if hasattr(os, 'geteuid') else None
         root_owner = root.stat()
-        active_owner = stable.stat().st_uid
+        active_owner = stable.stat().st_uid if stable.exists() else None
         if actor is not None:
             own_files = info.st_uid == actor and root_owner.st_uid == actor
-            root_maintenance = actor == 0 and info.st_uid == active_owner and not (root_owner.st_mode & 0o022)
+            root_maintenance = actor == 0 and info.st_uid in {actor, root_owner.st_uid, active_owner} and not (root_owner.st_mode & 0o022)
             if not (own_files or root_maintenance):
                 raise ValueError('Retirement actor does not own package/root')
         with zipfile.ZipFile(package) as archive:
@@ -824,7 +830,7 @@ def retire_package(root, *, build_id, package_sha256, expected_previous_sha256,
             relative = path.relative_to(root.parent)
             _safe(root.parent, relative)
             owner = relative.parts[0]
-            known = (path == package or path == root/'releases/.channel1-restore.tmp'
+            known = (path == package or (active_oss and path == stable) or path == root/'releases/.channel1-restore.tmp'
                      or re.fullmatch(r'\.channel1-recovery-[0-9a-f]{32}', owner)
                      or re.fullmatch(r'\.semantier-stage-[0-9a-f]{32}', owner)
                      or re.fullmatch(r'\.msix-rollback-\d+-[A-Za-z0-9TZ]+', owner))
@@ -868,7 +874,11 @@ def retire_package(root, *, build_id, package_sha256, expected_previous_sha256,
                     or current.st_nlink != len(aliases)-remaining):
                 raise ValueError('Package links changed during retirement')
             path.unlink()
-        if sha(pointer) != expected_previous_sha256 or sha(stable) != active_sha:
+        if sha(pointer) != expected_previous_sha256:
+            raise ValueError('Active release changed during retirement')
+        if active_oss:
+            _verify_oss_head(active[0])
+        elif sha(stable) != active_sha:
             raise ValueError('Active release changed during retirement')
         report.update(result='PACKAGE_RETIRED', reclaimedBytes=max(0, shutil.disk_usage(root).free-before),
                       logicalPackageBytes=info.st_size, activePackageSha256=active_sha)
