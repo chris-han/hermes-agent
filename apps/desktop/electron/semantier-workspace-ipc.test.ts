@@ -216,3 +216,26 @@ it('refuses logout before cookie mutation if the sync process cannot stop',async
  await expect(handler({} as never,'https://cloud.example')).rejects.toThrow('child still alive')
  expect(owned.clearStorageData).not.toHaveBeenCalled()
 })
+
+it.each(['managed-devices','managed-device-consent','managed-device-revoke'])('refuses a changed account before %s', async name => {
+  const fetch=vi.fn().mockResolvedValue(Response.json({...identity,user:{...identity.user,user_id:'foreign'}}))
+  vi.mocked(session.fromPartition).mockReturnValue({fetch} as never)
+  vi.mocked(ipcMain.handle).mockClear()
+  registerSemantierWorkspaceIpc()
+  const handler=vi.mocked(ipcMain.handle).mock.calls.find(([channel])=>channel==='hermes:workspace:'+name)![1]
+  await expect(handler({} as never,'https://cloud.example',scope,'device-a',['skills:sync'])).rejects.toThrow('changed')
+  expect(fetch).toHaveBeenCalledTimes(1)
+})
+
+it('discards a device inventory received during an account switch', async () => {
+  const fetch=vi.fn().mockResolvedValueOnce(Response.json(identity))
+    .mockResolvedValueOnce(Response.json({included_windows_seats:2,devices:[{device_id:'private-device'}],additional_seat_checkout:'unavailable'}))
+    .mockResolvedValueOnce(Response.json({...identity,user:{...identity.user,user_id:'foreign'}}))
+
+  vi.mocked(session.fromPartition).mockReturnValue({fetch} as never)
+  vi.mocked(ipcMain.handle).mockClear()
+  registerSemantierWorkspaceIpc()
+  const handler=vi.mocked(ipcMain.handle).mock.calls.find(([channel])=>channel==='hermes:workspace:managed-devices')![1]
+  await expect(handler({} as never,'https://cloud.example',scope)).rejects.toThrow('changed')
+  expect(fetch).toHaveBeenCalledTimes(3)
+})

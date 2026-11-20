@@ -2,12 +2,15 @@ import { createHash } from 'node:crypto'
 
 import { BrowserWindow, ipcMain, session } from 'electron'
 
-import { assertWorkspaceScope, createSemantierWorkspaceClient, requireNativeCompletion, requireWorkspaceCompletion, WORKSPACE_USER_STOP_ERROR, type WorkspaceHistory, type WorkspaceIdentity, type WorkspaceMainContext, type WorkspaceNativeCancellation, type WorkspaceNativeSnapshot, type WorkspaceNativeSubmission, type WorkspaceScope, type WorkspaceWinmanProfile } from './semantier-workspace-client'
+import { assertWorkspaceScope, createSemantierWorkspaceClient, type ManagedDeviceInventory, type ManagedDevicePermission, requireNativeCompletion, requireWorkspaceCompletion, WORKSPACE_USER_STOP_ERROR, type WorkspaceHistory, type WorkspaceIdentity, type WorkspaceMainContext, type WorkspaceNativeCancellation, type WorkspaceNativeSnapshot, type WorkspaceNativeSubmission, type WorkspaceScope, type WorkspaceWinmanProfile } from './semantier-workspace-client'
 
 export { assertWorkspaceScope } from './semantier-workspace-client'
 export type { WorkspaceScope } from './semantier-workspace-client'
 
 export interface DesktopWorkspaceApi {
+  managedDevices: (origin: string, scope: WorkspaceScope) => Promise<ManagedDeviceInventory>
+  managedDeviceConsent: (origin: string, scope: WorkspaceScope, deviceId: string, permissions: ManagedDevicePermission[]) => Promise<unknown>
+  managedDeviceRevoke: (origin: string, scope: WorkspaceScope, deviceId: string) => Promise<{ device_id: string; status: 'revoked' }>
   identity: (origin: string) => Promise<WorkspaceIdentity>
   login: (origin: string) => Promise<WorkspaceIdentity>
   logout: (origin: string) => Promise<void>
@@ -67,6 +70,30 @@ export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string
     stream.controller.abort()
 
     return { cancel_requested: true, request_id: stream.requestId }
+  })
+  ipcMain.handle('hermes:workspace:managed-devices', async (_event, origin: string, scope: WorkspaceScope) => {
+    const { client } = workspace(origin)
+    assertWorkspaceScope(await client.identity(), scope)
+    const result = await client.managedDevices()
+    assertWorkspaceScope(await client.identity(), scope)
+
+    return result
+  })
+  ipcMain.handle('hermes:workspace:managed-device-consent', async (_event, origin: string, scope: WorkspaceScope, deviceId: string, permissions: ManagedDevicePermission[]) => {
+    const { client } = workspace(origin)
+    assertWorkspaceScope(await client.identity(), scope)
+    const result = await client.managedDeviceConsent(deviceId, permissions)
+    assertWorkspaceScope(await client.identity(), scope)
+
+    return result
+  })
+  ipcMain.handle('hermes:workspace:managed-device-revoke', async (_event, origin: string, scope: WorkspaceScope, deviceId: string) => {
+    const { client } = workspace(origin)
+    assertWorkspaceScope(await client.identity(), scope)
+    const result = await client.managedDeviceRevoke(deviceId)
+    assertWorkspaceScope(await client.identity(), scope)
+
+    return result
   })
   ipcMain.handle('hermes:workspace:identity', (_event, origin: string) => workspace(origin).client.identity())
   ipcMain.handle('hermes:workspace:logout', async (_event, origin: string) => {

@@ -332,6 +332,9 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     resume:()=>ipcRenderer.invoke('hermes:file-sync:resume'),
   },
   workspace: {
+    managedDevices: (origin, scope) => ipcRenderer.invoke('hermes:workspace:managed-devices', origin, scope),
+    managedDeviceConsent: (origin, scope, deviceId, permissions) => ipcRenderer.invoke('hermes:workspace:managed-device-consent', origin, scope, deviceId, permissions),
+    managedDeviceRevoke: (origin, scope, deviceId) => ipcRenderer.invoke('hermes:workspace:managed-device-revoke', origin, scope, deviceId),
     identity: origin => ipcRenderer.invoke('hermes:workspace:identity', origin),
     login: origin => ipcRenderer.invoke('hermes:workspace:login', origin),
     logout: origin => ipcRenderer.invoke('hermes:workspace:logout', origin),

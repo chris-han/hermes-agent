@@ -35,6 +35,11 @@ export interface ManagedDeviceEnrollmentProof {
   signature: string
   attestation: Record<string, unknown>
 }
+export interface ManagedDeviceInventory {
+  included_windows_seats: number
+  devices: ManagedDeviceRow[]
+  additional_seat_checkout: string
+}
 export interface ManagedDeviceRow {
   device_id: string
   status: 'active' | 'revoked'
@@ -150,7 +155,7 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
   }
 
   return {
-    async managedDevices(): Promise<{ included_windows_seats: number; devices: ManagedDeviceRow[]; additional_seat_checkout: string }> {
+    async managedDevices(): Promise<ManagedDeviceInventory> {
       return (await request('/api/cloud-provider/device/managed')).json()
     },
     async managedDeviceChallenge(command: ManagedDeviceChallengeCommand): Promise<{ context: Record<string, string | null>; assurance_required: string }> {
