@@ -58,6 +58,12 @@ function Get-NativeLocalRecovery($Package) {
   if((Hash (Join-Path $Package.InstallLocation 'AppxSignature.p7x')) -cne $signature){throw 'Recovery package does not match installed baseline signature'}
   return @{result='VERIFIED_LOCAL_RECOVERY';path=$RecoveryMsix;signature=$signature;sha256=(Hash $RecoveryMsix)}
 }
+function Get-NativeReleaseRequiredSpace([string]$InputMsix,[switch]$Build) {
+  if($Build){return 12GB}
+  $packageFile=Get-Item -LiteralPath $InputMsix -ErrorAction Stop
+  if($packageFile.PSIsContainer -or ($packageFile.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Existing regular MSIX required'}
+  return 2*$packageFile.Length+512MB  # Signed copy + the one Setup download, with headroom.
+}
 function Test-NativeReleasePreflight {
   if($RemoteRoot -cnotmatch '^/opt/[A-Za-z0-9_/-]+/releases$' -or $RemoteRoot.Contains('/../') -or
     $SshTarget -cnotmatch '^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+$' -or $PublicBase -cne 'https://cloud.semantier.cn') {throw 'Invalid native release destination'}
@@ -101,7 +107,8 @@ function Test-NativeReleasePreflight {
   elseif($saved){if(($saved.version+'.0') -cne $ExpectedVersion){throw 'Saved reservation differs from requested version'}}
   elseif(([Version]($ledger.version+'.0')).Build+1 -ne ([Version]$ExpectedVersion).Build){throw 'Next version reservation differs from explicit target'}
   if($SupersededBuildOutput -and !$PreflightOnly -and (Get-PSDrive ([IO.Path]::GetPathRoot($Output).Substring(0,1))).Free -lt 12GB){$null=Remove-SupersededUnsignedInput $SupersededBuildOutput}
-  if((Get-PSDrive ([IO.Path]::GetPathRoot($Output).Substring(0,1))).Free -lt 12GB){throw 'Insufficient native build space'}
+  $requiredSpace=Get-NativeReleaseRequiredSpace $Msix -Build:([bool]$Commit)
+  if((Get-PSDrive ([IO.Path]::GetPathRoot($Output).Substring(0,1))).Free -lt $requiredSpace){throw 'Insufficient space for the selected native release operation'}
   $code=@'
 import hashlib,json,pathlib,sys
 root=pathlib.Path(sys.argv[1]);expected=sys.argv[2];identity=sys.argv[3]

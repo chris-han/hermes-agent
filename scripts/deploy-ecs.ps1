@@ -993,6 +993,101 @@ function Initialize-LocalBuildSource([string]$Source,[string]$Revision) {
   $common=Assert-RegisteredSource $Source $Revision
   Write-RunEvent @{type='source-verified';source=$Source;commit=$Revision;commonDir=$common;binding=$script:SourceBinding}
 }
+function Remove-FailedPreparationFiles([string]$Run,[string]$Revision,[switch]$Unpacked) {
+  # Reclaim only ignored generated files of an unpublished failed preparation.
+  # Never remove source, registration, cache links, signed bytes or checkpoints.
+  $Run=[IO.Path]::GetFullPath($Run)
+  if([IO.Path]::GetDirectoryName($Run) -ine 'D:\repo\deliverables\work' -or
+     (Split-Path -Leaf $Run) -cnotmatch '^ecs-deploy-\d{8}-\d{6}-[a-f0-9]{8}$' -or
+     $Revision -cnotmatch '^[a-f0-9]{40}$'){throw 'Explicit failed run and revision required'}
+  Assert-NoReparseAncestor $Run
+  $lease=[IO.File]::Open((Join-Path $Run '.source.lock'),'Open','ReadWrite','None')
+  try {
+    $result=Get-Content -Raw -LiteralPath (Join-Path $Run 'result.json') | ConvertFrom-Json
+    if($result.result -cne 'STOP' -or $result.commit -cne $Revision -or
+       $result.signing -cne 'NOT_RUN' -or $result.installation -cne 'NOT_RUN' -or
+       $result.publication -cne 'NOT_RUN'){throw 'Only an unsigned unpublished preparation failure is reclaimable'}
+    $log=Join-Path $Run 'checkpoints.jsonl';$owner=$null
+    foreach($line in [IO.File]::ReadLines($log)){
+      if($line -match '"type"\s*:\s*"source-owner"'){$owner=($line|ConvertFrom-Json).owner}
+    }
+    $source=Join-Path $Run 'source'
+    if(!$owner -or $owner.kind -cne 'native-git-worktree-v1' -or $owner.run -ine $Run -or
+       $owner.source -ine $source -or $owner.commit -cne $Revision){throw 'Failed preparation owner differs'}
+    if($owner.repository -ine $Repository -or
+       (Get-SourceGit $source @('rev-parse','--show-toplevel')).Replace('/','\') -ine $source){throw 'Exact registered source root differs'}
+    if((Get-SourceGit $source @('rev-parse','HEAD')) -cne $Revision -or
+       (Get-SourceGit $source @('status','--porcelain','--untracked-files=all'))){throw 'Failed source must remain exact and clean'}
+    foreach($process in @(Get-CimInstance Win32_Process)){
+      if($process.ProcessId -eq $PID){continue}
+      if(($process.ProcessId -eq $owner.pid -and $process.CreationDate.ToUniversalTime().ToString('o') -ceq $owner.started) -or
+         ($process.ParentProcessId -eq $owner.pid -and $process.CreationDate.ToUniversalTime() -ge [datetime]$owner.started) -or
+         ($process.CommandLine -and $process.CommandLine.IndexOf($source,[StringComparison]::OrdinalIgnoreCase) -ge 0) -or
+         ($process.ExecutablePath -and $process.ExecutablePath.StartsWith($source+'\',[StringComparison]::OrdinalIgnoreCase))){throw 'Failed source remains in use'}
+    }
+    $targets=@('node_modules','apps/desktop/build/agent-payload');$retainedMsix=$null;$retainedHash=$null
+    if($Unpacked){
+      $build=Read-CommitBuild $log
+      if(!$build -or $build.commit -cne $Revision -or $build.stage -cne 'reserved' -or
+         $build.version -cnotmatch '^0\.0\.[1-9][0-9]*$'){throw 'Original incomplete copy reservation required'}
+      $retainedMsix=Join-Path $source ("apps/desktop/release/SemantierAgent-$($build.version)-win-x64.msix")
+      Assert-NoReparseAncestor $retainedMsix
+      Add-Type -AssemblyName System.IO.Compression.FileSystem
+      $archive=[IO.Compression.ZipFile]::OpenRead($retainedMsix)
+      try {
+        [xml]$manifest=Read-ZipText $archive 'AppxManifest.xml'
+        $stamp=Read-ZipText $archive 'app/resources/install-stamp.json'|ConvertFrom-Json
+        if($manifest.Package.Identity.Name -cne 'Semantier.Agent.Acceptance' -or
+           $manifest.Package.Identity.Version -cne ($build.version+'.0') -or
+           $manifest.Package.Identity.Publisher -cne 'CN=Semantier Technology, O=Semantier Technology' -or
+           $stamp.commit -cne $Revision -or $stamp.dirty -or $archive.GetEntry('AppxSignature.p7x')){throw 'Retained unsigned package source/identity differs'}
+      } finally {$archive.Dispose()}
+      $retainedHash=Hash $retainedMsix
+      $targets=@('apps/desktop/release/win-unpacked','node_modules')
+      $partial=Join-Path $Run 'unsigned.msix'
+      if(Test-Path -LiteralPath $partial){
+        Assert-NoReparseAncestor $partial
+        if((Get-Item -LiteralPath $partial).Length -ge (Get-Item -LiteralPath $retainedMsix).Length){throw 'Copy is not an incomplete duplicate'}
+        $remaining=(Get-Item -LiteralPath $partial).Length
+        $stream=[IO.File]::OpenRead($retainedMsix)
+        $prefix=[Security.Cryptography.IncrementalHash]::CreateHash([Security.Cryptography.HashAlgorithmName]::SHA256)
+        try {
+          $buffer=[byte[]]::new(1048576)
+          while($remaining -gt 0){
+            $read=$stream.Read($buffer,0,[int][Math]::Min($buffer.Length,$remaining))
+            if($read -le 0){throw 'Retained package truncated'}
+            $prefix.AppendData($buffer,0,$read);$remaining-=$read
+          }
+          if([Convert]::ToHexString($prefix.GetHashAndReset()).ToLowerInvariant() -cne (Hash $partial)){throw 'Incomplete copy differs from retained package; preserve for diagnosis'}
+        } finally {$stream.Dispose();$prefix.Dispose()}
+        [IO.File]::Delete($partial)
+      }
+    }
+    $bytes=0L;$files=0;$skippedLinks=0
+    foreach($relative in $targets){
+      if((Get-SourceGit $source @('check-ignore',$relative)).Replace('\','/') -cne $relative){throw 'Generated target is not Git-ignored'}
+      $target=Join-Path $source $relative
+      Assert-NoReparseAncestor $target
+      if(!(Test-Path -LiteralPath $target)){continue}
+      $pending=[Collections.Generic.Stack[string]]::new();$pending.Push($target)
+      while($pending.Count){
+        $directory=$pending.Pop();Assert-NoReparseAncestor $directory
+        foreach($entry in [IO.DirectoryInfo]::new($directory).EnumerateFileSystemInfos()){
+          if($entry.Attributes -band [IO.FileAttributes]::ReparsePoint){$skippedLinks++;continue}
+          if($entry.Attributes -band [IO.FileAttributes]::Directory){$pending.Push($entry.FullName);continue}
+          $bytes+=$entry.Length;$entry.Attributes=$entry.Attributes -band (-bnot [IO.FileAttributes]::ReadOnly)
+          $entry.Delete();$files++
+        }
+      }
+    }
+    if($retainedMsix -and (Hash $retainedMsix) -cne $retainedHash){throw 'Retained package changed during reclaim'}
+    $record=@{retainedUnsignedMsix=$retainedMsix;retainedUnsignedSha256=$retainedHash;type='failed-preparation-reclaim';at=[DateTime]::UtcNow.ToString('o');run=$Run;commit=$Revision;
+      bytes=$bytes;files=$files;preservedLinks=$skippedLinks;source='PRESERVED';cache='UNTOUCHED';publication='NOT_RUN'}
+    [IO.File]::AppendAllText($log,(($record|ConvertTo-Json -Compress)+"`n"),[Text.UTF8Encoding]::new($false))
+    return $record
+  } finally {$lease.Dispose()}
+}
+
 function Remove-OwnedBuildSource {
   if(!$script:sourceOwner){return 'NOT_CREATED'}
   try {
