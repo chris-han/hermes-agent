@@ -111,6 +111,19 @@ try{
  $null=[IO.Directory]::CreateDirectory((Join-Path $fixture 'profiles\work'))
  $request|Add-Member backendHome $fixture;$request|Add-Member activeProfile 'work';$request|Add-Member credentialScope (Join-Path $fixture 'profiles\work');Save-Fixture
  if((Get-NativeLegacyRelaunchHome $data $build 555 $null) -ine $fixture){throw 'Fixed handoff custom home/profile lost'}
+ # The shipped OSS updater writes schema2 journals. The target-side recovery
+ # must accept that exact owner protocol while retaining every continuity check.
+ $request.schema=2;$request.base='https://cloud.semantier.cn'
+ $request|Add-Member packageBase 'https://assets.semantier.cn'
+ $graph.root='releases/channel-builds/'+$build.buildId+'/SemantierAgent.msix';$graph.objects[0].key=$graph.root
+ Save-Fixture
+ if((Get-NativeLegacyRelaunchHome $data $build 555 $null) -ine $fixture){throw 'Schema2 OSS handoff custom home/profile lost'}
+ $request.schema=3;Save-Fixture;Refuse {Get-NativeLegacyRelaunchHome $data $build 555 $null};$request.schema=2
+ $request.packageBase='https://foreign.invalid';Save-Fixture;Refuse {Get-NativeLegacyRelaunchHome $data $build 555 $null};$request.packageBase='https://assets.semantier.cn'
+ $request.PSObject.Properties.Remove('backendHome');Save-Fixture;Refuse {Get-NativeLegacyRelaunchHome $data $build 555 $null}
+ $request|Add-Member backendHome $fixture
+ $request.credentialScope=$data;Save-Fixture;Refuse {Get-NativeLegacyRelaunchHome $data $build 555 $null};$request.credentialScope=Join-Path $fixture 'profiles\work'
+ Save-Fixture
  # Exercise the real Windows successor spawn with an owned native probe, never
  # an MSIX install. Package registration is the only remaining substituted fact.
  Remove-Item Function:Get-CimInstance,Function:Invoke-CimMethod,Function:Get-Process

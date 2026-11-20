@@ -124,7 +124,7 @@ function Get-NativeLegacyRelaunchHome([string]$UserData,$Build,[int]$ProcessId,[
  if(!$matches.Count){return $null}
  if($matches.Count -ne 1){throw 'Native continuity journal ambiguous; relaunch with original HERMES_HOME and --profile'}
  $context=$matches[0];$r=$context.request
- if($r.schema -ne 1 -or $r.authorizedSid -cne $sid -or $r.userDataDirectory -ine $data -or $r.journalDirectory -ine $context.directory -or
+ if($r.schema -notin @(1,2) -or ($r.schema -eq 2 -and !($r.PSObject.Properties.Name -contains 'backendHome')) -or $r.authorizedSid -cne $sid -or $r.userDataDirectory -ine $data -or $r.journalDirectory -ine $context.directory -or
     $r.identity -cne $Build.identity.msixAppIdWithOrg -or $r.manifestSha256 -cnotmatch '^[a-f0-9]{64}$' -or
     [IO.Path]::GetFileName($context.directory) -cnotmatch ('^native-'+$r.manifestSha256+'-[a-f0-9]{32}$')){throw 'Native continuity journal binding mismatch'}
  $context.rows=@(Read-NativeUpdateGraph $r)
