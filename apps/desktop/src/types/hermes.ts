@@ -1628,7 +1628,6 @@ export interface SkillHubPublisher {
   publisher_id?: string
   publisher?: string
   version?: string
-  publisher_verified?: boolean
   integrity_verified?: boolean
   source_revision?: string
 }

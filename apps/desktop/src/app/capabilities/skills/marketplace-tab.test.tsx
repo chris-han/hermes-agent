@@ -80,10 +80,10 @@ it('keeps a saved source through registry failure and does not promote spoofed t
     ],
     installed: {},
     timed_out: [],
-    errors: [{ source: 'semantier', message: 'Signature rejected', code: 'signature_invalid' }]
+    errors: [{ source: 'semantier', message: 'Catalog rejected', code: 'invalid_catalog' }]
   })
   const view = show()
-  await screen.findByText('Signature rejected', { exact: false })
+  await screen.findByText('Catalog rejected', { exact: false })
   expect(readMarketplaceSource('fixture')).toBe('all')
   expect(screen.queryByText('Publisher verified: Semantier')).toBeNull()
   view.unmount()
@@ -137,4 +137,18 @@ it('discards late old-profile query results after a scope change', async () => {
   })
   await waitFor(() => expect(search).toHaveBeenCalledWith('', 'semantier', 100, 'new-profile'))
   expect(screen.queryByText('Old profile secret')).toBeNull()
+})
+
+it('never displays publisher authentication for Semantier, including historical verification metadata', async () => {
+  search.mockResolvedValueOnce({
+    results: [
+      { identifier: 'semantier/semantier/demo', name: 'Unsigned demo', source: 'semantier', publisher_verified: true }
+    ],
+    installed: {},
+    timed_out: []
+  })
+  show()
+  await screen.findByRole('heading', { name: 'Unsigned demo' })
+  expect(screen.queryByText('Publisher verified: Semantier')).toBeNull()
+  expect(screen.getByText('Community source · publisher unverified')).toBeTruthy()
 })

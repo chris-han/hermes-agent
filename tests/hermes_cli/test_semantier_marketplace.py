@@ -34,6 +34,8 @@ def test_provider_failure_and_spoof_are_scoped(monkeypatch):
     assert out['results'][0]['source'] == 'official'
     forged = SkillMeta('Semantier', '', 'url', 'https://example.org/SKILL.md', 'community', extra={'publisher_verified': True, 'publisher': 'Semantier'})
     assert 'publisher_verified' not in skills._skill_meta_to_payload(forged)
+    forged.source = 'semantier'
+    assert 'publisher_verified' not in skills._skill_meta_to_payload(forged)
 
 
 def test_fair_merge_does_not_depend_on_completion_order():

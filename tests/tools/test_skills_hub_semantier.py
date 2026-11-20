@@ -1,30 +1,24 @@
-"""Fixture-only signing identities never qualify an official release."""
-import base64
+"""Unsigned integrity fixtures never establish publisher authentication."""
 import hashlib
 import json
 from datetime import UTC, datetime
 
 import pytest
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from tools.skills_hub_semantier import SemantierSkillSource, RegistryError, manifest_digest
 
 
 @pytest.fixture
 def registry(tmp_path):
-    key = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
-    public = key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
     files = {'SKILL.md': b'---\nname: semantier--demo\ndescription: Fixture skill\n---\nRead references/help.md', 'references/help.md': b'Fixture help'}
     manifest = {p: {'sha256': hashlib.sha256(b).hexdigest(), 'size': len(b)} for p, b in files.items()}
     release = {'version': '1.0.0', 'source_commit': 'a' * 40, 'released_at': '2026-11-19T00:00:00Z', 'compatibility': {}, 'manifest': manifest}
-    payload = {'registry_id': 'semantier', 'sequence': 1, 'issued_at': '2026-11-19T00:00:00Z', 'expires_at': '2026-12-01T00:00:00Z', 'publisher': {'id': 'semantier', 'name': 'Semantier', 'repository': 'https://example.org/source', 'contact': 'fixture@example.org'}, 'skills': [{'slug': 'demo', 'name': 'Demo', 'description': 'Fixture skill', 'tags': ['test'], 'category': 'test', 'license': 'MIT', 'homepage': 'https://example.org', 'source_repository': 'https://example.org/source', 'source_commit': 'a' * 40, 'source_path': 'skills/demo', 'type': 'skill', 'latest_version': '1.0.0', 'versions': [release]}]}
-    def envelope():
-        raw = json.dumps(payload).encode()
-        return json.dumps({'schema': 1, 'key_id': 'fixture', 'payload_b64': base64.b64encode(raw).decode(), 'signature_b64': base64.b64encode(key.sign(raw)).decode()}).encode()
+    payload = {'schema': 1, 'registry_id': 'semantier', 'sequence': 1, 'issued_at': '2026-11-19T00:00:00Z', 'expires_at': '2026-12-01T00:00:00Z', 'publisher': {'id': 'semantier', 'name': 'Semantier', 'repository': 'https://example.org/source', 'contact': 'fixture@example.org'}, 'skills': [{'slug': 'demo', 'name': 'Demo', 'description': 'Fixture skill', 'tags': ['test'], 'category': 'test', 'license': 'MIT', 'homepage': 'https://example.org', 'source_repository': 'https://example.org/source', 'source_commit': 'a' * 40, 'source_path': 'skills/demo', 'type': 'skill', 'latest_version': '1.0.0', 'versions': [release]}]}
+    def catalog():
+        return json.dumps(payload).encode()
     def read(url, limit):
-        return envelope() if url.endswith('catalog.json') else files[url.split(manifest_digest(manifest) + '/')[1]]
-    source = SemantierSkillSource(trust={'fixture': {'public_key_b64': base64.b64encode(public).decode(), 'fingerprint': hashlib.sha256(public).hexdigest(), 'publisher_id': 'semantier', 'expires_at': '2027-01-01T00:00:00Z'}}, reader=read, cache_dir=tmp_path, now=lambda: datetime(2026, 11, 20, tzinfo=UTC))
+        return catalog() if url.endswith('catalog.json') else files[url.split(manifest_digest(manifest) + '/')[1]]
+    source = SemantierSkillSource(reader=read, cache_dir=tmp_path, now=lambda: datetime(2026, 11, 20, tzinfo=UTC))
     return source, payload, files
 
 
@@ -37,6 +31,8 @@ def test_verified_bundle_and_exact_claim(registry):
     assert bundle.files == files
     assert bundle.name == 'semantier--demo'
     assert bundle.trust_level == 'community'
+    assert bundle.metadata['publisher_verified'] is False
+    assert 'key_fingerprint' not in bundle.metadata
     assert bundle.metadata['integrity_verified'] is True
     assert source.current_revision(meta.identifier) == manifest_digest(payload['skills'][0]['versions'][0]['manifest'])
 
@@ -95,9 +91,6 @@ def test_native_install_update_and_failed_artifact_preserve_legacy(registry, mon
 
 
 @pytest.mark.parametrize('mutation,code', [
-    (lambda s,p: s.trust.clear(), 'unavailable'),
-    (lambda s,p: s.trust['fixture'].update(expires_at='2026-11-19T00:00:00Z'), 'expired'),
-    (lambda s,p: s.trust['fixture'].update(public_key_b64=base64.b64encode(bytes(32)).decode()), 'signature_invalid'),
     (lambda s,p: p.update(sequence=0), 'invalid_catalog'),
     (lambda s,p: p['skills'][0]['versions'][0]['manifest'].update({'../escape': {'size': 0, 'sha256': '0'*64}}), 'invalid_catalog'),
     (lambda s,p: p['skills'][0]['versions'][0]['manifest'].update({'skill.md': {'size': 0, 'sha256': '0'*64}}), 'invalid_catalog'),
@@ -111,8 +104,8 @@ def test_key_path_and_contract_negatives(registry, mutation, code):
     assert exc.value.code == code
 
 
-@pytest.mark.parametrize('field,value,code', [('schema', 2, 'unsupported_schema'), ('signature_b64', base64.b64encode(bytes(64)).decode(), 'signature_invalid'), ('key_id', 'wrong-key', 'signature_invalid')])
-def test_envelope_tampering(registry, field, value, code):
+@pytest.mark.parametrize('field,value,code', [('schema', 2, 'unsupported_schema'), ('signature_b64', 'obsolete', 'invalid_catalog'), ('key_id', 'obsolete', 'invalid_catalog')])
+def test_catalog_contract_tampering(registry, field, value, code):
     source, _, _ = registry
     reader = source.reader
     def tamper(url, limit):
@@ -232,3 +225,47 @@ def test_transport_redirect_and_stream_bounds(monkeypatch, status, body, limit, 
     with pytest.raises(RegistryError) as exc:
         _read(BASE + 'catalog.json', limit)
     assert exc.value.code == code
+
+
+def test_previous_signed_sequence_history_survives_upgrade(registry):
+    source, payload, _ = registry
+    path = source.cache_dir/'semantier-sequences.json'
+    path.write_text(json.dumps({'old-key': {'sequence': 9, 'digest': 'a'*64}, 'releases': {}}))
+    with pytest.raises(RegistryError, match='rollback_detected'):
+        source.search('')
+    payload['sequence'] = 10
+    source.search('')
+    state = json.loads(path.read_text())
+    assert state['semantier']['sequence'] == 10
+    assert 'old-key' not in state
+
+
+def test_duplicate_json_member_and_obsolete_signed_envelope_rejected(registry):
+    source, _, _ = registry
+    source.reader = lambda *args: b'{"schema":1,"schema":1}'
+    with pytest.raises(RegistryError, match='invalid_catalog'):
+        source.search('')
+    source.reader = lambda *args: b'{"schema":1,"key_id":"old","payload_b64":"","signature_b64":""}'
+    with pytest.raises(RegistryError, match='invalid_catalog'):
+        source.search('')
+
+
+def test_outage_keeps_installed_skill_loadable(registry, monkeypatch):
+    from hermes_cli import skills_hub as cli
+    from tools.skills_hub import HubLockFile, _skills_dir
+    from tools.skills_tool import _find_all_skills
+    source, _, _ = registry
+    monkeypatch.setattr(cli, '_sources', lambda: [source])
+    assert cli.do_install('semantier/semantier/demo', skip_confirm=True, invalidate_cache=False)
+    lock = HubLockFile().path.read_bytes()
+    entry = HubLockFile().get_installed('semantier--demo')
+    target = _skills_dir()/entry['install_path']/'SKILL.md'
+    installed = target.read_bytes()
+    def outage(*args):
+        raise RegistryError('unavailable', 'fixture provider outage')
+    source.reader = outage
+    with pytest.raises(RegistryError, match='unavailable'):
+        source.fetch('semantier/semantier/demo')
+    assert target.read_bytes() == installed
+    assert HubLockFile().path.read_bytes() == lock
+    assert any(s['name'] == 'semantier--demo' for s in _find_all_skills(skip_disabled=True))

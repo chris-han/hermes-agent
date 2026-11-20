@@ -86,10 +86,10 @@ def _skill_meta_to_payload(m) -> dict:
 
 def _publisher_payload(meta):
     extra = getattr(meta, 'extra', {}) or getattr(meta, 'metadata', {})
-    # Only the verified distribution adapter may project authenticated publisher fields.
+    # Only the distribution adapter may project catalog/integrity fields.
     if meta.source != 'semantier':
         return {}
-    allowed = ('publisher_id', 'publisher', 'version', 'publisher_verified', 'integrity_verified', 'source_revision', 'catalog_digest', 'key_fingerprint')
+    allowed = ('publisher_id', 'publisher', 'version', 'integrity_verified', 'source_revision', 'catalog_digest')
     return {key: extra[key] for key in allowed if key in extra}
 
 
@@ -105,7 +105,7 @@ class _DiagnosticSource:
             return self.source.search(*args, **kwargs)
         except Exception as exc:
             logging.exception("Marketplace provider failed")
-            self.errors.append({'source': self.source_id(), 'code': getattr(exc, 'code', 'unavailable'), 'retryable': getattr(exc, 'code', '') not in {'signature_invalid', 'invalid_catalog', 'expired', 'rollback_detected'}, 'message': str(exc) if self.source_id() == 'semantier' else 'Provider search unavailable'})
+            self.errors.append({'source': self.source_id(), 'code': getattr(exc, 'code', 'unavailable'), 'retryable': getattr(exc, 'code', '') not in {'invalid_catalog', 'expired', 'rollback_detected'}, 'message': str(exc) if self.source_id() == 'semantier' else 'Provider search unavailable'})
             return []
 
 

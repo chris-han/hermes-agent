@@ -241,11 +241,7 @@ function ScopedMarketplace({
                 <p className="text-xs">
                   {sourceLabel(active.source)} · {active.repo} · {active.version}
                 </p>
-                <MarketplaceVerification
-                  integrityVerified={preview.data?.integrity_verified}
-                  publisherVerified={active.publisher_verified}
-                  source={active.source}
-                />
+                <MarketplaceVerification integrityVerified={preview.data?.integrity_verified} />
                 {preview.isError ? (
                   <Button onClick={() => void preview.refetch()}>{c.retry}</Button>
                 ) : (
@@ -303,8 +299,7 @@ function useMarketplaceData(
             description: '',
             source: 'url',
             repo: '',
-            version: undefined,
-            publisher_verified: false
+            version: undefined
           }
         : undefined
       : listed
@@ -339,20 +334,12 @@ function sourceOptions(sources: { id: string; label: string }[], source: string,
   return options
 }
 
-function MarketplaceVerification({
-  source,
-  publisherVerified,
-  integrityVerified
-}: {
-  source: string
-  publisherVerified?: boolean
-  integrityVerified?: boolean
-}) {
+function MarketplaceVerification({ integrityVerified }: { integrityVerified?: boolean }) {
   const c = useInventoryCopy()
 
   return (
     <>
-      <p className="text-xs">{source === 'semantier' && publisherVerified ? c.publisherVerified : c.community}</p>
+      <p className="text-xs">{c.community}</p>
       {integrityVerified && <p className="text-xs">{c.integrityVerified}</p>}
       <p className="text-xs">{c.scannerSeparate}</p>
     </>

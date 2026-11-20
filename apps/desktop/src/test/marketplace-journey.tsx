@@ -22,7 +22,7 @@ Object.assign(window, {
       if (url.pathname.endsWith('/search')) {
         const source = url.searchParams.get('source')
 
-        if (source === 'semantier') {
+        if (source === 'semantier' && !new URLSearchParams(location.search).has('integrity')) {
           return {
             results: [],
             installed: {},
@@ -34,10 +34,12 @@ Object.assign(window, {
         return {
           results: [
             {
-              name: 'Fixture third-party skill',
+              name: source === 'semantier' ? 'Unsigned fixture skill' : 'Fixture third-party skill',
+              publisher_verified: true, // Historical/untrusted flag must never create a badge.
+              integrity_verified: source === 'semantier',
               description: 'Public fixture',
-              source: 'official',
-              identifier: 'official/demo',
+              source: source === 'semantier' ? 'semantier' : 'official',
+              identifier: source === 'semantier' ? 'semantier/semantier/demo' : 'official/demo',
               trust_level: 'builtin',
               repo: 'NousResearch/hermes-agent',
               tags: []
@@ -49,7 +51,13 @@ Object.assign(window, {
       }
 
       if (url.pathname.endsWith('/preview')) {
-        return { name: 'Fixture third-party skill', skill_md: '# Fixture preview', files: ['SKILL.md'], source: 'url' }
+        return {
+          name: 'Fixture third-party skill',
+          skill_md: '# Fixture preview',
+          files: ['SKILL.md'],
+          source: 'url',
+          integrity_verified: new URLSearchParams(location.search).has('integrity')
+        }
       }
 
       throw new Error('Fixture forbids mutations')

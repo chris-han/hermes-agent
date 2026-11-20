@@ -33,6 +33,12 @@ try {
   await expect(selector).toBeVisible()
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
   await page.screenshot({ path: '/tmp/semantier-marketplace-compact.png' })
+  await page.evaluate(() => localStorage.clear())
+  await page.goto('http://127.0.0.1:5196/marketplace-journey.html?integrity')
+  await expect(page.getByRole('heading', { name: 'Unsigned fixture skill' })).toBeVisible()
+  await expect(page.getByText('Package integrity verified', { exact: true })).toBeVisible()
+  await expect(page.getByText('Community source · publisher unverified', { exact: true })).toBeVisible()
+  await expect(page.getByText('Publisher verified: Semantier', { exact: true })).toHaveCount(0)
   assert.deepEqual(errors, [])
-  console.log(JSON.stringify({ result: 'PASS', browser: browser.version(), host: 'WSL/Linux owned headless Chromium', checks: ['source order', 'truthful unavailable', 'saved source after reload', 'profile isolation', 'keyboard selector', 'URL preview', 'compact 480px'], fixture_only: true }))
+  console.log(JSON.stringify({ result: 'PASS', browser: browser.version(), host: 'WSL/Linux owned headless Chromium', checks: ['source order', 'truthful unavailable', 'saved source after reload', 'profile isolation', 'keyboard selector', 'URL preview', 'compact 480px', 'integrity distinct from publisher authentication'], fixture_only: true }))
 } finally { await browser.close() }

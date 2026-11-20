@@ -1,7 +1,6 @@
-"""Signed static Semantier distribution; installation remains owned by Hermes."""
+"""SHA-256 integrity-based static Semantier distribution; installation remains owned by Hermes."""
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 import re
@@ -12,8 +11,6 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 import httpx
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from tools.skills_hub_models import SkillBundle, SkillMeta, SkillSource, _parse_frontmatter, _referenced_support_paths, _validate_bundle_rel_path
 
@@ -106,44 +103,28 @@ def _read(url, limit):
 class SemantierSkillSource(SkillSource):
     SOURCE_ID = 'semantier'
 
-    def __init__(self, *, trust=None, reader=None, cache_dir=None, now=None):
-        self.trust = trust if trust is not None else json.loads(Path(__file__).with_name('semantier_skill_trust.json').read_text(encoding="utf-8-sig"))['keys']
+    def __init__(self, *, reader=None, cache_dir=None, now=None):
         self.reader = reader or _read
         self.cache_dir = cache_dir
         self.now = now or (lambda: datetime.now(UTC))
 
     def _snapshot(self):
-        if not self.trust:
-            raise RegistryError('unavailable', 'Semantier publisher key has not been admitted')
         try:
             raw = self.reader(BASE + 'catalog.json', 2*1024*1024)
             if len(raw) > 2*1024*1024:
                 raise ValueError('catalog too large')
-            env = json.loads(raw, object_pairs_hook=_unique_object)
-            if set(env) != {'schema', 'key_id', 'payload_b64', 'signature_b64'}:
-                raise ValueError('unknown envelope fields')
-            if type(env['schema']) is not int or env['schema'] != 1:
+            data = json.loads(raw, object_pairs_hook=_unique_object)
+            if set(data) != {'schema', 'registry_id', 'sequence', 'issued_at', 'expires_at', 'publisher', 'skills'}:
+                raise ValueError('unknown catalog fields')
+            if type(data['schema']) is not int or data['schema'] != 1:
                 raise RegistryError('unsupported_schema', 'catalog schema')
-            key = self.trust.get(env['key_id'])
-            if not key or key.get('revoked') or key['publisher_id'] != 'semantier':
-                raise RegistryError('signature_invalid', 'unadmitted publisher key')
-            if self.now() >= _timestamp(key['expires_at']):
-                raise RegistryError('expired', 'publisher key expired')
-            public = base64.b64decode(key['public_key_b64'], validate=True)
-            if hashlib.sha256(public).hexdigest() != key['fingerprint']:
-                raise RegistryError('signature_invalid', 'key fingerprint mismatch')
-            payload = base64.b64decode(env['payload_b64'], validate=True)
-            Ed25519PublicKey.from_public_bytes(public).verify(base64.b64decode(env['signature_b64'], validate=True), payload)
-            data = json.loads(payload, object_pairs_hook=_unique_object)
             self._validate(data)
-            digest = hashlib.sha256(payload).hexdigest()
-            self._remember(env['key_id'], data['sequence'], digest, data['skills'])
-            return data, {'catalog_digest': digest, 'key_id': env['key_id'], 'key_fingerprint': key['fingerprint'], 'publisher_verified': True, 'verified_at': self.now().isoformat()}
+            digest = hashlib.sha256(raw).hexdigest()
+            self._remember(data['sequence'], digest, data['skills'])
+            return data, {'catalog_digest': digest, 'publisher_verified': False, 'verified_at': self.now().isoformat()}
         except RegistryError:
             raise
-        except InvalidSignature as exc:
-            raise RegistryError('signature_invalid', 'signature rejected') from exc
-        except (ValueError, KeyError, TypeError) as exc:
+        except (ValueError, KeyError, TypeError, AttributeError, OverflowError) as exc:
             raise RegistryError('invalid_catalog', 'catalog contract rejected') from exc
 
     def _validate(self, data):
@@ -195,7 +176,7 @@ class SemantierSkillSource(SkillSource):
             raise RegistryError('incompatible', 'unsupported compatibility requirements')
         _manifest(release['manifest'])
 
-    def _remember(self, key_id, sequence, digest, skills):
+    def _remember(self, sequence, digest, skills):
         from tools.skills_hub import _index_cache_dir
         root = self.cache_dir if self.cache_dir is not None else _index_cache_dir()
         path = Path(root) / 'semantier-sequences.json'
@@ -203,7 +184,9 @@ class SemantierSkillSource(SkillSource):
         path.parent.mkdir(parents=True, exist_ok=True)
         with _LOCK, _file_lock(path.with_suffix('.lock'), _FILE_LOCK_HOLDER, 10.0, 'Catalog state busy'):
             state = json.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else {}
-            old = state.get(key_id)
+            # Preserve profile-local sequence history when upgrading signed catalogs.
+            histories = [v for v in state.values() if isinstance(v, dict) and 'sequence' in v and 'digest' in v]
+            old = max(histories, key=lambda v: v['sequence'], default=None)
             if old and (sequence < old['sequence'] or sequence == old['sequence'] and digest != old['digest']):
                 raise RegistryError('rollback_detected', 'catalog rollback or equivocation')
             releases = state.get('releases', {})
@@ -218,7 +201,7 @@ class SemantierSkillSource(SkillSource):
             if set(releases) - present:
                 raise RegistryError('invalid_catalog', 'previous releases must remain discoverable')
             state['releases'] = releases
-            state[key_id] = {'sequence': sequence, 'digest': digest}
+            state = {'releases': releases, 'semantier': {'sequence': sequence, 'digest': digest}}
             path.parent.mkdir(parents=True, exist_ok=True)
             from utils import atomic_json_write
             atomic_json_write(path, state)
@@ -270,7 +253,7 @@ class SemantierSkillSource(SkillSource):
         for path, item in release['manifest'].items():
             raw = self.reader(meta.extra['source_url'] + quote(path, safe='/'), item['size'])
             if len(raw) != item['size'] or hashlib.sha256(raw).hexdigest() != item['sha256']:
-                raise RegistryError('integrity_failed', 'artifact bytes differ from signed manifest')
+                raise RegistryError('integrity_failed', 'artifact bytes differ from catalog manifest')
             files[path] = raw
         try:
             text = files['SKILL.md'].decode('utf-8')
@@ -305,6 +288,6 @@ def check_install_conflict(bundle, install_dir):
     if owned:
         old = owned.get('metadata', {})
         if old.get('version') != bundle.metadata.get('version'):
-            # Release chronology is signed; versions are opaque and never lexically ordered.
+            # Release chronology is catalog-declared; versions are opaque and never lexically ordered.
             if not old.get('released_at') or _timestamp(old['released_at']) >= _timestamp(bundle.metadata['released_at']):
                 raise RegistryError('incompatible', 'automatic downgrade refused')

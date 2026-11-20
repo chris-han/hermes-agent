@@ -68,9 +68,6 @@ export function SkillDetail({
           <p>
             {skill.hub_origin.source} · {skill.hub_origin.identifier} · {skill.hub_origin.metadata?.version}
           </p>
-          {skill.hub_origin.source === 'semantier' && skill.hub_origin.metadata?.publisher_verified && (
-            <p>{c.publisherVerified}</p>
-          )}
           {skill.hub_origin.metadata?.integrity_verified && <p>{c.integrityVerified}</p>}
           <p>
             {skill.hub_origin.scan_verdict} · {c.scannerSeparate}
