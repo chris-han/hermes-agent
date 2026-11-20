@@ -101,7 +101,9 @@ def create_source_router(auth: Optional[GitHubAuth] = None) -> list[SkillSource]
     from tools.skills_hub import TapsManager
     if auth is None:
         auth = GitHubAuth()
+    from tools.skills_hub_semantier import SemantierSkillSource
     return [
+        SemantierSkillSource(),
         OptionalSkillSource(auth=auth),   # official optional skills (highest priority)
         HermesIndexSource(auth=auth),     # centralized index (search + resolved install paths)
         SkillsShSource(auth=auth),

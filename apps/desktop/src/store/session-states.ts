@@ -20,6 +20,7 @@ import { backendScopeKey, backendScopePrefix, type GatewayEvent, LOCAL_CONNECTIO
 import { atom, computed } from 'nanostores'
 
 import { setSessionOwnerResolver } from '@/api/client'
+import { moveMarketplaceSource } from '@/app/capabilities/skills/marketplace-source'
 import { routeSessionId } from '@/app/routes'
 import type { ClientSessionState } from '@/app/types'
 import { findGroupOfPane, type LayoutNode } from '@/components/pane-shell/tree/model'
@@ -2739,12 +2740,7 @@ export function dropTilesForProfile(
   profile: string,
   route?: { connectionId?: string; profile?: string; targetProfile?: string }
 ): void {
-  // A route without profile has no owner side to match: it would silently fall
-  // into the local-delete branch below and require `ownerConnection === 'local'`,
-  // dropping nothing remotely owned while appearing to succeed. Both current
-  // call sites always populate profile, so refuse the malformed shape loudly
-  // instead of letting a future caller misuse the optional route (Enough1122
-  // review of #94426).
+  // A missing route profile silently drops no remote state (Enough1122 #94426).
   if (route && !route.profile?.trim()) {
     throw new Error('dropTilesForProfile: route without profile cannot be scoped')
   }
@@ -2752,16 +2748,17 @@ export function dropTilesForProfile(
   const name = normalizeProfileKey(profile)
   dropPreviewArtifactsForProfile(name, route)
   dropStatusDrawersForProfile(name, route)
-  // Route fields go through the SAME canonicalization as `name` below — a
-  // source-scoped delete must not be defeated by stray whitespace around a
-  // profile name that a non-route delete trims away.
   const routeProfile = route?.profile ? normalizeProfileKey(route.profile) : ''
   const routeTarget = route?.targetProfile ? normalizeProfileKey(route.targetProfile) : ''
   const routeConnection = String(route?.connectionId ?? '').trim()
-  // A route-less deletion targets the active backend, including legacy direct
-  // remotes whose tile key uses the URL fallback. Reuse the writer's resolved
-  // connection scope so deletion cannot erase same-named local tabs instead.
+  // Route-less deletion uses the writer scope, preserving same-named local tabs.
   const ambientConnection = tileConnectionId || LOCAL_CONNECTION_ID
+  moveMarketplaceSource(route ? `${routeConnection}::${routeProfile || name}` : name)
+
+  if (!route) {
+    moveMarketplaceSource(`${ambientConnection}::${name}`)
+  }
+
   const removedScope = backendScopeKey(route ? routeConnection : ambientConnection, routeProfile || name)
 
   const ownerMatches = (owner: SessionProfileRoute | undefined): boolean => {
@@ -2882,6 +2879,9 @@ export function migrateTilesForProfile(oldProfile: string, newProfile: string): 
   if (!from || !to || from === to) {
     return
   }
+
+  moveMarketplaceSource(from, to)
+  moveMarketplaceSource(`local::${from}`, `local::${to}`)
 
   const isLocal = (owner: SessionProfileRoute | undefined) =>
     Boolean(owner) && (String(owner?.connectionId ?? '').trim() || 'local') === 'local'

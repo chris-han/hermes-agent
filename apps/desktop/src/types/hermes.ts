@@ -1207,6 +1207,7 @@ export interface ProfilesResponse {
 }
 
 export interface SkillInfo {
+  hub_origin?: { source: string; identifier: string; metadata?: SkillHubPublisher; scan_verdict?: string }
   category: string
   description: string
   enabled: boolean
@@ -1623,7 +1624,16 @@ export interface SkillHubSource {
 }
 
 /** A searchable/installable hub skill from `GET /api/skills/hub/search`. */
-export interface SkillHubResult {
+export interface SkillHubPublisher {
+  publisher_id?: string
+  publisher?: string
+  version?: string
+  publisher_verified?: boolean
+  integrity_verified?: boolean
+  source_revision?: string
+}
+
+export interface SkillHubResult extends SkillHubPublisher {
   name: string
   description: string
   source: string
@@ -1634,6 +1644,8 @@ export interface SkillHubResult {
 }
 
 export interface SkillHubInstalledEntry {
+  source?: string
+  metadata?: SkillHubPublisher
   name: string | null
   trust_level: string | null
   scan_verdict: string | null
@@ -1647,6 +1659,7 @@ export interface SkillHubSourcesResponse {
 }
 
 export interface SkillHubSearchResponse {
+  errors?: { source: string; code: string; message: string; retryable: boolean }[]
   results: SkillHubResult[]
   source_counts: Record<string, number>
   timed_out: string[]
@@ -1654,7 +1667,7 @@ export interface SkillHubSearchResponse {
 }
 
 /** `GET /api/skills/hub/preview` — SKILL.md + manifest without installing. */
-export interface SkillHubPreview {
+export interface SkillHubPreview extends SkillHubPublisher {
   name: string
   description: string
   source: string

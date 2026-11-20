@@ -8,6 +8,7 @@ seam so ``monkeypatch.setattr(<owning module>, ...)`` keeps working.
 """
 
 import asyncio
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -29,7 +30,8 @@ load_config = late("load_config", "hermes_cli.config")
 # Labels per hub source id (matches `hermes skills search` provenance); keep in
 # sync with create_source_router()'s source list.
 _SKILL_HUB_SOURCE_LABELS = {
-    "official": "Official (Nous)",
+    "semantier": "Semantier Official",
+    "official": "Nous Official",
     "hermes-index": "Hermes Index",
     "skills-sh": "skills.sh",
     "well-known": "Well-Known",
@@ -78,8 +80,52 @@ def _skill_meta_to_payload(m) -> dict:
     return {
         "name": m.name, "description": m.description, "source": m.source,
         "identifier": m.identifier, "trust_level": m.trust_level, "repo": m.repo,
-        "tags": list(m.tags or [])}
+        "tags": list(m.tags or []), **_publisher_payload(m)}
 
+
+
+def _publisher_payload(meta):
+    extra = getattr(meta, 'extra', {}) or getattr(meta, 'metadata', {})
+    # Only the verified distribution adapter may project authenticated publisher fields.
+    if meta.source != 'semantier':
+        return {}
+    allowed = ('publisher_id', 'publisher', 'version', 'publisher_verified', 'integrity_verified', 'source_revision', 'catalog_digest', 'key_fingerprint')
+    return {key: extra[key] for key in allowed if key in extra}
+
+
+class _DiagnosticSource:
+    def __init__(self, source, errors):
+        self.source, self.errors = source, errors
+
+    def __getattr__(self, name):
+        return getattr(self.source, name)
+
+    def search(self, *args, **kwargs):
+        try:
+            return self.source.search(*args, **kwargs)
+        except Exception as exc:
+            logging.exception("Marketplace provider failed")
+            self.errors.append({'source': self.source_id(), 'code': getattr(exc, 'code', 'unavailable'), 'retryable': getattr(exc, 'code', '') not in {'signature_invalid', 'invalid_catalog', 'expired', 'rollback_detected'}, 'message': str(exc) if self.source_id() == 'semantier' else 'Provider search unavailable'})
+            return []
+
+
+def _fair_results(results, sources, limit):
+    groups = {src.source_id(): [] for src in sources}
+    for result in results:
+        groups.setdefault(result.source, []).append(result)
+    for rows in groups.values():
+        rows.sort(key=lambda m: m.identifier)
+    out, seen = [], set()
+    while any(groups.values()) and len(out) < limit:
+        for rows in groups.values():
+            if rows:
+                result = rows.pop(0)
+                if result.identifier not in seen:
+                    out.append(result)
+                    seen.add(result.identifier)
+                    if len(out) == limit:
+                        break
+    return out
 
 def _clear_skills_prompt_cache() -> None:
     """Best-effort: invalidate the skills system-prompt snapshot after a write.
@@ -187,16 +233,20 @@ async def search_skills_hub(
     q: str = "", source: str = "all", limit: int = 20, profile: Optional[str] = None):
     """Search the skill hub across all configured sources (network-bound)."""
     query = (q or "").strip()
-    if not query:
-        return {"results": [], "source_counts": {}, "timed_out": [], "installed": {}}
 
     def _run():
         from tools.skills_hub_search import parallel_search_sources
 
         sources = _hub_sources(profile)
+        if source and source != 'all':
+            sources = [src for src in sources if src.source_id() == source]
+            if not sources:
+                raise ValueError('Unknown or unavailable source: ' + source)
+        errors = []
+        wrapped = [_DiagnosticSource(src, errors) for src in sources]
         capped = min(max(limit, 1), 50)
         all_results, source_counts, timed_out = parallel_search_sources(
-            sources, query=query, source_filter=source or "all", overall_timeout=30)
+            wrapped, query=query, source_filter=source or "all", overall_timeout=30)
 
         # Dedupe by identifier, preferring higher trust (mirrors unified_search).
         _rank = {"builtin": 2, "trusted": 1, "community": 0}
@@ -205,11 +255,11 @@ async def search_skills_hub(
             prev = seen.get(r.identifier)
             if prev is None or _rank.get(r.trust_level, 0) > _rank.get(prev.trust_level, 0):
                 seen[r.identifier] = r
-        deduped = list(seen.values())[:capped]
+        deduped = _fair_results(list(seen.values()), sources, capped)
 
         return {
             "results": [_skill_meta_to_payload(m) for m in deduped], "source_counts": source_counts,
-            "timed_out": timed_out, "installed": _installed_hub_identifiers(profile)}
+            "timed_out": timed_out, "errors": errors, "installed": _installed_hub_identifiers(profile)}
 
     with http_failure("skills hub search failed", 502, "Hub search failed"):
         return await asyncio.to_thread(_run)
@@ -257,7 +307,8 @@ async def preview_skill_hub(identifier: str = "", profile: Optional[str] = None)
             "identifier": getattr(m, "identifier", ident) or ident,
             "trust_level": getattr(m, "trust_level", "community") or "community",
             "repo": getattr(m, "repo", None), "tags": list(getattr(m, "tags", None) or []),
-            "skill_md": skill_md, "files": sorted(files.keys())}
+            "skill_md": skill_md, "files": sorted(files.keys()),
+            **(_publisher_payload(bundle) if bundle else {})}
 
     return await _hub_lookup(_run, ident, "skills hub preview failed", "Hub preview failed")
 
@@ -352,6 +403,8 @@ async def get_skills(profile: Optional[str] = None):
             config = load_config()
             disabled = get_disabled_skills(config)
             skills = _find_all_skills(skip_disabled=True)
+            from tools.skills_hub import HubLockFile
+            hub_entries = {e["name"]: e for e in HubLockFile().list_installed()}
             usage = load_usage()
             # Set-based provenance (same classification as skill_usage.provenance,
             # without a per-skill manifest read): hub > bundled > external > agent.
@@ -364,6 +417,9 @@ async def get_skills(profile: Optional[str] = None):
             hub_names = _read_hub_installed_names()
             external_names = _external_skill_names() - bundled_names - hub_names
         for s in skills:
+            if s["name"] in hub_entries:
+                entry = hub_entries[s["name"]]
+                s["hub_origin"] = {k: entry.get(k) for k in ("source", "identifier", "metadata", "scan_verdict")}
             s["enabled"] = s["name"] not in disabled
             s["usage"] = activity_count(usage.get(s["name"], {}))
             s["provenance"] = (

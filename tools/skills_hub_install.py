@@ -159,8 +159,6 @@ def install_from_quarantine(
     # symlink-redirected target.
     install_dir = _resolve_lock_install_path(install_rel_path, safe_skill_name)
     _check_install_target(install_dir)
-    if install_dir.exists():
-        shutil.rmtree(install_dir)
 
     try:
         skill_size = (quarantine_path / "SKILL.md").stat().st_size
@@ -184,6 +182,12 @@ def install_from_quarantine(
                 rel = entry
             raise ValueError(f"Installed skill contains symlinks, which is not allowed: {rel}")
 
+    existing_origin = HubLockFile().get_installed(safe_skill_name)
+    if bundle.source == "semantier" or (existing_origin and existing_origin.get("source") == "semantier"):
+        from tools.skills_hub_semantier import check_install_conflict
+        check_install_conflict(bundle, install_dir)
+    if install_dir.exists():
+        shutil.rmtree(install_dir)
     install_dir.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(quarantine_path), str(install_dir))
     installed_hash = content_hash(install_dir)

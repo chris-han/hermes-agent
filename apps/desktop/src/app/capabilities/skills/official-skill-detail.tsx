@@ -47,7 +47,7 @@ export function OfficialSkillDetail({
         pills={
           <>
             <PanelPill>{prettyName(skill.category)}</PanelPill>
-            <PanelPill tone="muted">{t.skills.officialPill}</PanelPill>
+            <PanelPill tone="muted">Nous Official</PanelPill>
           </>
         }
         title={skill.name}

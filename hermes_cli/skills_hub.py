@@ -259,6 +259,13 @@ def _resolve_source_meta_and_bundle(identifier: str, sources):
     """(meta, bundle, source) from ONE adapter — mixing skills.sh metadata with a ClawHub zip of
     a same-named skill once showed the wrong SKILL.md. Falls back to the first meta-only hit.
     """
+    if identifier.startswith("semantier/"):
+        sources = [src for src in sources if src.source_id() == "semantier"]
+        if not sources:
+            raise ValueError("Semantier source unavailable")
+        src = sources[0]
+        bundle = src.fetch(identifier)
+        return None, bundle, src
     first_meta = None
     first_meta_source = None
     for src in sources:

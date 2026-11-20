@@ -21,6 +21,7 @@ import { useHostedConnectors, usePluginServers } from './connectors/data/queries
 import { cardKey, deriveCards } from './connectors/derive'
 import { useMcpServers } from './mcp/use-mcp-servers'
 import { mergePluginPackages } from './plugins/plugin-packages'
+import { marketplaceSources } from './skills/marketplace-source'
 
 export type SearchTab = 'skills' | 'toolsets' | 'plugins' | 'connectors' | 'marketplace'
 export interface CapabilitySearchHit {
@@ -197,7 +198,7 @@ export function CapabilitySearchResults({
           ? (marketplace.data?.results ?? []).map(row => ({
               id: row.identifier,
               name: row.name,
-              description: row.description ?? ''
+              description: `${row.description ?? ''} · ${marketplaceSources.find(source => source.value === row.source)?.label ?? row.source ?? ''} · ${row.version ?? ''}`
             }))
           : []
     }
@@ -246,9 +247,7 @@ export function CapabilitySearchResults({
               >
                 <span className="min-w-0">
                   <span className="block break-words">{row.name}</span>
-                  <span className="line-clamp-2 text-xs font-normal text-muted-foreground">
-                    {row.description}
-                  </span>
+                  <span className="line-clamp-2 text-xs font-normal text-muted-foreground">{row.description}</span>
                 </span>
               </Button>
             ))}

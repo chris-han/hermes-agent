@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { getSkillHubSources, previewSkillHub, type ProfileScope, profileScopeKey, searchSkillsHub } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { useInventoryCopy } from '@/i18n/capability-inventory'
@@ -12,11 +13,42 @@ import { notifyError } from '@/store/notifications'
 import { DetailColumn, ListColumn, MasterDetail } from '../../master-detail'
 import { InventoryItems, InventoryRow, InventorySelect } from '../inventory'
 
-export function MarketplaceTab({ profile, query, initialSelected }: { profile: ProfileScope; query: string; initialSelected?: string }) {
+import { marketplaceSources, readMarketplaceSource, saveMarketplaceSource } from './marketplace-source'
+
+export function MarketplaceTab({
+  profile,
+  query,
+  initialSelected
+}: {
+  profile: ProfileScope
+  query: string
+  initialSelected?: string
+}) {
+  return (
+    <ScopedMarketplace
+      initialSelected={initialSelected}
+      key={profileScopeKey(profile)}
+      profile={profile}
+      query={query}
+    />
+  )
+}
+
+function ScopedMarketplace({
+  profile,
+  query,
+  initialSelected
+}: {
+  profile: ProfileScope
+  query: string
+  initialSelected?: string
+}) {
   const { t } = useI18n()
   const c = useInventoryCopy()
   const [search, setSearch] = useState(query)
-  const [source, setSource] = useState('all')
+  const [source, setSource] = useState(() => readMarketplaceSource(profileScopeKey(profile)))
+  const [url, setUrl] = useState('')
+  const [urlIdentifier, setUrlIdentifier] = useState('')
   const [selected, setSelected] = useState<string | null>(initialSelected ?? null)
   const [busy, setBusy] = useState<string | null>(null)
   const [completed, setCompleted] = useState<Set<string>>(new Set())
@@ -29,34 +61,15 @@ export function MarketplaceTab({ profile, query, initialSelected }: { profile: P
     return () => clearTimeout(timer)
   }, [query])
 
-  const sources = useQuery({
-    queryKey: ['skill-hub-sources', profileScopeKey(profile)],
-    queryFn: () => getSkillHubSources(profile),
-    retry: false
-  })
+  const { sources, results, visibleRows, active, preview } = useMarketplaceData(
+    profile,
+    search,
+    source,
+    selected,
+    urlIdentifier
+  )
 
-  const results = useQuery({
-    queryKey: ['skill-hub-search', profileScopeKey(profile), search, source],
-    queryFn: () => searchSkillsHub(search, source, 100, profile),
-    enabled: Boolean(search.trim()),
-    retry: false
-  })
-
-  const data = search.trim() ? results : sources
-  const rows = search.trim() ? (results.data?.results ?? []) : (sources.data?.featured ?? [])
-
-  const visibleRows = rows
-    .filter(row => source === 'all' || Boolean(search.trim()) || row.source === source)
-    .sort((a, b) => a.name.localeCompare(b.name))
-
-  const active = visibleRows.find(row => row.identifier === selected) ?? visibleRows[0]
-
-  const preview = useQuery({
-    queryKey: ['skill-hub-preview', profileScopeKey(profile), active?.identifier],
-    queryFn: () => previewSkillHub(active!.identifier, profile),
-    enabled: Boolean(active),
-    retry: false
-  })
+  const data = results
 
   const installed = (id: string) =>
     completed.has(id) || Boolean((results.data?.installed ?? sources.data?.installed ?? {})[id])
@@ -72,6 +85,12 @@ export function MarketplaceTab({ profile, query, initialSelected }: { profile: P
 
     try {
       await installHubSkill(id, profile)
+      const confirmed = await getSkillHubSources(profile)
+
+      if (!confirmed.installed[id]) {
+        throw new Error(c.installUnconfirmed)
+      }
+
       setCompleted(prev => new Set([...prev, id]))
       void data.refetch()
     } catch (error) {
@@ -87,13 +106,13 @@ export function MarketplaceTab({ profile, query, initialSelected }: { profile: P
       <div className="flex flex-wrap items-center gap-2 px-3 py-2">
         <InventorySelect
           label={c.source}
-          onChange={setSource}
-          options={[
-            { value: 'all', label: c.all },
-            ...(sources.data?.sources ?? [])
-              .filter(row => row.searchable !== false)
-              .map(row => ({ value: row.id, label: row.label }))
-          ]}
+          onChange={value => {
+            setSource(value)
+            saveMarketplaceSource(profileScopeKey(profile), value)
+            setSelected(null)
+            setUrlIdentifier('')
+          }}
+          options={sourceOptions(sources.data?.sources ?? [], source, c.all, c.unavailableSource)}
           value={source}
         />
         <Button
@@ -118,9 +137,35 @@ export function MarketplaceTab({ profile, query, initialSelected }: { profile: P
           {t.skills.hub.updateAll}
         </Button>
       </div>
-      {data.isError && (
+      {source === 'url' && (
+        <form
+          className="flex items-center gap-2 px-3 py-2"
+          onSubmit={event => {
+            event.preventDefault()
+            setUrlIdentifier(url.trim())
+          }}
+        >
+          <Input
+            aria-label="SKILL.md URL"
+            onChange={event => setUrl(event.target.value)}
+            placeholder="https://…/SKILL.md"
+            required
+            type="url"
+            value={url}
+          />
+          <Button size="xs" type="submit">
+            {c.preview}
+          </Button>
+        </form>
+      )}
+      {(data.isError || results.data?.errors?.length) && (
         <div className="px-3 py-2 text-sm" role="alert">
           {c.unavailable}{' '}
+          {results.data?.errors?.map(error => (
+            <p key={error.source}>
+              {error.source}: {error.message}
+            </p>
+          ))}
           <Button onClick={() => void data.refetch()} size="xs">
             {c.retry}
           </Button>
@@ -131,7 +176,22 @@ export function MarketplaceTab({ profile, query, initialSelected }: { profile: P
           {c.partial}
         </p>
       ) : null}
-      {data.isLoading ? (
+      {source === 'url' && active ? (
+        <div className="overflow-auto p-3">
+          <p>{c.community}</p>
+          {preview.isError ? (
+            <p role="alert">{c.unavailable}</p>
+          ) : (
+            <pre className="whitespace-pre-wrap break-words text-xs">{preview.data?.skill_md}</pre>
+          )}
+          <Button
+            disabled={!preview.data || preview.isError || busy !== null || installed(active.identifier)}
+            onClick={() => void install(active.identifier)}
+          >
+            {t.skills.hub.install}
+          </Button>
+        </div>
+      ) : data.isLoading && source !== 'url' ? (
         <p className="px-3" role="status">
           {t.skills.loading}
         </p>
@@ -163,7 +223,9 @@ export function MarketplaceTab({ profile, query, initialSelected }: { profile: P
                   subtitle={
                     <>
                       <span>{row.description}</span>
-                      <span>{row.source}</span>
+                      <span>
+                        {sourceLabel(row.source)} · {row.version}
+                      </span>
                     </>
                   }
                   title={row.name}
@@ -177,8 +239,13 @@ export function MarketplaceTab({ profile, query, initialSelected }: { profile: P
                 <h2 className="break-words text-lg font-semibold">{active.name}</h2>
                 <p>{active.description}</p>
                 <p className="text-xs">
-                  {active.source} · {active.repo}
+                  {sourceLabel(active.source)} · {active.repo} · {active.version}
                 </p>
+                <MarketplaceVerification
+                  integrityVerified={preview.data?.integrity_verified}
+                  publisherVerified={active.publisher_verified}
+                  source={active.source}
+                />
                 {preview.isError ? (
                   <Button onClick={() => void preview.refetch()}>{c.retry}</Button>
                 ) : (
@@ -196,5 +263,98 @@ export function MarketplaceTab({ profile, query, initialSelected }: { profile: P
         </details>
       )}
     </div>
+  )
+}
+
+function useMarketplaceData(
+  profile: ProfileScope,
+  search: string,
+  source: string,
+  selected: string | null,
+  urlIdentifier: string
+) {
+  const sources = useQuery({
+    queryKey: ['skill-hub-sources', profileScopeKey(profile)],
+    queryFn: () => getSkillHubSources(profile),
+    retry: false
+  })
+
+  const results = useQuery({
+    queryKey: ['skill-hub-search', profileScopeKey(profile), search, source],
+    queryFn: () => searchSkillsHub(search, source, 100, profile),
+    enabled: source !== 'url',
+    retry: false
+  })
+
+  const rows = results.data?.results ?? []
+
+  const visibleRows = rows
+    .filter(row => source === 'all' || Boolean(search.trim()) || row.source === source)
+    .sort((a, b) => a.name.localeCompare(b.name))
+
+  const listed = visibleRows.find(row => row.identifier === selected) ?? visibleRows[0]
+
+  const active =
+    source === 'url'
+      ? urlIdentifier
+        ? {
+            identifier: urlIdentifier,
+            name: urlIdentifier,
+            description: '',
+            source: 'url',
+            repo: '',
+            version: undefined,
+            publisher_verified: false
+          }
+        : undefined
+      : listed
+
+  const preview = useQuery({
+    queryKey: ['skill-hub-preview', profileScopeKey(profile), active?.identifier],
+    queryFn: () => previewSkillHub(active!.identifier, profile),
+    enabled: Boolean(active),
+    retry: false
+  })
+
+  return { sources, results, visibleRows, active, preview }
+}
+
+function sourceLabel(source: string) {
+  return marketplaceSources.find(item => item.value === source)?.label ?? source
+}
+
+function sourceOptions(sources: { id: string; label: string }[], source: string, all: string, unavailable: string) {
+  const options = [
+    ...marketplaceSources,
+    { value: 'all', label: all },
+    ...sources
+      .filter(row => !marketplaceSources.some(fixed => fixed.value === row.id))
+      .map(row => ({ value: row.id, label: row.label }))
+  ]
+
+  if (!options.some(row => row.value === source)) {
+    options.push({ value: source, label: `${source} · ${unavailable}` })
+  }
+
+  return options
+}
+
+function MarketplaceVerification({
+  source,
+  publisherVerified,
+  integrityVerified
+}: {
+  source: string
+  publisherVerified?: boolean
+  integrityVerified?: boolean
+}) {
+  const c = useInventoryCopy()
+
+  return (
+    <>
+      <p className="text-xs">{source === 'semantier' && publisherVerified ? c.publisherVerified : c.community}</p>
+      {integrityVerified && <p className="text-xs">{c.integrityVerified}</p>}
+      <p className="text-xs">{c.scannerSeparate}</p>
+    </>
   )
 }
