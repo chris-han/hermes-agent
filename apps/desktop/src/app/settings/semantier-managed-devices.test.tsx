@@ -44,7 +44,7 @@ it('reads server devices on demand and requires deliberate removal confirmation'
   fireEvent.click(screen.getByRole('button', { name: 'View Windows PCs' }))
   expect(await screen.findByText('device-a')).toBeTruthy()
   expect(screen.getByText('2 included · 0 purchased additional seats')).toBeTruthy()
-  expect(screen.getByText('DEVELOPMENT test seats: 1 (no purchase)')).toBeTruthy()
+  expect(screen.getByText('DEVELOPMENT test seats: 1 (no real charge)')).toBeTruthy()
   expect(screen.getByText('Current enrollment ceiling: 2 PCs')).toBeTruthy()
   expect(screen.getByText('Hardware not verified')).toBeTruthy()
   expect(screen.queryByText('TPM verified by server')).toBeNull()
