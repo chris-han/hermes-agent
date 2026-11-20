@@ -27,6 +27,7 @@ from tools.skill_manager_tool import (
     skill_manage,
 )
 from agent.skill_utils import (
+    SKILL_PROMPT_DESC_LIMIT,
     extract_skill_description,
     parse_frontmatter,
 )
@@ -268,12 +269,14 @@ class TestCreateSkill:
     def test_edit_long_desc_still_allowed_with_preview(self, tmp_path):
         """Edit/patch paths stay permissive so existing over-limit skills
         remain maintainable — they warn via system_prompt_preview instead."""
+        padding = "detail " * (SKILL_PROMPT_DESC_LIMIT // len("detail ") + 1)
+        content = LONG_DESC_CONTENT.replace("description: ", "description: " + padding)
         with _skill_dir(tmp_path):
             _create_skill("my-skill", VALID_SKILL_CONTENT)
-            result = _edit_skill("my-skill", LONG_DESC_CONTENT)
+            result = _edit_skill("my-skill", content)
         assert result["success"] is True
         assert "system_prompt_preview" in result
-        fm, _ = parse_frontmatter(LONG_DESC_CONTENT)
+        fm, _ = parse_frontmatter(content)
         assert extract_skill_description(fm) in result["system_prompt_preview"]
 
 
