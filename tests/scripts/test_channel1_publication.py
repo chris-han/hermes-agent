@@ -972,7 +972,7 @@ def test_post_success_oss_retention_keeps_active_and_deletes_only_bound_previous
              'plan':{'ssh':'root@123.57.184.194','remoteRoot':'/opt/semantier-client-distribution/channel1-storage-root/releases'}}
     (current/'result.json').write_text(json.dumps(receipt))
     obsolete=prior['packages'][0]['artifact'];objects={obsolete['key']:obsolete,active['key']:active}
-    calls=[];locked=[];account=[oss_release.ACCOUNT]
+    calls=[];locked=[];account=[oss_release.ACCOUNT];unknown=[]
     @contextmanager
     def guard(target,root,head):
         assert head['buildId']==request['buildId'];locked.append(True)
@@ -996,7 +996,7 @@ def test_post_success_oss_retention_keeps_active_and_deletes_only_bound_previous
         if 'delete-object' in args:
             calls.append(key);objects.pop(key)
             return types.SimpleNamespace(returncode=0,stdout='{}',stderr='')
-        return types.SimpleNamespace(returncode=0,stdout=json.dumps({'complete':True,'items':[{'key':active['key']},{'key':'releases/installers/semantier-setup-ch1.exe'}]}),stderr='')
+        return types.SimpleNamespace(returncode=0,stdout=json.dumps({'complete':True,'items':[{'key':active['key']},{'key':'releases/installers/semantier-setup-ch1.exe'},{'key':'skills/v1/catalog.json'},*unknown]}),stderr='')
     monkeypatch.setattr(channel1.subprocess,'run',api)
     output=current/'oss-retention.json'
     account[0]='foreign'
@@ -1012,6 +1012,9 @@ def test_post_success_oss_retention_keeps_active_and_deletes_only_bound_previous
     receipt['publication']=['sftp> progress',receipt['publication']]
     (current/'result.json').write_text(json.dumps(receipt))
     assert channel1.retire_oss_previous(current/'SemantierAgent.msix',current/'channel1-metadata.json',output)==value
+    assert calls==[obsolete['key']]
+    unknown.append({'key':'staging/windows-msix/unknown.msix'})
+    with pytest.raises(ValueError,match='inventory'):channel1.retire_oss_previous(current/'SemantierAgent.msix',current/'channel1-metadata.json',output)
     assert calls==[obsolete['key']]
     receipt['publicationVerification']='PENDING';(current/'result.json').write_text(json.dumps(receipt))
     with pytest.raises(ValueError,match='qualification'):channel1.retire_oss_previous(current/'SemantierAgent.msix',current/'channel1-metadata.json',output)

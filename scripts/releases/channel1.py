@@ -1101,7 +1101,10 @@ def retire_oss_previous(package, metadata, output, superseded=None):
                 raise ValueError('Retired object remains visible')
             deleted.append(row['key'])
         inventory=cli(['oss','ls','oss://'+oss_release.BUCKET+'/','--cli-output','json','--limited-num','100'])
-        if not inventory.get('complete') or {r['key'] for r in inventory['items']}!={active['key'],'releases/installers/semantier-setup-ch1.exe'}:
+        # Skill Marketplace objects share the bucket but have a different owner.
+        release_keys={r['key'] for r in inventory['items']
+                      if r['key'].startswith(('releases/','staging/windows-msix/'))}
+        if not inventory.get('complete') or release_keys!={active['key'],'releases/installers/semantier-setup-ch1.exe'}:
             raise ValueError('Single active MSIX and Setup inventory not established')
     result={'result':'ONE_ACTIVE_MSIX_AND_SETUP','buildId':request['buildId'],'channelSha256':head['channelSha256'],'deletedKeys':deleted}
     if output.exists():
