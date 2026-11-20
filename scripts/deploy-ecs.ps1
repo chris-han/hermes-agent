@@ -1389,8 +1389,8 @@ print(json.dumps(report))
 '@
   $body=$body.Replace('__PUBLISHER__',$publisher).Replace('__OPERATIONS__',$operations).Replace('__ARGS__',$args64)
   $encoded=ConvertTo-ReleasePayload ([Text.Encoding]::UTF8.GetBytes($body))
-  if($encoded.Length -gt 24000){throw 'Capacity payload exceeds bounded native SSH command size.'}
-  $json=Ssh "python3 -c 'import base64,gzip;exec(gzip.decompress(base64.b64decode(`"$encoded`")))'"
+  if($encoded.Length -gt 2097152){throw 'Capacity source payload exceeds its bounded stdin limit.'}
+  $json=Ssh "python3 -c 'import base64,gzip,sys;exec(gzip.decompress(base64.b64decode(sys.stdin.read())))'" -InputText $encoded
   return ($json | ConvertFrom-Json -AsHashtable)
 }
 function Get-ExpiredEcsUploadCleanup([string]$Root, [string]$CurrentStage) {
