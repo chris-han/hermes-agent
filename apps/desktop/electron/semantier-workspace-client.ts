@@ -23,6 +23,27 @@ export function assertWorkspaceScope(identity: WorkspaceIdentity, expected: Work
   }
 }
 
+/** Public registration data only. Private device keys remain native-process owned. */
+export type ManagedDevicePermission = 'skills:sync' | 'knowledge:sync' | 'plugin:execute'
+export interface ManagedDeviceChallengeCommand {
+  public_key: string
+  intent: 'register' | 'reconnect' | 'replace'
+  replaces_device_id?: string | null
+}
+export interface ManagedDeviceEnrollmentProof {
+  challenge_id: string
+  signature: string
+  attestation: Record<string, unknown>
+}
+export interface ManagedDeviceRow {
+  device_id: string
+  status: 'active' | 'revoked'
+  assurance: string
+  created_at: string
+  last_seen_at: string
+  revoked_at: string | null
+}
+
 export interface WorkspaceMessage {
   messageId: string
   role: string
@@ -108,8 +129,19 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
     })
 
     if (!response.ok) {
+      let managedDeviceCode: string | undefined
+
+      if (path.startsWith('/api/cloud-provider/device/managed')) {
+        try {
+          const detail = (await response.json())?.detail
+
+          if (typeof detail === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(detail)) { managedDeviceCode = detail }
+        } catch { /* A non-JSON refusal retains its HTTP status. */ }
+      }
+
       throw Object.assign(new Error(`Semantier workspace request failed (${response.status}).`), {
         statusCode: response.status,
+        ...(managedDeviceCode ? { managedDeviceCode } : {}),
         needsWorkspaceLogin: response.status === 401 || response.status === 403
       })
     }
@@ -118,6 +150,21 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
   }
 
   return {
+    async managedDevices(): Promise<{ included_windows_seats: number; devices: ManagedDeviceRow[]; additional_seat_checkout: string }> {
+      return (await request('/api/cloud-provider/device/managed')).json()
+    },
+    async managedDeviceChallenge(command: ManagedDeviceChallengeCommand): Promise<{ context: Record<string, string | null>; assurance_required: string }> {
+      return (await request('/api/cloud-provider/device/managed/challenge', { ...command })).json()
+    },
+    async managedDeviceEnroll(proof: ManagedDeviceEnrollmentProof): Promise<{ device_id: string; status: 'active'; assurance: string; capacity_revision: string }> {
+      return (await request('/api/cloud-provider/device/managed/enroll', { ...proof })).json()
+    },
+    async managedDeviceConsent(deviceId: string, permissions: ManagedDevicePermission[]): Promise<unknown> {
+      return (await request('/api/cloud-provider/device/managed/consent', { device_id: deviceId, permissions })).json()
+    },
+    async managedDeviceRevoke(deviceId: string): Promise<{ device_id: string; status: 'revoked' }> {
+      return (await request('/api/cloud-provider/device/managed/revoke', { device_id: deviceId })).json()
+    },
     async fileSyncBinding(): Promise<{userId:string;workspaceId:string;remoteRoot:string;token:string;enginePath:string;version:string}> {
       return (await request('/api/file-sync/binding', {})).json()
     },

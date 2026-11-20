@@ -200,3 +200,34 @@ it.each([401, 403])('preserves profile authority refusal %s despite optional Nat
   const client = createSemantierWorkspaceClient('https://cloud.example', transport)
   await expect(workspaceDesktopRead(client, '/api/profiles')).rejects.toMatchObject({ statusCode: status })
 })
+
+it('uses the existing authenticated session for managed-device consent and replacement', async () => {
+  const transport = vi.fn<typeof fetch>().mockImplementation(async () => Response.json({ status: 'fixture' }))
+  const client = createSemantierWorkspaceClient('https://cloud.example', transport)
+  await client.managedDevices()
+  await client.managedDeviceChallenge({ public_key: 'PUBLIC KEY ONLY', intent: 'replace', replaces_device_id: 'old-device' })
+  await client.managedDeviceEnroll({ challenge_id: 'challenge', signature: 'DER-signature-base64', attestation: { evidence: 'unverified-test-data' } })
+  await client.managedDeviceConsent('new-device', ['skills:sync'])
+  await client.managedDeviceRevoke('old-device')
+  expect(transport.mock.calls.map(([url]) => url)).toEqual([
+    'https://cloud.example/api/cloud-provider/device/managed',
+    ...['challenge', 'enroll', 'consent', 'revoke'].map(p => `https://cloud.example/api/cloud-provider/device/managed/${p}`)
+  ])
+  expect(transport.mock.calls[0][1]).toMatchObject({ method: 'GET', credentials: 'include', redirect: 'error' })
+
+  for (const [, options] of transport.mock.calls.slice(1)) {
+    expect(options).toMatchObject({ method: 'POST', credentials: 'include', redirect: 'error', headers: { Origin: 'https://cloud.example', 'X-Semantier-CSRF': '1' } })
+  }
+
+  expect(JSON.parse(String(transport.mock.calls[1][1]?.body))).toEqual({ public_key: 'PUBLIC KEY ONLY', intent: 'replace', replaces_device_id: 'old-device' })
+  expect(JSON.parse(String(transport.mock.calls[3][1]?.body))).toEqual({ device_id: 'new-device', permissions: ['skills:sync'] })
+})
+
+it('retains managed quota refusal without retrying or reporting a sign-in failure', async () => {
+  const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ detail: 'TECHNICAL_DEVICE_LIMIT' }, { status: 409 }))
+  const client = createSemantierWorkspaceClient('https://cloud.example', transport)
+  await expect(client.managedDeviceEnroll({ challenge_id: 'challenge', signature: 'proof', attestation: {} })).rejects.toMatchObject({
+    statusCode: 409, managedDeviceCode: 'TECHNICAL_DEVICE_LIMIT', needsWorkspaceLogin: false
+  })
+  expect(transport).toHaveBeenCalledTimes(1)
+})
