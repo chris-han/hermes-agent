@@ -346,7 +346,9 @@ def cloud_http3_client(base_url, *, async_mode=False, settings=None):
         return parsed.scheme, parsed.hostname, parsed.port or (443 if parsed.scheme == 'https' else 80)
     if origin(base_url) != origin(configured):
         return None
-    version = settings.get('http_version', '3' if sys.platform == 'win32' else None)
+    version = settings.get('http_version')
+    if version is None and sys.platform == 'win32' and urlsplit(base_url).scheme == 'https':
+        version = '3'
     if version is None:
         return None
     if version != '3':

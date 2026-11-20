@@ -314,3 +314,14 @@ def test_real_http3_header_read_timeout():
         with pytest.raises(httpx.ReadTimeout):
             client.get(origin + '/delayed', timeout=httpx.Timeout(5, read=.1))
         assert time.monotonic() - started < 2
+
+
+def test_development_loopback_uses_default_sdk_transport():
+    from hermes_cli.config import save_config
+    from agent.process_bootstrap import build_keepalive_http_client
+
+    origin = 'http://127.0.0.1:15447/v1'
+    save_config({'providers': {'semantier-cloud': {'base_url': origin}}})
+    with build_keepalive_http_client(origin) as client:
+        assert isinstance(client, httpx.Client)
+        assert not isinstance(client._transport, CloudHTTP3Transport)
