@@ -10,6 +10,7 @@ import { refreshConnectionsRegistry } from '@/store/connections'
 import type { WorkspaceIdentity } from '../../../electron/semantier-workspace-client'
 
 import { ListRow } from './primitives'
+import { SemantierManagedDevices } from './semantier-managed-devices'
 
 export function SemantierWorkspaceSettings({
   connections,
@@ -179,6 +180,16 @@ export function SemantierWorkspaceSettings({
           </Button>
         ) : null}
       </div>
+      {identity?.authenticated && identity.user?.user_id && identity.workspace?.id && identity.organization_id ? (
+        <SemantierManagedDevices
+          origin={origin}
+          scope={{
+            userId: identity.user.user_id,
+            workspaceId: identity.workspace.id,
+            organizationId: identity.organization_id
+          }}
+        />
+      ) : null}
     </form>
   )
 }
