@@ -798,9 +798,11 @@ def _record_skill_install(identifier: str, bundle, outcome: str, attempt: Option
 def do_install(identifier: str, category: str = "", force: bool = False,
                console: Optional[Console] = None, skip_confirm: bool = False,
                invalidate_cache: bool = True, name_override: str = "",
-               source_id: Optional[str] = None) -> Optional[bool]:
+               source_id: Optional[str] = None, source_adapter=None) -> Optional[bool]:
     """Fetch, quarantine, scan, confirm, and install a skill. ``source_id`` pins resolution to one
-    adapter; callers that know the provenance (``do_update``) must pass it so a bare identifier
+    adapter; a supplied ``source_adapter`` confines resolution to an authenticated private source
+    while retaining all normal quarantine/scan/install checks. Callers such as ``do_update``
+    pin provenance with ``source_id`` so a bare identifier
     cannot resolve to a same-named skill elsewhere.
 
     A first install is recorded once as an extension install; updates and ``--force`` reinstalls
@@ -812,12 +814,13 @@ def do_install(identifier: str, category: str = "", force: bool = False,
     exit code, so an exit-0 failure reads as "the button did nothing" (only the action log).
     """
     from tools.skills_hub import HubLockFile
+    source_id = _scoped_source_id(source_adapter, source_id)
     fresh = not HubLockFile().get_installed(identifier.rstrip("/").rsplit("/", 1)[-1])
     attempt: dict = {}
     try:
         bundle, outcome, installed = _install_skill(identifier, category, force, console or _console,
                                                     skip_confirm, invalidate_cache, name_override, source_id,
-                                                    attempt=attempt)
+                                                    attempt=attempt, source_adapter=source_adapter)
     except Exception as exc:
         if fresh:
             _record_skill_install(identifier, None, "failed", attempt, error=exc)
@@ -827,9 +830,23 @@ def do_install(identifier: str, category: str = "", force: bool = False,
     return installed
 
 
+def _scoped_source_id(source_adapter, source_id):
+    if source_adapter is None:
+        return source_id
+    actual = source_adapter.source_id()
+    if not actual or source_id not in (None, actual):
+        raise ValueError('Scoped source identity mismatch')
+    return actual
+
+
+def _install_sources(source_adapter):
+    """A supplied scoped source never falls back to public registry discovery."""
+    return _sources() if source_adapter is None else [source_adapter]
+
+
 def _install_skill(identifier: str, category: str, force: bool, c: Console, skip_confirm: bool,
                    invalidate_cache: bool, name_override: str, source_id: Optional[str],
-                   attempt: Optional[dict] = None) -> tuple:
+                   attempt: Optional[dict] = None, source_adapter=None) -> tuple:
     """``do_install``'s body: ``(bundle, outcome, installed)``. ``outcome`` is the extension-install
     event (None when this was no new install); ``installed`` is ``do_install``'s return value.
     ``attempt`` collects the metric's ``registry`` (adapter id) and, on a failed exit, its
@@ -846,7 +863,7 @@ def _install_skill(identifier: str, category: str, force: bool, c: Console, skip
         attempt.update(failure_class="filesystem_error", origin="bundled")
         return _install_bundled(c, builtin, invalidate_cache)
     attempt["registry"] = "unresolved"
-    sources = _pinned_sources(c, _sources(), source_id, identifier)
+    sources = _pinned_sources(c, _install_sources(source_adapter), source_id, identifier)
     if sources is None:
         attempt["failure_class"] = "not_found"
         return None, "failed", False
