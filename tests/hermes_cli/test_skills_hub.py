@@ -679,10 +679,41 @@ def _stub_search(monkeypatch, results):
     monkeypatch.setattr(search, "unified_search", lambda *args, **kwargs: list(results))
 
 
+
+@pytest.fixture(params=["symlink", "junction"])
+def directory_redirect(request):
+    """Exercise real redirects without requiring Windows symlink privileges."""
+    import os
+    import subprocess
+    if request.param == "junction" and os.name != "nt":
+        pytest.skip("NTFS junctions are Windows-only")
+    def create(link, target):
+        if request.param == "symlink":
+            try:
+                link.symlink_to(target, target_is_directory=True)
+            except OSError as exc:
+                if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+                    pytest.skip("Windows token cannot create symbolic links; real junction variant runs")
+                raise
+        else:
+            subprocess.run(["cmd.exe", "/d", "/c", "mklink", "/J", str(link), str(target)],
+                           check=True, capture_output=True)
+            assert link.is_junction()
+    return create
+
+
+def _remove_directory_redirect(path):
+    from pm.filesystem import is_junction
+    if is_junction(path):
+        path.rmdir()
+    else:
+        path.unlink()
+
+
 @pytest.mark.parametrize("identifier", [
     "computer-use", "NousResearch/hermes-agent/skills/productivity/pdf",
     "skills-sh/nousresearch/hermes-agent/google-workspace", "blender-bpy-enhanced"])
-def test_install_by_name_resolves_to_the_skill_it_names(monkeypatch, tmp_path, identifier):
+def test_install_by_name_resolves_to_the_skill_it_names(monkeypatch, tmp_path, identifier, directory_redirect):
     """`hermes skills install <bundled skill>` failed every time: the name resolved to a stranger's
     same-named hub skill or an ambiguity table, and this repo's own copy was rescanned as community
     content and refused. It now makes the shipped skill active and fetches nothing. A hub slug behind
@@ -716,11 +747,11 @@ def test_install_by_name_resolves_to_the_skill_it_names(monkeypatch, tmp_path, i
         skills_sync._get_bundled_dir()))[name].parent.name
     (outside := tmp_path / "outside").mkdir()
     category.parent.mkdir(parents=True, exist_ok=True)
-    category.symlink_to(outside, target_is_directory=True)
+    directory_redirect(category, outside)
     console, sink = _sink_console()
     assert cli_hub.do_install(identifier, console=console, skip_confirm=True) is False
     assert not any(outside.iterdir())
-    category.unlink()
+    _remove_directory_redirect(category)
 
     assert cli_hub.do_install(identifier, console=console, skip_confirm=True) is True
     assert "Restored built-in skill" in sink.getvalue()
@@ -746,7 +777,7 @@ def test_install_by_name_resolves_to_the_skill_it_names(monkeypatch, tmp_path, i
     assert (stranger / "SKILL.md").read_text().endswith("stranger\n")
 
 
-def test_built_in_restore_survives_leftovers_and_records_every_outcome_as_bundled(monkeypatch, tmp_path):
+def test_built_in_restore_survives_leftovers_and_records_every_outcome_as_bundled(monkeypatch, tmp_path, directory_redirect):
     """Post-fix telemetry still showed `llm-wiki` failing as source=hub, filesystem_error: the
     restore copied with copytree onto a dest dir left behind without its SKILL.md (EEXIST on every
     retry), refused a skill already present behind a symlinked category the loader follows, and a
@@ -772,7 +803,7 @@ def test_built_in_restore_survives_leftovers_and_records_every_outcome_as_bundle
 
     real = tmp_path / "real-category"
     dest.parent.rename(real)
-    dest.parent.symlink_to(real, target_is_directory=True)
+    directory_redirect(dest.parent, real)
     assert cli_hub.do_install("llm-wiki", console=console, skip_confirm=True) is None  # present, no-op
 
     (real / "llm-wiki" / "SKILL.md").unlink()  # missing behind the symlink: refused, and still bundled
@@ -780,6 +811,7 @@ def test_built_in_restore_survives_leftovers_and_records_every_outcome_as_bundle
     assert rows == [("bundled", "success"), ("bundled", "failed")]
 
 
+@pytest.mark.require_symlinks
 def test_built_in_restore_into_a_leftover_dir_never_writes_through_links_or_over_user_files(tmp_path):
     """The leftover-tolerant restore copied with dirs_exist_ok: it followed a symlinked file out of
     skills/ (clobbering the target), overwrote a user-edited file, and called a dir holding another
@@ -805,3 +837,53 @@ def test_built_in_restore_into_a_leftover_dir_never_writes_through_links_or_over
     (dest / "SKILL.md").write_text("---\nname: my-own-thing\ndescription: x\n---\nmine\n")
     assert ensure_bundled_skill("arxiv")["action"] == "not_restored"
     assert "my-own-thing" in (dest / "SKILL.md").read_text()
+
+
+def test_built_in_restore_never_writes_through_directory_redirect(tmp_path, directory_redirect):
+    from tools import skill_usage, skills_sync
+    from tools.skills_sync_bundled_ops import ensure_bundled_skill
+
+    src = dict(skills_sync._discover_bundled_skills(skills_sync._get_bundled_dir()))["arxiv"]
+    dest = skill_usage._skills_dir() / src.parent.name / "arxiv"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    victim = outside / "search_arxiv.py"
+    victim.write_text("USER SECRET\n")
+    dest.mkdir(parents=True)
+    directory_redirect(dest / "scripts", outside)
+    assert ensure_bundled_skill("arxiv")["action"] == "not_restored"
+    assert victim.read_text() == "USER SECRET\n"
+    assert not (dest / "SKILL.md").exists()
+    _remove_directory_redirect(dest / "scripts")
+    (dest / "scripts").mkdir()
+    local = dest / "scripts" / "search_arxiv.py"
+    local.write_text("# my local edits\n")
+    assert ensure_bundled_skill("arxiv")["action"] == "restored"
+    assert local.read_text() == "# my local edits\n"
+    assert (dest / "SKILL.md").read_bytes() == (src / "SKILL.md").read_bytes()
+    (dest / "SKILL.md").write_text("---\nname: my-own-thing\n---\nmine\n")
+    assert ensure_bundled_skill("arxiv")["action"] == "not_restored"
+    assert "my-own-thing" in (dest / "SKILL.md").read_text()
+
+
+def test_built_in_restore_rejects_file_symlink_metadata(tmp_path, monkeypatch):
+    """Native branch coverage when the token cannot create a file symlink.
+
+    This is a metadata-boundary test, not a real Windows symlink claim. Real
+    symlinks and junctions have separate capability-labelled tests above.
+    """
+    from pathlib import Path
+    from tools import skill_usage, skills_sync
+    from tools.skills_sync_bundled_ops import ensure_bundled_skill
+    src = dict(skills_sync._discover_bundled_skills(skills_sync._get_bundled_dir()))["arxiv"]
+    dest = skill_usage._skills_dir() / src.parent.name / "arxiv"
+    (dest / "scripts").mkdir(parents=True)
+    link = dest / "scripts" / "search_arxiv.py"
+    link.write_text("USER SECRET\n")
+    original = Path.is_symlink
+    monkeypatch.setattr(Path, "is_symlink", lambda p: p == link or original(p))
+    from unittest.mock import patch
+    with patch("tools.skills_sync_bundled_ops.shutil.copytree", side_effect=AssertionError("must refuse before copy")):
+        assert ensure_bundled_skill("arxiv")["action"] == "not_restored"
+    assert link.read_text() == "USER SECRET\n"
+    assert not (dest / "SKILL.md").exists()

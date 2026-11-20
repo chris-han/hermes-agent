@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from tools.skills_hub import HubLockFile, TapsManager
+from tools.skills_hub import HubLockFile, TapsManager, _read_state_text
 
 WORKERS = 4
 WRITES = 40
@@ -65,9 +65,9 @@ def test_processes_preserve_records_provenance_and_uninstalls(tmp_path):
             process.start()
         start.wait(timeout=30)
         while any(process.is_alive() for process in processes):
-            # Read raw bytes: load() would hide torn JSON by returning EMPTY.
+            # Parse actual text: no load()/EMPTY fallback. Only transient native opens retry.
             for path in (lock.path, taps.path):
-                data = json.loads(path.read_text(encoding="utf-8-sig"))
+                data = json.loads(_read_state_text(path))
                 assert isinstance(data, dict)
                 reads += 1
             wait([process.sentinel for process in processes if process.is_alive()], timeout=0.001)
@@ -119,3 +119,65 @@ def test_lock_failure_never_mutates_state(tmp_path, error, operation):
         with pytest.raises(type(error)):
             actions[operation]()
     assert [path.read_bytes() for path in (lock.path, taps.path)] == before
+
+
+def test_permission_failure_cannot_become_empty_state(tmp_path):
+    lock = HubLockFile(tmp_path / "lock.json")
+    _record(lock, "keep")
+    before = lock.path.read_bytes()
+    with patch("pathlib.Path.read_text", side_effect=PermissionError("denied")):
+        with pytest.raises(PermissionError):
+            _record(lock, "new")
+    assert lock.path.read_bytes() == before
+
+
+def test_strict_replace_failure_preserves_state(tmp_path, monkeypatch):
+    lock = HubLockFile(tmp_path / "lock.json")
+    _record(lock, "keep")
+    before = lock.path.read_bytes()
+    error = PermissionError("held target")
+    error.winerror = 5
+    monkeypatch.setattr("utils._IS_WINDOWS", True)
+    monkeypatch.setattr("utils.time.sleep", lambda _: None)
+    with patch("utils.os.replace", side_effect=error):
+        with pytest.raises(PermissionError):
+            _record(lock, "new")
+    assert lock.path.read_bytes() == before
+    assert not list(tmp_path.glob(".tmp_*.tmp"))
+
+
+def test_windows_transient_open_retries_without_empty_fallback(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    lock = HubLockFile(tmp_path / "lock.json")
+    _record(lock, "keep")
+    text = lock.path.read_text(encoding="utf-8-sig")
+    monkeypatch.setattr("tools.skills_hub.os", SimpleNamespace(name="nt"))
+    with patch("tools.skills_hub.time.sleep") as sleep:
+        with patch("pathlib.Path.read_text", side_effect=[PermissionError("rename"), text]) as read:
+            assert set(lock.load()["installed"]) == {"keep"}
+    assert read.call_count == 2
+    sleep.assert_called_once_with(0.01)
+
+
+def test_strict_cross_device_failure_never_copies(tmp_path):
+    import errno
+    lock = HubLockFile(tmp_path / "lock.json")
+    _record(lock, "keep")
+    before = lock.path.read_bytes()
+    with patch("utils.os.replace", side_effect=OSError(errno.EXDEV, "cross-device")):
+        with pytest.raises(OSError):
+            _record(lock, "new")
+    assert lock.path.read_bytes() == before
+    assert not list(tmp_path.glob(".tmp_*.tmp"))
+
+
+@pytest.mark.platforms("windows")
+def test_native_held_reader_never_forces_an_in_place_state_write(tmp_path):
+    lock = HubLockFile(tmp_path / "lock.json")
+    _record(lock, "keep")
+    before = lock.path.read_bytes()
+    with lock.path.open("rb"):
+        with pytest.raises(PermissionError):
+            _record(lock, "new")
+    assert lock.path.read_bytes() == before
+    assert not list(tmp_path.glob(".tmp_*.tmp"))

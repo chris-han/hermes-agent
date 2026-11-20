@@ -12,6 +12,7 @@ Used by hermes_cli/skills_hub.py for CLI commands and the /skills slash command.
 """
 
 import json
+import os
 import logging
 import threading
 import time
@@ -273,6 +274,22 @@ def _write_index_cache(key: str, data: Any) -> None:
 # Hub state files: lock.json, taps.json, audit.log
 # ---------------------------------------------------------------------------
 
+def _read_state_text(path: Path) -> str:
+    """Read published JSON bytes, tolerating Windows rename/delete-pending opens.
+
+    Never turn an exhausted permission failure into EMPTY: a writer could otherwise
+    overwrite existing provenance after loading a false empty snapshot.
+    """
+    for attempt in range(5):
+        try:
+            return path.read_text(encoding="utf-8-sig")
+        except PermissionError:
+            if os.name != "nt" or attempt == 4:
+                raise
+            time.sleep(0.01 * (attempt + 1))
+    raise AssertionError("unreachable")
+
+
 class _JsonStateFile:
     """A JSON file under the hub dir with a fixed empty shape (``EMPTY``, deep-copied
     on every miss/corrupt read); ``DEFAULT_PATH`` is the hub path resolver."""
@@ -286,7 +303,9 @@ class _JsonStateFile:
 
     def _read(self) -> dict:
         try:
-            return json.loads(self.path.read_text(encoding="utf-8-sig"))
+            return json.loads(_read_state_text(self.path))
+        except PermissionError:
+            raise
         except (json.JSONDecodeError, OSError):
             return json.loads(json.dumps(self.EMPTY))
 
@@ -294,7 +313,7 @@ class _JsonStateFile:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         # Temp + rename: another process (CLI vs desktop install) reading mid-write would see an
         # empty file, load EMPTY and save a lock that drops every other installed skill.
-        atomic_write_text(self.path, json.dumps(data, indent=2, **dumps_kwargs) + "\n", preserve_mode=True)
+        atomic_write_text(self.path, json.dumps(data, indent=2, **dumps_kwargs) + "\n", preserve_mode=True, strict=True)
 
     def _update(self, mutate: Callable[[dict], bool], **dumps_kwargs) -> bool:
         """Re-read, ``mutate`` and save under a cross-process lock; the file is rewritten only

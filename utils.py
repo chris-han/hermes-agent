@@ -165,15 +165,17 @@ def _copy_fallback(tmp_str: str, real_path: str) -> None:
     os.unlink(tmp_str)
 
 
-def atomic_replace(tmp_path: str | Path, target: str | Path) -> str:
+def atomic_replace(tmp_path: str | Path, target: str | Path, *, strict: bool = False) -> str:
     """Atomically move *tmp_path* onto *target*, preserving symlinks.
 
     Resolves a symlink first so ``os.replace`` writes the real file in place and the symlink
     survives. Otherwise identical to ``os.replace`` unless the rename fails with EXDEV/EBUSY
     (cross-device, bind-mount, busy file: copy/fsync/unlink immediately — these never clear on
     retry) or a Windows rename contended by another open handle (winerror 5/32/33: bounded retry,
-    then in-place rewrite).
+    then in-place rewrite). ``strict=True`` forbids both non-atomic fallbacks and
+    propagates the final replacement error after the same bounded retry budget.
     """
+    # Strict state owners must never publish through non-atomic copy/rewrite fallbacks.
     target_str = str(target)
     real_path = _publish_path(target_str)
     tmp_str = str(tmp_path)
@@ -199,6 +201,8 @@ def atomic_replace(tmp_path: str | Path, target: str | Path) -> str:
                         break
                     if not _is_contended_windows_replace_error(retry_exc):
                         raise
+        if strict:
+            raise exc
         logger.debug("atomic_replace: %s -> %s failed with %s; falling back to %s", tmp_str, real_path,
                      getattr(exc, "winerror", None) or errno.errorcode.get(exc.errno or 0, exc.errno),
                      "in-place rewrite" if contended else "copy")
@@ -288,7 +292,8 @@ def rmtree_readonly(path: str | Path, *, ignore_errors: bool = False) -> None:
 
 
 def _atomic_write(path: Path, write, *, prefix: str, encoding: str = "utf-8", mode: int | None = None,
-                  preserve_owner: bool = True, binary: bool = False, fsync_dir: bool = False) -> None:
+                  preserve_owner: bool = True, binary: bool = False, fsync_dir: bool = False,
+                  strict: bool = False) -> None:
     """Temp file + fsync + :func:`atomic_replace`, then re-apply owner/mode.
 
     *write(f)* emits the payload into the open handle (text, or bytes when *binary*). The temp file
@@ -320,7 +325,7 @@ def _atomic_write(path: Path, write, *, prefix: str, encoding: str = "utf-8", mo
             write(f)
             f.flush()
             os.fsync(f.fileno())
-        replaced = Path(atomic_replace(tmp_path, path))  # symlink-preserving actual destination
+        replaced = Path(atomic_replace(tmp_path, path, strict=True) if strict else atomic_replace(tmp_path, path))  # symlink-preserving actual destination
         _restore_file_metadata(replaced, original_owner, mode)
         if fsync_dir:
             fsync_directory(replaced.parent)
@@ -338,7 +343,7 @@ def _mode_for_write(path: Path, create_mode: int | None, preserve: bool = True) 
 
 def atomic_write_text(path: str | Path, content: str, *, encoding: str = "utf-8", tmp_prefix: str = ".tmp_",
                       preserve_mode: bool = False, create_mode: int | None = None, mode: int | None = None,
-                      fsync_dir: bool = False) -> None:
+                      fsync_dir: bool = False, strict: bool = False) -> None:
     """Write *content* to *path* via temp file + fsync + atomic rename.
 
     The target is never left partially written on crash/interrupt. Shared by every destructive
@@ -349,7 +354,7 @@ def atomic_write_text(path: str | Path, content: str, *, encoding: str = "utf-8"
     path = Path(path)
     _atomic_write(path, lambda f: f.write(content), prefix=tmp_prefix, encoding=encoding,
                   mode=mode if mode is not None else _mode_for_write(path, create_mode, preserve=preserve_mode),
-                  preserve_owner=preserve_mode, fsync_dir=fsync_dir)
+                  preserve_owner=preserve_mode, fsync_dir=fsync_dir, strict=strict)
 
 
 def atomic_write_bytes(path: str | Path, content: bytes, *, tmp_prefix: str = ".tmp_",
