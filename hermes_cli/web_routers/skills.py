@@ -13,6 +13,9 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 
+from hermes_cli.semantier_personal_capture import (
+    PersonalSnapshotCommand, PersonalCaptureCommand, PersonalInstallCommand,
+)
 from hermes_cli.web_deps import late
 from hermes_cli.web_server_profiles import _hub_action_name, _installed_hub_identifiers
 from hermes_cli.web_models import (
@@ -505,3 +508,35 @@ async def update_skill_content(body: SkillContentUpdate, profile: Optional[str] 
         raise HTTPException(status_code=status, detail=err)
     _clear_skills_prompt_cache()
     return result
+
+
+@router.post("/api/skills/personal/snapshot")
+async def personal_skill_snapshot(body: PersonalSnapshotCommand, profile: Optional[str] = None):
+    from hermes_cli.semantier_personal_capture import snapshot
+    try:
+        return await scoped_to_thread(profile,lambda:snapshot(body.skill_id))
+    except (ValueError,OSError) as exc:
+        raise HTTPException(409,'PERSONAL_SOURCE_UNAVAILABLE') from exc
+
+
+@router.post("/api/skills/personal/capture")
+async def personal_skill_capture(body: PersonalCaptureCommand, profile: Optional[str] = None):
+    from hermes_cli.semantier_personal_capture import capture
+    try:
+        value=await scoped_to_thread(profile,lambda:capture(**body.model_dump()))
+        return value.model_dump(mode='json')
+    except (ValueError,OSError) as exc:
+        raise HTTPException(409,'PERSONAL_SOURCE_CHANGED_OR_UNAVAILABLE') from exc
+
+
+@router.post("/api/skills/personal/install")
+async def personal_skill_install(body: PersonalInstallCommand, profile: Optional[str] = None):
+    from hermes_cli.semantier_personal_package import install_personal_package
+    from hermes_cli.web_routers._common import destructive_profile
+    profile=destructive_profile(profile,'/api/skills/personal/install')
+    try:
+        return await scoped_to_thread(profile,lambda:install_personal_package(**body.model_dump()))
+    except PermissionError as exc:
+        raise HTTPException(403,'PERSONAL_INSTALL_CONFIRMATION_REQUIRED') from exc
+    except (ValueError,OSError) as exc:
+        raise HTTPException(409,'PERSONAL_PACKAGE_NOT_INSTALLABLE') from exc

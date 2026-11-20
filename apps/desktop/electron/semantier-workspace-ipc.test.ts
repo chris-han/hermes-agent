@@ -217,7 +217,7 @@ it('refuses logout before cookie mutation if the sync process cannot stop',async
  expect(owned.clearStorageData).not.toHaveBeenCalled()
 })
 
-it.each(['managed-devices','managed-device-consent','managed-device-revoke'])('refuses a changed account before %s', async name => {
+it.each(['managed-devices','managed-device-consent','managed-device-revoke','managed-device-enroll'])('refuses a changed account before %s', async name => {
   const fetch=vi.fn().mockResolvedValue(Response.json({...identity,user:{...identity.user,user_id:'foreign'}}))
   vi.mocked(session.fromPartition).mockReturnValue({fetch} as never)
   vi.mocked(ipcMain.handle).mockClear()

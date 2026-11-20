@@ -33,7 +33,7 @@ export interface ManagedDeviceChallengeCommand {
 export interface ManagedDeviceEnrollmentProof {
   challenge_id: string
   signature: string
-  attestation: Record<string, unknown>
+  attestation?: Record<string, unknown>
 }
 export interface ManagedDeviceSeatSummary {
   included_windows_seats: number
@@ -46,13 +46,25 @@ export interface ManagedDeviceSeatSummary {
   capacity_revision: string
 }
 export interface ManagedDeviceInventory {
+  enrollment_policy?: 'hardware_attested' | 'development_key_proof' | 'development_account_first'
+  enrollment_available?: boolean
   seat_summary?: ManagedDeviceSeatSummary
   devices_has_more?: boolean
   included_windows_seats: number
   devices: ManagedDeviceRow[]
   additional_seat_checkout: string
 }
+export interface ManagedDeviceReceipt {
+  device_id: string
+  status: 'active'
+  assurance: string
+  hardware_attestation?: string
+  hardware_verified?: boolean
+  capacity_revision: string
+}
 export interface ManagedDeviceRow {
+  hardware_attestation?: string
+  hardware_verified?: boolean
   device_id: string
   status: 'active' | 'revoked'
   assurance: string
@@ -167,13 +179,31 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
   }
 
   return {
+    async personalSources() {
+      return (await request('/api/personal-capabilities/skills/list', {})).json()
+    },
+    async personalUpload(transfer: Record<string, unknown>) {
+      return (await request('/api/personal-capabilities/skills', transfer)).json()
+    },
+    async personalRead(receipt: Record<string, unknown>) {
+      return (await request('/api/personal-capabilities/skills/read', {receipt})).json()
+    },
+    async personalPropose(receipt: Record<string, unknown>) {
+      return (await request('/api/personal-capabilities/skills/propose', {receipt,request_id:'personal-sync:'+receipt.artifact_hash})).json()
+    },
+    async personalPackage(receipt: Record<string, unknown>, candidate: Record<string, unknown>) {
+      return (await request('/api/personal-capabilities/skills/package', {receipt,candidate})).json()
+    },
+    async personalLearningAction(command: Record<string, unknown>) {
+      return (await request('/api/learning/action', command)).json()
+    },
     async managedDevices(): Promise<ManagedDeviceInventory> {
       return (await request('/api/cloud-provider/device/managed')).json()
     },
     async managedDeviceChallenge(command: ManagedDeviceChallengeCommand): Promise<{ context: Record<string, string | null>; assurance_required: string }> {
       return (await request('/api/cloud-provider/device/managed/challenge', { ...command })).json()
     },
-    async managedDeviceEnroll(proof: ManagedDeviceEnrollmentProof): Promise<{ device_id: string; status: 'active'; assurance: string; capacity_revision: string }> {
+    async managedDeviceEnroll(proof: ManagedDeviceEnrollmentProof): Promise<ManagedDeviceReceipt> {
       return (await request('/api/cloud-provider/device/managed/enroll', { ...proof })).json()
     },
     async managedDeviceConsent(deviceId: string, permissions: ManagedDevicePermission[]): Promise<unknown> {

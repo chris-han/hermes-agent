@@ -2309,3 +2309,20 @@ test('normalizeRegistry quarantines non-object junk items that could still be us
   assert.equal((registry.quarantined || []).length, 1)
   assert.equal(registry.quarantined![0].entry, '{ mangled json fragment }')
 })
+
+
+test('retains private managed-device recovery metadata across registry normalization',()=>{
+ const base=normalizeRegistry(null)
+ const metadata={version:1,bindings:{['a'.repeat(64)]:{keyId:'b'.repeat(32)}}}
+ assert.deepEqual(normalizeRegistry({...base,managedWindowsDevices:metadata}).managedWindowsDevices,metadata)
+ assert.equal(normalizeRegistry({...base,managedWindowsDevices:null}).managedWindowsDevices,null)
+})
+
+
+test('observational installation ID survives normalization without becoming connection authority', () => {
+  const installationId='e6bfdb10-cd96-4ce1-b2ce-f07338469907'
+  const registry=normalizeRegistry({...normalizeRegistry(null),installationId})
+  assert.equal(registry.installationId,installationId)
+  assert.deepEqual(registry.connections,normalizeRegistry(null).connections)
+  assert.equal(normalizeRegistry({...registry,installationId:'hostname-or-mac'}).installationId,undefined)
+})

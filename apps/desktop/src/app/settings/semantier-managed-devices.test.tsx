@@ -16,23 +16,21 @@ const device = {
 }
 
 it('reads server devices on demand and requires deliberate removal confirmation', async () => {
-  const managedDevices = vi
-    .fn()
-    .mockResolvedValue({
+  const managedDevices = vi.fn().mockResolvedValue({
+    included_windows_seats: 2,
+    devices: [device],
+    additional_seat_checkout: 'unavailable',
+    seat_summary: {
       included_windows_seats: 2,
-      devices: [device],
-      additional_seat_checkout: 'unavailable',
-      seat_summary: {
-        included_windows_seats: 2,
-        purchased_windows_seats: 0,
-        development_windows_seats: 1,
-        licensed_windows_seats: 3,
-        active_windows_devices: 1,
-        new_enrollment_limit: 2,
-        retained_above_capacity: 0,
-        capacity_revision: 'synthetic.v1'
-      }
-    })
+      purchased_windows_seats: 0,
+      development_windows_seats: 1,
+      licensed_windows_seats: 3,
+      active_windows_devices: 1,
+      new_enrollment_limit: 2,
+      retained_above_capacity: 0,
+      capacity_revision: 'synthetic.v1'
+    }
+  })
 
   const managedDeviceRevoke = vi.fn().mockResolvedValue({ device_id: 'device-a', status: 'revoked' })
   Object.defineProperty(window, 'hermesDesktop', {
@@ -77,4 +75,51 @@ it('clears the old account inventory and ignores its delayed response', async ()
     resolve({ included_windows_seats: 2, devices: [device], additional_seat_checkout: 'unavailable' })
   })
   expect(screen.queryByText('device-a')).toBeNull()
+})
+
+it('enrolls with explicit unverified DEVELOPMENT assurance and identifies this PC', async () => {
+  const data = {
+    included_windows_seats: 2,
+    devices: [{ ...device, assurance: 'NOT_VERIFIED', hardware_attestation: 'NOT_VERIFIED', hardware_verified: false }],
+    additional_seat_checkout: 'unavailable',
+    enrollment_policy: 'development_key_proof',
+    enrollment_available: true
+  }
+
+  const managedDevices = vi.fn().mockResolvedValue(data)
+
+  const managedDeviceEnroll = vi.fn().mockResolvedValue({
+    device_id: 'device-a',
+    status: 'active',
+    assurance: 'NOT_VERIFIED',
+    hardware_attestation: 'NOT_VERIFIED',
+    hardware_verified: false,
+    capacity_revision: 'fixture'
+  })
+
+  Object.defineProperty(window, 'hermesDesktop', {
+    configurable: true,
+    value: { workspace: { managedDevices, managedDeviceEnroll } }
+  })
+  render(<SemantierManagedDevices origin="https://cloud.example" scope={scope} />)
+  fireEvent.click(screen.getByRole('button', { name: 'View Windows PCs' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Enroll or reconnect this PC' }))
+  await screen.findByText('device-a · This PC')
+  expect(managedDeviceEnroll).toHaveBeenCalledWith('https://cloud.example', scope, undefined)
+  expect(screen.getByText('Hardware not verified')).toBeTruthy()
+  expect(screen.queryByText('TPM verified by server')).toBeNull()
+})
+
+it('keeps account-first DEVELOPMENT sync independent of device enrollment', async () => {
+  const managedDevices=vi.fn().mockResolvedValue({included_windows_seats:2,devices:[],additional_seat_checkout:'unavailable',
+    enrollment_policy:'development_account_first',enrollment_available:false})
+
+  const managedDeviceEnroll=vi.fn()
+  Object.defineProperty(window,'hermesDesktop',{configurable:true,value:{workspace:{managedDevices,managedDeviceEnroll}}})
+  render(<SemantierManagedDevices origin="https://cloud.example" scope={scope} />)
+  fireEvent.click(screen.getByRole('button',{name:'View Windows PCs'}))
+  await screen.findByText(/DEVELOPMENT device records are observational/)
+  expect(screen.queryByRole('button',{name:'Enroll or reconnect this PC'})).toBeNull()
+  expect(screen.queryByText(/Enrollment is unavailable until hardware/)).toBeNull()
+  expect(managedDeviceEnroll).not.toHaveBeenCalled()
 })

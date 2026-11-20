@@ -18,6 +18,9 @@ import {
 } from './local-gateway'
 import { closeGatewayTicketBridges, createGatewayTicketResolver } from './local-gateway-python'
 import { looksBinary, previewFileMetadata } from './main_file_preview'
+import {ManagedDeviceEnrollment} from './managed-device-enrollment'
+import {runManagedDeviceKey} from './managed-device-key-process'
+import { PersonalCapabilitySync } from './personal-capability-sync'
 import { assertWorkspaceScope, registerSemantierWorkspaceIpc, workspace as semantierWorkspace } from './semantier-workspace-ipc'
 import { registerSemantierFeedbackIpc } from './updater/semantier-feedback-ipc'
 
@@ -216,6 +219,7 @@ import {
   buildAgentRoster,
   connectionDialFieldsChanged,
   connectionIdForPendingLogin,
+  LOCAL_CONNECTION_ID,
   mergeConnectionInput,
   migrateV1ToRegistry,
   normalizeConnectionInput,
@@ -8971,6 +8975,16 @@ function readDesktopConnectionsRegistry() {
     }
   }
 
+  if (IS_WINDOWS && !registry.installationId) {
+    try {
+      writeDesktopConnectionsRegistry(registry)
+
+      return connectionRegistryCache
+    } catch {
+      // Optional observation must never block local startup or cloud sign-in.
+    }
+  }
+
   connectionRegistryCache = registry
   connectionRegistryCacheMtime = mtime
 
@@ -9003,6 +9017,7 @@ function preserveCorruptRegistrySidecar() {
 }
 
 function writeDesktopConnectionsRegistry(registry) {
+  if (IS_WINDOWS && !registry.installationId) {registry = {...registry, installationId: crypto.randomUUID()}}
   fs.mkdirSync(path.dirname(DESKTOP_CONNECTIONS_REGISTRY_PATH), { recursive: true })
   // Owner-only for the same reason as connection.json: entries carry
   // safeStorage-encrypted tokens plus URLs and SSH host/user/keyPath.
@@ -16777,6 +16792,35 @@ const personalFileSync = createFileSyncIpc(senderId => {
   return source?.transport === 'semantier-workspace-http' ? new URL(source.url).origin : null
 })
 
+const managedDeviceEnrollment=new ManagedDeviceEnrollment({
+  client:origin=>semantierWorkspace(origin).client,
+  read:()=>readDesktopConnectionsRegistry().managedWindowsDevices,
+  write:state=>writeDesktopConnectionsRegistry({...readDesktopConnectionsRegistry(),managedWindowsDevices:state}),
+  key:async request=>{
+    if(!IS_WINDOWS){throw new Error('Windows managed device keys are unavailable')}
+    const backend=await resolveHermesBackend([])
+    const command=backend.ticketCommand||(backend.kind==='python'&&backend.args[0]==='-m'&&backend.args[1]==='hermes_cli.main'?backend.command:null)
+
+    if(!command||!backend.root||backend.shell){throw new Error('Selected native key runtime is unavailable')}
+
+    return runManagedDeviceKey({command,cwd:backend.root,env:{...process.env,...backend.env,...backend.ticketEnv}},request)
+  }
+  // Production attestation provider remains absent; server-selected DEV key proof uses none.
+})
+
+const personalCapabilitySync=new PersonalCapabilitySync({
+  client:origin=>semantierWorkspace(origin).client,
+  read:()=>readDesktopConnectionsRegistry().personalCapabilities,
+  write:state=>writeDesktopConnectionsRegistry({...readDesktopConnectionsRegistry(),personalCapabilities:state}),
+  native:async (nativePath,body)=>{
+    if(!['/api/skills/personal/snapshot','/api/skills/personal/capture','/api/skills/personal/install'].includes(nativePath)){
+      throw new Error('Unsupported personal native operation')
+    }
+
+    return handleHermesApiRequest({connectionId:LOCAL_CONNECTION_ID,profile:'default',path:nativePath,method:'POST',body})
+  }
+})
+
 registerSemantierWorkspaceIpc((origin, authenticated) => {
   for (const source of readDesktopConnectionsRegistry().connections) {
     if (source.transport !== 'semantier-workspace-http' || new URL(source.url).origin !== origin) { continue }
@@ -16793,7 +16837,7 @@ registerSemantierWorkspaceIpc((origin, authenticated) => {
 
     broadcastConnectionsChanged({ connectionId: source.id, reason: 'account-changed', authenticated })
   }
-}, origin => personalFileSync.accountChanging(origin))
+}, origin => personalFileSync.accountChanging(origin), managedDeviceEnrollment, personalCapabilitySync)
 
 ipcMain.handle('hermes:api', async (event, request) => {
   const ownRoute = windowConnectionRoutes.get(event.sender.id)

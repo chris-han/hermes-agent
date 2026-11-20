@@ -12,7 +12,9 @@ export function SemantierManagedDevices({ origin, scope }: { origin: string; sco
   const [snapshot, setSnapshot] = useState<{ scopeKey: string; value: ManagedDeviceInventory } | null>(null)
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState(false)
-  const [pending, setPending] = useState<string | null>(null)
+  const [pending, setPending] = useState<{ id: string; kind: 'remove' | 'replace' } | null>(null)
+  const [enrollmentError, setEnrollmentError] = useState('')
+  const [localDevice, setLocalDevice] = useState<{ scopeKey: string; id: string } | null>(null)
   const generation = useRef(0)
   const scopeKey = JSON.stringify([origin, scope.userId, scope.workspaceId, scope.organizationId])
   const inventory = snapshot?.scopeKey === scopeKey ? snapshot.value : null
@@ -21,6 +23,8 @@ export function SemantierManagedDevices({ origin, scope }: { origin: string; sco
     const current = ++generation.current
     setSnapshot(null)
     setPending(null)
+    setLocalDevice(null)
+    setEnrollmentError('')
     setBusy(false)
     setFailed(false)
 
@@ -105,6 +109,49 @@ export function SemantierManagedDevices({ origin, scope }: { origin: string; sco
     }
   }
 
+  async function enroll(replacesDeviceId?: string) {
+    const current = generation.current
+    setBusy(true)
+    setEnrollmentError('')
+
+    try {
+      const api = window.hermesDesktop.workspace
+
+      if (!api?.managedDeviceEnroll) {
+        throw new Error('Native enrollment unavailable')
+      }
+
+      const receipt = await api.managedDeviceEnroll(origin, scope, replacesDeviceId)
+
+      if (generation.current !== current) {
+        return
+      }
+
+      if (receipt.assurance !== 'NOT_VERIFIED' || receipt.hardware_verified !== false) {
+        throw new Error('Unqualified DEVELOPMENT receipt')
+      }
+
+      setLocalDevice({ scopeKey, id: receipt.device_id })
+      setPending(null)
+      await load()
+    } catch (error) {
+      if (generation.current === current) {
+        const text = String(error)
+        setEnrollmentError(
+          text.includes('DEVICE_SEAT_LIMIT')
+            ? copy.noSeats
+            : text.includes('NATIVE_DEVICE_KEY_UNAVAILABLE')
+              ? copy.keyUnavailable
+              : copy.enrollmentFailed
+        )
+      }
+    } finally {
+      if (generation.current === current) {
+        setBusy(false)
+      }
+    }
+  }
+
   return (
     <section aria-label={copy.title} className="grid min-w-0 gap-3">
       <h4 className="text-sm font-medium">{copy.title}</h4>
@@ -114,6 +161,18 @@ export function SemantierManagedDevices({ origin, scope }: { origin: string; sco
           {inventory ? copy.refresh : copy.view}
         </Button>
       </div>
+      {inventory?.enrollment_available && inventory.enrollment_policy === 'development_key_proof' ? (
+        <div>
+          <Button disabled={busy} onClick={() => void enroll()} type="button" variant="outline">
+            {copy.connect}
+          </Button>
+        </div>
+      ) : null}
+      {enrollmentError ? (
+        <p className="text-xs text-destructive" role="alert">
+          {enrollmentError}
+        </p>
+      ) : null}
       {busy ? (
         <p className="text-xs text-muted-foreground" role="status">
           {copy.loading}
@@ -126,7 +185,7 @@ export function SemantierManagedDevices({ origin, scope }: { origin: string; sco
       ) : null}
       {inventory ? (
         <>
-          {inventory.seat_summary ? (
+          {inventory.enrollment_policy === 'development_account_first' ? null : inventory.seat_summary ? (
             <div className="grid gap-1 text-xs text-muted-foreground">
               <p>
                 {copy.summary
@@ -152,26 +211,33 @@ export function SemantierManagedDevices({ origin, scope }: { origin: string; sco
           <ul className="grid min-w-0 gap-4">
             {inventory.devices.map(row => (
               <li className="grid min-w-0 gap-2" key={row.device_id}>
-                <span className="break-all text-xs font-medium">{row.device_id}</span>
+                <span className="break-all text-xs font-medium">
+                  {row.device_id}
+                  {localDevice?.scopeKey === scopeKey && localDevice.id === row.device_id ? ` · ${copy.thisPc}` : ''}
+                </span>
                 <p className="text-xs text-muted-foreground">{row.status === 'active' ? copy.active : copy.revoked}</p>
                 <p className="text-xs text-muted-foreground">
-                  {row.assurance === 'TPM_ATTESTED' ? copy.verified : copy.unknown}
+                  {row.hardware_verified === true && row.hardware_attestation === 'TPM_ATTESTED'
+                    ? copy.verified
+                    : copy.unknown}
                 </p>
                 <p className="break-words text-xs text-muted-foreground">
                   {copy.seen}: <time dateTime={row.last_seen_at}>{row.last_seen_at}</time>
                 </p>
                 {row.status === 'active' ? (
-                  pending === row.device_id ? (
+                  pending?.id === row.device_id ? (
                     <div className="grid gap-2">
-                      <p className="text-xs">{copy.question}</p>
+                      <p className="text-xs">{pending.kind === 'replace' ? copy.replaceQuestion : copy.question}</p>
                       <div className="flex flex-wrap gap-2">
                         <Button
                           disabled={busy}
-                          onClick={() => void revoke(row.device_id)}
+                          onClick={() =>
+                            void (pending.kind === 'replace' ? enroll(row.device_id) : revoke(row.device_id))
+                          }
                           type="button"
                           variant="outline"
                         >
-                          {copy.confirm}
+                          {pending.kind === 'replace' ? copy.replaceConfirm : copy.confirm}
                         </Button>
                         <Button disabled={busy} onClick={() => setPending(null)} type="button" variant="ghost">
                           {copy.cancel}
@@ -179,12 +245,33 @@ export function SemantierManagedDevices({ origin, scope }: { origin: string; sco
                       </div>
                     </div>
                   ) : (
-                    <div>
-                      <Button disabled={busy} onClick={() => setPending(row.device_id)} type="button" variant="outline">
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        disabled={busy}
+                        onClick={() => setPending({ id: row.device_id, kind: 'remove' })}
+                        type="button"
+                        variant="outline"
+                      >
                         {copy.remove}
                       </Button>
+                      {inventory.enrollment_available && inventory.enrollment_policy === 'development_key_proof' ? (
+                        <Button
+                          disabled={busy}
+                          onClick={() => setPending({ id: row.device_id, kind: 'replace' })}
+                          type="button"
+                          variant="outline"
+                        >
+                          {copy.replace}
+                        </Button>
+                      ) : null}
                     </div>
                   )
+                ) : inventory.enrollment_available && inventory.enrollment_policy === 'development_key_proof' ? (
+                  <div>
+                    <Button disabled={busy} onClick={() => void enroll(row.device_id)} type="button" variant="outline">
+                      {copy.connect}
+                    </Button>
+                  </div>
                 ) : null}
               </li>
             ))}
@@ -194,7 +281,13 @@ export function SemantierManagedDevices({ origin, scope }: { origin: string; sco
           ) : null}
         </>
       ) : null}
-      <p className="text-xs text-muted-foreground">{copy.enrollment}</p>
+      <p className="text-xs text-muted-foreground">
+        {inventory?.enrollment_policy === 'development_account_first'
+          ? copy.accountFirst
+          : inventory?.enrollment_policy === 'development_key_proof'
+            ? copy.devAssurance
+            : copy.enrollment}
+      </p>
       <p className="text-xs text-muted-foreground">{copy.local}</p>
     </section>
   )

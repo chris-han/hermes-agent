@@ -332,6 +332,13 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     resume:()=>ipcRenderer.invoke('hermes:file-sync:resume'),
   },
   workspace: {
+    personalPreview:(origin,scope,skillId)=>ipcRenderer.invoke('hermes:workspace:personal-preview',origin,scope,skillId),
+    personalSources:(origin,scope)=>ipcRenderer.invoke('hermes:workspace:personal-sources',origin,scope),
+    personalShare:(origin,scope,selected,context)=>ipcRenderer.invoke('hermes:workspace:personal-share',origin,scope,selected,context),
+    personalPrepare:(origin,scope,receipt)=>ipcRenderer.invoke('hermes:workspace:personal-prepare',origin,scope,receipt),
+    personalAdmit:(origin,scope,receipt,candidate)=>ipcRenderer.invoke('hermes:workspace:personal-admit',origin,scope,receipt,candidate),
+    personalInstall:(origin,scope,receipt,candidate,replaceExisting)=>ipcRenderer.invoke('hermes:workspace:personal-install',origin,scope,receipt,candidate,replaceExisting),
+    managedDeviceEnroll:(origin,scope,replacesDeviceId)=>ipcRenderer.invoke('hermes:workspace:managed-device-enroll',origin,scope,replacesDeviceId),
     managedDevices: (origin, scope) => ipcRenderer.invoke('hermes:workspace:managed-devices', origin, scope),
     managedDeviceConsent: (origin, scope, deviceId, permissions) => ipcRenderer.invoke('hermes:workspace:managed-device-consent', origin, scope, deviceId, permissions),
     managedDeviceRevoke: (origin, scope, deviceId) => ipcRenderer.invoke('hermes:workspace:managed-device-revoke', origin, scope, deviceId),

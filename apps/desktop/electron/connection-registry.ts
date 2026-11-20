@@ -95,6 +95,12 @@ export interface QuarantinedRegistryEntry {
 export const REGISTRY_QUARANTINE_CAP = 20
 
 export interface ConnectionRegistry {
+  /** Observational installation metadata; never a credential or hardware identity. */
+  installationId?: string
+  /** Private native key references. Controller validates; never sent to renderer. */
+  managedWindowsDevices?: unknown
+  /** Exact pending snapshots and ACK recovery, private to Electron. */
+  personalCapabilities?: unknown
   version: typeof REGISTRY_VERSION
   /** id of the connection that owns the window/primary backend. */
   primary: string
@@ -1408,6 +1414,18 @@ export function normalizeRegistry(raw: unknown): ConnectionRegistry {
     launchMode: parsed.launchMode === 'last-used' ? 'last-used' : 'primary',
     lastUsed: connections.some(c => c.id === storedLastUsed) ? storedLastUsed : primary,
     connections
+  }
+
+  if (typeof parsed.installationId === 'string' && /^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(parsed.installationId)) {
+    normalized.installationId = parsed.installationId
+  }
+
+  if (Object.prototype.hasOwnProperty.call(parsed,'personalCapabilities')) {
+    normalized.personalCapabilities=safeEntryCopy(parsed.personalCapabilities)
+  }
+
+  if (Object.prototype.hasOwnProperty.call(parsed,'managedWindowsDevices')) {
+    normalized.managedWindowsDevices=safeEntryCopy(parsed.managedWindowsDevices)
   }
 
   if (quarantined.length > 0) {

@@ -2,12 +2,22 @@ import { createHash } from 'node:crypto'
 
 import { BrowserWindow, ipcMain, session } from 'electron'
 
+import type {ManagedDeviceEnrollment} from './managed-device-enrollment'
+import type {PersonalCapabilitySync,PersonalPin,PersonalSnapshot} from './personal-capability-sync'
 import { assertWorkspaceScope, createSemantierWorkspaceClient, type ManagedDeviceInventory, type ManagedDevicePermission, requireNativeCompletion, requireWorkspaceCompletion, WORKSPACE_USER_STOP_ERROR, type WorkspaceHistory, type WorkspaceIdentity, type WorkspaceMainContext, type WorkspaceNativeCancellation, type WorkspaceNativeSnapshot, type WorkspaceNativeSubmission, type WorkspaceScope, type WorkspaceWinmanProfile } from './semantier-workspace-client'
 
 export { assertWorkspaceScope } from './semantier-workspace-client'
 export type { WorkspaceScope } from './semantier-workspace-client'
 
 export interface DesktopWorkspaceApi {
+  personalPreview:(origin:string,scope:WorkspaceScope,skillId:string)=>ReturnType<PersonalCapabilitySync['preview']>
+  personalSources:(origin:string,scope:WorkspaceScope)=>ReturnType<PersonalCapabilitySync['sources']>
+  personalShare:(origin:string,scope:WorkspaceScope,selected:PersonalSnapshot,context:PersonalSnapshot['contexts'][number])=>ReturnType<PersonalCapabilitySync['share']>
+  personalPrepare:(origin:string,scope:WorkspaceScope,receipt:PersonalPin)=>ReturnType<PersonalCapabilitySync['prepare']>
+  personalAdmit:(origin:string,scope:WorkspaceScope,receipt:PersonalPin,candidate:PersonalPin)=>ReturnType<PersonalCapabilitySync['admit']>
+  personalInstall:(origin:string,scope:WorkspaceScope,receipt:PersonalPin,candidate:PersonalPin,replaceExisting?:boolean)=>ReturnType<PersonalCapabilitySync['install']>
+
+  managedDeviceEnroll:(origin:string,scope:WorkspaceScope,replacesDeviceId?:string)=>ReturnType<ManagedDeviceEnrollment['enroll']>
   managedDevices: (origin: string, scope: WorkspaceScope) => Promise<ManagedDeviceInventory>
   managedDeviceConsent: (origin: string, scope: WorkspaceScope, deviceId: string, permissions: ManagedDevicePermission[]) => Promise<unknown>
   managedDeviceRevoke: (origin: string, scope: WorkspaceScope, deviceId: string) => Promise<{ device_id: string; status: 'revoked' }>
@@ -38,7 +48,17 @@ export function workspace(origin: string) {
   return { owned, origin: canonicalOrigin, client: createSemantierWorkspaceClient(canonicalOrigin, owned.fetch.bind(owned)) }
 }
 
-export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string, authenticated: boolean) => void, beforeAccountChange?: (origin:string)=>Promise<void>): void {
+export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string, authenticated: boolean) => void, beforeAccountChange?: (origin:string)=>Promise<void>, enrollment?:ManagedDeviceEnrollment, personal?:PersonalCapabilitySync): void {
+  const personalOwner=()=>{if(!personal){throw new Error('Personal sync is unavailable')}
+
+return personal}
+
+  ipcMain.handle('hermes:workspace:personal-preview',(_event,origin:string,scope:WorkspaceScope,skillId:string)=>personalOwner().preview(origin,scope,skillId))
+  ipcMain.handle('hermes:workspace:personal-sources',(_event,origin:string,scope:WorkspaceScope)=>personalOwner().sources(origin,scope))
+  ipcMain.handle('hermes:workspace:personal-share',(_event,origin:string,scope:WorkspaceScope,selected:PersonalSnapshot,context:PersonalSnapshot['contexts'][number])=>personalOwner().share(origin,scope,selected,context))
+  ipcMain.handle('hermes:workspace:personal-prepare',(_event,origin:string,scope:WorkspaceScope,receipt:PersonalPin)=>personalOwner().prepare(origin,scope,receipt))
+  ipcMain.handle('hermes:workspace:personal-admit',(_event,origin:string,scope:WorkspaceScope,receipt:PersonalPin,candidate:PersonalPin)=>personalOwner().admit(origin,scope,receipt,candidate))
+  ipcMain.handle('hermes:workspace:personal-install',(_event,origin:string,scope:WorkspaceScope,receipt:PersonalPin,candidate:PersonalPin,replaceExisting?:boolean)=>personalOwner().install(origin,scope,receipt,candidate,replaceExisting))
   // Ephemeral ownership of this renderer's pending HTTP stream, never task state.
   const streams = new Map<string, { controller: AbortController; requestId: string }>()
   const nativeStreams = new Map<string, { controller: AbortController; requestId: string; admission?: Promise<WorkspaceNativeSubmission> }>()
@@ -70,6 +90,20 @@ export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string
     stream.controller.abort()
 
     return { cancel_requested: true, request_id: stream.requestId }
+  })
+  ipcMain.handle('hermes:workspace:managed-device-enroll',async (_event,origin:string,scope:WorkspaceScope,replacesDeviceId?:string)=>{
+    const {client}=workspace(origin)
+    assertWorkspaceScope(await client.identity(),scope)
+
+    if(!enrollment){throw new Error('Native managed enrollment is unavailable')}
+
+    try{return await enrollment.enroll(origin,scope,replacesDeviceId)}catch(error){
+      const e=error as {managedDeviceCode?:string;nativeDeviceCode?:string}
+      const code=e.managedDeviceCode||e.nativeDeviceCode
+
+      if(code&&['DEVICE_SEAT_LIMIT','TECHNICAL_DEVICE_LIMIT','NATIVE_DEVICE_KEY_UNAVAILABLE','device_revoked'].includes(code)){throw new Error(code)}
+      throw error
+    }
   })
   ipcMain.handle('hermes:workspace:managed-devices', async (_event, origin: string, scope: WorkspaceScope) => {
     const { client } = workspace(origin)

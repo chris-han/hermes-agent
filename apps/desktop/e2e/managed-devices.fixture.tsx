@@ -3,6 +3,7 @@ import '../src/styles.css'
 import { createRoot } from 'react-dom/client'
 
 import { SemantierManagedDevices } from '../src/app/settings/semantier-managed-devices'
+import { SemantierPersonalSync } from '../src/app/settings/semantier-personal-sync'
 import { I18nProvider } from '../src/i18n'
 import { ThemeProvider } from '../src/themes/context'
 
@@ -25,6 +26,9 @@ let devices = [
 Object.assign(window, { managedDeviceFixtureEvents: events })
 window.hermesDesktop = {
   workspace: {
+    personalPreview:async()=>({skill_id:'my-report',files:[{relative_path:'SKILL.md',content_hash:'sha256:'+'a'.repeat(64)}],contexts:[{source_file:'MEMORY.md',content:'Use a concise table for the selected report.',content_hash:'sha256:'+'b'.repeat(64)}],snapshot_hash:'sha256:'+'c'.repeat(64)}),
+    personalShare:async()=>{events.push('personal-share');return {receipt:{artifact_kind:'personal_capability_import',artifact_ref:'synthetic-ack',artifact_hash:'sha256:'+'d'.repeat(64)}}},
+    personalSources:async()=>({sources:[],has_more:false}),
     managedDevices: async () => {
       if (params.get('scenario') === 'unavailable') {
         throw new Error('Synthetic unavailable service')
@@ -62,7 +66,10 @@ createRoot(document.getElementById('root')!).render(
         <p className="text-xs text-muted-foreground">
           Synthetic device-management fixture — no actual enrollment or hardware verification
         </p>
-        <SemantierManagedDevices origin="https://fixture.invalid" scope={scope} />
+        {params.get('scenario')==='personal'
+          ? <SemantierPersonalSync origin="https://fixture.invalid" scope={scope} />
+          : <SemantierManagedDevices origin="https://fixture.invalid" scope={scope} />}
+
       </main>
     </ThemeProvider>
   </I18nProvider>

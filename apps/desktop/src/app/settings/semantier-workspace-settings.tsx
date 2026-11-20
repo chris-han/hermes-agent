@@ -11,6 +11,7 @@ import type { WorkspaceIdentity } from '../../../electron/semantier-workspace-cl
 
 import { ListRow } from './primitives'
 import { SemantierManagedDevices } from './semantier-managed-devices'
+import { SemantierPersonalSync } from './semantier-personal-sync'
 
 export function SemantierWorkspaceSettings({
   connections,
@@ -181,6 +182,8 @@ export function SemantierWorkspaceSettings({
         ) : null}
       </div>
       {identity?.authenticated && identity.user?.user_id && identity.workspace?.id && identity.organization_id ? (
+        <>
+        <SemantierPersonalSync key={JSON.stringify([origin,identity.user.user_id,identity.workspace.id,identity.organization_id])} origin={origin} scope={{userId:identity.user.user_id,workspaceId:identity.workspace.id,organizationId:identity.organization_id}} />
         <SemantierManagedDevices
           origin={origin}
           scope={{
@@ -189,6 +192,7 @@ export function SemantierWorkspaceSettings({
             organizationId: identity.organization_id
           }}
         />
+        </>
       ) : null}
     </form>
   )
