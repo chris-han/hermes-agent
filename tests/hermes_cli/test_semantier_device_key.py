@@ -31,3 +31,50 @@ def test_no_software_key_fallback_on_non_windows():
         pytest.skip('non-Windows refusal only')
     with pytest.raises(OSError,match='Windows'):
         CngDeviceKey('a'*32)
+
+
+def test_native_helper_rejects_cross_account_signing_before_key_access(monkeypatch):
+    from hermes_cli import semantier_device_key as module
+    calls=[]
+    monkeypatch.setattr(module,'CngDeviceKey',lambda *a,**kw:calls.append((a,kw)))
+    with pytest.raises(ValueError,match='scope'):
+        module.native_key_request(dict(operation='sign_enrollment',key_id='a'*32,
+            expected_scope=dict(user_id='owner',organization_id='org',workspace_id='ws'),
+            context=dict(user_id='foreign',organization_id='org',workspace_id='ws')))
+    assert calls==[]
+
+
+def test_native_helper_carries_public_proof_and_never_asserts_attestation(monkeypatch,capsys):
+    from hermes_cli import semantier_device_key as module
+    class Key:
+        public_key='PUBLIC KEY'
+        def __init__(self,key_id,*,create=False):
+            assert key_id=='a'*32 and create is True
+        def __enter__(self):return self
+        def __exit__(self,*_):pass
+    monkeypatch.setattr(module,'CngDeviceKey',Key)
+    assert module.native_key_request(dict(operation='create',key_id='a'*32))==dict(
+        key_id='a'*32,public_key='PUBLIC KEY',assurance='NOT_VERIFIED')
+    import io
+    import json
+    from types import SimpleNamespace
+    monkeypatch.setattr(sys,'stdin',SimpleNamespace(buffer=io.BytesIO(json.dumps(dict(operation='create',key_id='a'*32)).encode())))
+    assert module._main()==0
+    assert json.loads(capsys.readouterr().out)=={'ok':True,'result':dict(key_id='a'*32,public_key='PUBLIC KEY',assurance='NOT_VERIFIED')}
+    with pytest.raises(ValueError):
+        module.native_key_request(dict(operation='export_private',key_id='a'*32))
+
+
+@pytest.mark.parametrize('wire',[
+    '{"operation":"create","operation":"delete","key_id":"'+ 'a'*32+'"}',
+    ' '*32769,
+    '{"operation":"export_private","key_id":"'+ 'a'*32+'"}',
+])
+def test_native_helper_stdin_refuses_ambiguous_or_unbounded_requests(wire):
+    import json
+    import subprocess
+    result=subprocess.run([sys.executable,'-m','hermes_cli.semantier_device_key'],input=wire,
+                          text=True,capture_output=True,timeout=15,check=False)
+    assert result.returncode==2
+    assert json.loads(result.stdout)=={'ok':False,'error':'INVALID_NATIVE_DEVICE_KEY_REQUEST'}
+    assert result.stderr==''

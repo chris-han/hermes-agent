@@ -138,3 +138,66 @@ class CngDeviceKey:
 
     def __exit__(self,*_):
         self.close()
+
+
+def native_key_request(payload):
+    """Private native-process protocol. It grants no account or server authority."""
+    import base64
+    if not isinstance(payload,dict):
+        raise ValueError('bounded native key request required')
+    operation=payload.get('operation')
+    signing=operation in ('sign_enrollment','sign_operation')
+    fields={'operation','key_id'}|({'expected_scope','context'} if signing else set())
+    if (operation not in ('create','public','delete','sign_enrollment','sign_operation') or set(payload)!=fields
+            or not isinstance(payload['key_id'],str) or not re.fullmatch('[a-f0-9]{32}',payload['key_id'])):
+        raise ValueError('bounded native key request required')
+    if signing:
+        scope=payload['expected_scope']
+        context=payload['context']
+        names={'user_id','organization_id','workspace_id'}
+        if (not isinstance(scope,dict) or set(scope)!=names or not isinstance(context,dict)
+                or any(not isinstance(scope[k],str) or not 1<=len(scope[k])<=256 or context.get(k)!=scope[k] for k in names)):
+            raise ValueError('native key signing scope mismatch')
+        from hermes_cli.semantier_device_proof import enrollment_message,operation_message
+        (enrollment_message if operation=='sign_enrollment' else operation_message)(context)
+    with CngDeviceKey(payload['key_id'],create=operation=='create') as key:
+        if operation=='delete':
+            key.delete()
+            return {'key_id':payload['key_id'],'deleted':True}
+        result={'key_id':payload['key_id'],'public_key':key.public_key,'assurance':'NOT_VERIFIED'}
+        if signing:
+            signature=(key.sign_enrollment if operation=='sign_enrollment' else key.sign_operation)(context)
+            result['signature']=base64.b64encode(signature).decode('ascii')
+        return result
+
+
+def _main():
+    """One bounded stdin command; no private key bytes or general execution API."""
+    import json
+    def unique(pairs):
+        result={}
+        for key,value in pairs:
+            if key in result:
+                raise ValueError('duplicate native key request field')
+            result[key]=value
+        return result
+    def nonfinite(_):
+        raise ValueError('nonfinite native key request')
+    try:
+        raw=sys.stdin.buffer.read(32769)
+        if len(raw)>32768:
+            raise ValueError('native key request too large')
+        payload=json.loads(raw,object_pairs_hook=unique,parse_constant=nonfinite)
+        result=native_key_request(payload)
+    except (ValueError,TypeError,KeyError,RecursionError):
+        print(json.dumps({'ok':False,'error':'INVALID_NATIVE_DEVICE_KEY_REQUEST'}))
+        return 2
+    except OSError:
+        print(json.dumps({'ok':False,'error':'NATIVE_DEVICE_KEY_UNAVAILABLE'}))
+        return 1
+    print(json.dumps({'ok':True,'result':result}))
+    return 0
+
+
+if __name__=='__main__':
+    raise SystemExit(_main())
