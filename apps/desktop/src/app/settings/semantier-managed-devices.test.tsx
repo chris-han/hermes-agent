@@ -18,7 +18,21 @@ const device = {
 it('reads server devices on demand and requires deliberate removal confirmation', async () => {
   const managedDevices = vi
     .fn()
-    .mockResolvedValue({ included_windows_seats: 2, devices: [device], additional_seat_checkout: 'unavailable' })
+    .mockResolvedValue({
+      included_windows_seats: 2,
+      devices: [device],
+      additional_seat_checkout: 'unavailable',
+      seat_summary: {
+        included_windows_seats: 2,
+        purchased_windows_seats: 0,
+        development_windows_seats: 1,
+        licensed_windows_seats: 3,
+        active_windows_devices: 1,
+        new_enrollment_limit: 2,
+        retained_above_capacity: 0,
+        capacity_revision: 'synthetic.v1'
+      }
+    })
 
   const managedDeviceRevoke = vi.fn().mockResolvedValue({ device_id: 'device-a', status: 'revoked' })
   Object.defineProperty(window, 'hermesDesktop', {
@@ -29,6 +43,9 @@ it('reads server devices on demand and requires deliberate removal confirmation'
   expect(managedDevices).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: 'View Windows PCs' }))
   expect(await screen.findByText('device-a')).toBeTruthy()
+  expect(screen.getByText('2 included · 0 purchased additional seats')).toBeTruthy()
+  expect(screen.getByText('DEVELOPMENT test seats: 1 (no purchase)')).toBeTruthy()
+  expect(screen.getByText('Current enrollment ceiling: 2 PCs')).toBeTruthy()
   expect(screen.getByText('Hardware not verified')).toBeTruthy()
   expect(screen.queryByText('TPM verified by server')).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Remove PC' }))

@@ -126,6 +126,28 @@ export function SemantierManagedDevices({ origin, scope }: { origin: string; sco
       ) : null}
       {inventory ? (
         <>
+          {inventory.seat_summary ? (
+            <div className="grid gap-1 text-xs text-muted-foreground">
+              <p>
+                {copy.summary
+                  .replace('{active}', String(inventory.seat_summary.active_windows_devices))
+                  .replace('{licensed}', String(inventory.seat_summary.licensed_windows_seats))}
+              </p>
+              <p>
+                {copy.purchased
+                  .replace('{included}', String(inventory.seat_summary.included_windows_seats))
+                  .replace('{purchased}', String(inventory.seat_summary.purchased_windows_seats))}
+              </p>
+              {inventory.seat_summary.development_windows_seats > 0 ? (
+                <p>{copy.development.replace('{count}', String(inventory.seat_summary.development_windows_seats))}</p>
+              ) : null}
+              <p>{copy.ceiling.replace('{count}', String(inventory.seat_summary.new_enrollment_limit))}</p>
+              {inventory.seat_summary.retained_above_capacity > 0 ? <p>{copy.retained}</p> : null}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">{copy.coverageUnknown}</p>
+          )}
+          {inventory.devices_has_more ? <p className="text-xs text-muted-foreground">{copy.more}</p> : null}
           {!inventory.devices.length ? <p className="text-xs text-muted-foreground">{copy.empty}</p> : null}
           <ul className="grid min-w-0 gap-4">
             {inventory.devices.map(row => (

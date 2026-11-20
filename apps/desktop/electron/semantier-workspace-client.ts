@@ -35,7 +35,19 @@ export interface ManagedDeviceEnrollmentProof {
   signature: string
   attestation: Record<string, unknown>
 }
+export interface ManagedDeviceSeatSummary {
+  included_windows_seats: number
+  purchased_windows_seats: number
+  development_windows_seats: number
+  licensed_windows_seats: number
+  active_windows_devices: number
+  new_enrollment_limit: number
+  retained_above_capacity: number
+  capacity_revision: string
+}
 export interface ManagedDeviceInventory {
+  seat_summary?: ManagedDeviceSeatSummary
+  devices_has_more?: boolean
   included_windows_seats: number
   devices: ManagedDeviceRow[]
   additional_seat_checkout: string

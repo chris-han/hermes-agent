@@ -30,7 +30,21 @@ window.hermesDesktop = {
         throw new Error('Synthetic unavailable service')
       }
 
-      return { included_windows_seats: 2, devices, additional_seat_checkout: 'unavailable' }
+      return {
+        included_windows_seats: 2,
+        devices,
+        additional_seat_checkout: 'unavailable',
+        seat_summary: {
+          included_windows_seats: 2,
+          purchased_windows_seats: 0,
+          development_windows_seats: 1,
+          licensed_windows_seats: 3,
+          active_windows_devices: devices.filter(row => row.status === 'active').length,
+          new_enrollment_limit: 2,
+          retained_above_capacity: 0,
+          capacity_revision: 'synthetic.v1'
+        }
+      }
     },
     managedDeviceRevoke: async (_origin: string, _scope: unknown, id: string) => {
       events.push(id)
