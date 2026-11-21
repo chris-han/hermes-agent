@@ -99,6 +99,13 @@ test('explicit File Sync in Windows Electron uses the selected account and local
       return response.status === 206 ? response.text() : ''
     }, { timeout: 40_000 }).toBe('Windows fixture upload\n')
     if (process.env.FILEX_OUTAGE_FIXTURE === '1') {
+      const statusDuringStop = async () => {
+        try { return await page.evaluate(() => (window as any).hermesDesktop.fileSync.status()) }
+        catch (error) {
+          if (String(error).includes('The account changed. Reconnect File Sync.')) {return { state: 'Checking' }}
+          throw error
+        }
+      }
       const gate = async (action: string) => {
         const response = await fetch(origin + '/__fixture/filex-gate', { method: 'POST',
           headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ action }) })
@@ -107,7 +114,7 @@ test('explicit File Sync in Windows Electron uses the selected account and local
       const offlineName = `native-offline-${randomUUID()}.md`
       await gate('offline')
       fs.writeFileSync(path.join(folder, offlineName), 'Explicit Windows resume\n')
-      await expect.poll(() => page.evaluate(() => (window as any).hermesDesktop.fileSync.status()),
+      await expect.poll(statusDuringStop,
         { timeout: 40_000 }).toMatchObject({ state: 'Error' })
       await gate('online')
       await new Promise(resolve => setTimeout(resolve, 6500))
@@ -122,7 +129,7 @@ test('explicit File Sync in Windows Electron uses the selected account and local
       const partialName = `native-partial-${randomUUID()}.md`
       await gate('upload-offline')
       fs.writeFileSync(path.join(folder, partialName), 'Explicit partial resume\n')
-      await expect.poll(() => page.evaluate(() => (window as any).hermesDesktop.fileSync.status()),
+      await expect.poll(statusDuringStop,
         { timeout: 40_000 }).toMatchObject({ state: 'Error' })
       await gate('upload-online')
       await new Promise(resolve => setTimeout(resolve, 6500))
