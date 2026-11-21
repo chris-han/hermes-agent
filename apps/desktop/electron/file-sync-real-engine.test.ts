@@ -79,19 +79,50 @@ it.skipIf(!fixture)(
     const secondDevice = new FileSyncSupervisor({ ...options, stateDir: path.join(root, 'second-private') })
 
     try {
+      const selected = await options.identity()
+      const expectedScope = { user_id: selected.userId, workspace_id: selected.workspaceId,
+        organization_id: selected.organizationId }
+      const readWinman = async () => {
+        const response = await request('/api/winman/capability')
+        expect(response.status).toBe(200)
+        return response.json()
+      }
+      const setWinman = async (enabled: boolean) => {
+        const response = await request('/api/winman/capability', { method: 'PUT',
+          headers: { Origin: origin, 'x-semantier-csrf': '1', 'content-type': 'application/json' },
+          body: JSON.stringify({ enabled, expected_scope: expectedScope }) })
+        expect(response.status).toBe(200)
+        return response.json()
+      }
+      expect(await supervisor.owners()).toEqual([])
+      expect(await readWinman()).toMatchObject({ desired: { enabled: false }, execution: 'unavailable' })
       await secondDevice.restore()
       expect(await secondDevice.owners()).toEqual([])
       expect((await secondDevice.statusFor(origin, await options.identity())).state).toBe('Paused')
+      expect(await setWinman(true)).toMatchObject({ desired: { enabled: true }, execution: 'unavailable' })
+      expect(await supervisor.owners()).toEqual([])
+      const secondLogin = await fetch(origin + '/auth/password/login', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ login: f.login, password: f.password })
+      })
+      expect(secondLogin.status).toBe(200)
+      const secondCookie = secondLogin.headers.getSetCookie().map(value => value.split(';')[0]).join('; ')
+      const secondView = await fetch(origin + '/api/winman/capability', { headers: { cookie: secondCookie } })
+      expect(await secondView.json()).toMatchObject({ desired: { enabled: true }, execution: 'unavailable' })
       await supervisor.enable(origin, folder)
+      expect((await supervisor.owners())[0].enabled).toBe(true)
+      expect(await readWinman()).toMatchObject({ desired: { enabled: true }, execution: 'unavailable' })
       await fs.writeFile(path.join(folder, name), 'Portable supervisor upload\n')
-      await expect.poll(() => supervisor.status().state, { timeout: 20000 }).toBe('Synced')
-      const bytes = await request('/api/file-sync/files?download=true&path=' + name)
-      expect(bytes.status).toBe(206)
-      expect(await bytes.text()).toBe('Portable supervisor upload\n')
+      await expect.poll(async () => {
+        const bytes = await request('/api/file-sync/files?download=true&path=' + name)
+        return bytes.status === 206 ? bytes.text() : ''
+      }, { timeout: 20000 }).toBe('Portable supervisor upload\n')
       const listing = await request('/api/file-sync/files')
       expect(listing.status).toBe(200)
       expect((await listing.json()).files.map((file: { name: string }) => file.name)).not.toContain(secondOnly)
       expect(await fs.readFile(path.join(secondFolder, secondOnly), 'utf8')).toBe('Must stay on second device\n')
+      expect(await setWinman(false)).toMatchObject({ desired: { enabled: false }, execution: 'unavailable' })
+      expect((await supervisor.owners())[0].enabled).toBe(true)
       const activeOwner = (await supervisor.owners())[0]
       const credential = await options.binding()
       let lockCode = 0
@@ -166,6 +197,11 @@ it.skipIf(!fixture)(
         supervisor.accountChanged()
         const otherIdentity = await options.identity()
         expect(otherIdentity.userId).not.toBe(activeOwner.userId)
+        expect(await readWinman()).toMatchObject({ desired: { enabled: false }, execution: 'unavailable' })
+        const foreignToggle = await request('/api/winman/capability', { method: 'PUT',
+          headers: { Origin: origin, 'x-semantier-csrf': '1', 'content-type': 'application/json' },
+          body: JSON.stringify({ enabled: true, expected_scope: expectedScope }) })
+        expect(foreignToggle.status).toBe(403)
         expect(await supervisor.statusFor(origin, otherIdentity)).toEqual({ state: 'Paused' })
         await expect(supervisor.enable(origin, folder, otherIdentity)).rejects.toThrow(/another account|folder binding/i)
         expect(await fs.readFile(path.join(folder, name), 'utf8')).toBe('Web returned portable supervisor bytes\n')
