@@ -34,7 +34,7 @@ class GatewayRuntimeInitMixin:
         self._provider_routing = self._load_provider_routing()
         self._fallback_model = self._load_fallback_model()
 
-    def _init_session_store(self) -> None:
+    def _init_session_store(self, *, session_db=None) -> None:
         """Build the SessionStore (with process-registry reset guard), its async facade and the router."""
         from gateway.run_startup import validate_postgresql_platforms
         validate_postgresql_platforms(self.config)
@@ -43,7 +43,7 @@ class GatewayRuntimeInitMixin:
         self.session_store = SessionStore(
             self.config.sessions_dir, self.config,
             has_active_processes_fn=lambda key: process_registry.has_active_for_session(
-                key))
+                key), session_db=session_db)
         # Loop-side boundary: sync helpers use ``session_store`` directly; async handlers await this facade.
         self._async_session_store = AsyncSessionStore(self.session_store)
         self.delivery_router = DeliveryRouter(self.config)
@@ -162,7 +162,7 @@ class GatewayRuntimeInitMixin:
         import itertools
         self._slash_confirm_counter = itertools.count(1)
 
-    def _init_session_db(self) -> None:
+    def _init_session_db(self, *, session_db=None) -> None:
         """Open the session DB for the active scope and run opportunistic state.db / checkpoint maintenance."""
         from gateway.run import (Any, Dict, Path, _SESSION_DB_UNPINNED, _housekeeping_chore, _housekeeping_state_db_maintenance, _launch_sessions_dir, threading)
         # Session DB is a property caching one AsyncSessionDB per path (a handle bound here would pin the
@@ -177,6 +177,11 @@ class GatewayRuntimeInitMixin:
         from gateway.session_db_recovery import RecoverableHandleCache
         self._session_db_handle_cache = RecoverableHandleCache(
             handles=self._session_db_handles, lock=self._session_db_handles_lock)
+        if session_db is not None:
+            from hermes_state import AsyncSessionDB
+
+            self._session_db_pinned = AsyncSessionDB(session_db)
+            return
         try:
             self._open_session_db_for_active_scope(raise_on_error=True)
         except Exception as e:
@@ -206,14 +211,14 @@ class GatewayRuntimeInitMixin:
         # here it ran before the control socket, adapters and the code_sha stamp — so the first
         # restart of the day (the ``hermes update`` one) looked hung and failed fleet verification.
 
-    def _init_registries_and_clocks(self) -> None:
+    def _init_registries_and_clocks(self, *, init_pairing=True) -> None:
         """Pairing stores, hook registry, voice modes, background-task set, liveness and idle clocks."""
         from gateway.run import (Dict, List, Optional, asyncio, time)
         # ``pairing_store``: global/default store (CLI, callers without profile context); ``pairing_stores``:
         # per-profile map ``authz_mixin._is_user_authorized`` routes through (one whitelist per profile).
         from gateway.pairing import PairingStore
         from gateway.hooks import ProfileHookRegistries
-        self.pairing_store = PairingStore()
+        self.pairing_store = PairingStore() if init_pairing else None
         self.pairing_stores: Dict[str, PairingStore] = {}
         # One HookRegistry per served profile home, resolved from the active scope at emit time.
         self.hooks = ProfileHookRegistries()

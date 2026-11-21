@@ -3464,8 +3464,14 @@ class GatewayRunner(
     _platform_lock_takeover_on_start: bool = False
     _reconnect_watcher_task: Optional[asyncio.Task] = None
 
-    def __init__(self, config: Optional[GatewayConfig] = None):
+    def __init__(self, config: Optional[GatewayConfig] = None, *, session_db=None):
         global _gateway_runner_ref
+        if session_db is not None:
+            from hermes_state_backend import session_store_home
+
+            if (config is None or getattr(session_db, "read_only", False)
+                    or session_store_home(session_db) != Path(get_hermes_home()).resolve()):
+                raise ValueError("explicit gateway store must be writable and bound to the active home")
         # With multiplex_profiles on, load under the default profile secret scope so bot tokens in its
         # .env resolve as secondary profiles' do; explicit config= injection (tests) is left untouched.
         # See #64674.
@@ -3479,11 +3485,12 @@ class GatewayRunner(
                 log_multiplex_decision(decision)
         # Multiplexer flag flips agent.secret_scope.get_secret() to fail-closed on unscoped credential
         # reads, so a missed migration crashes loudly instead of leaking a cross-profile value.
-        try:
-            from agent.secret_scope import set_multiplex_active
-            set_multiplex_active(bool(getattr(self.config, "multiplex_profiles", False)))
-        except Exception:
-            logger.debug("could not set multiplex-active flag", exc_info=True)
+        if session_db is None:
+            try:
+                from agent.secret_scope import set_multiplex_active
+                set_multiplex_active(bool(getattr(self.config, "multiplex_profiles", False)))
+            except Exception:
+                logger.debug("could not set multiplex-active flag", exc_info=True)
         self.adapters: dict[Platform, BasePlatformAdapter] = {}
         # Non-None means SessionDB init failed — the gateway broadcasts a one-time warning to the home
         # channel(s) after connecting so the user learns persistence is broken before /resume fails.
@@ -3494,15 +3501,16 @@ class GatewayRunner(
         # Each SERVED profile's gateway config, as loaded once by ``_load_secondary_profile_config``.
         # ``self.config`` is only the launch profile's: anything host-wide (restart notices) needs these.
         self._profile_configs: dict[str, Any] = {}
-        self._warn_if_docker_media_delivery_is_risky()
-        _gateway_runner_ref = _weakref.ref(self)
+        if session_db is None:
+            self._warn_if_docker_media_delivery_is_risky()
+            _gateway_runner_ref = _weakref.ref(self)
 
         self._init_runtime_settings()
-        self._init_session_store()
+        self._init_session_store(session_db=session_db)
         self._init_lifecycle_state()
         self._init_runtime_caches()
-        self._init_session_db()
-        self._init_registries_and_clocks()
+        self._init_session_db(session_db=session_db)
+        self._init_registries_and_clocks(init_pairing=session_db is None)
 
     def _open_session_db_for_active_scope(self, raise_on_error: bool = False) -> Any:
         """AsyncSessionDB for the active profile scope, resolved per access (not in ``__init__``) since
