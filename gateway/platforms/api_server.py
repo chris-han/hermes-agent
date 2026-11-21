@@ -4561,6 +4561,11 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         if not AIOHTTP_AVAILABLE:
             logger.warning("[%s] aiohttp not installed", self.name)
             return False
+        scoped = getattr(self, "_explicit_session_db", None) is not None
+        if scoped:
+            if self._host not in {"127.0.0.1", "::1"} or self.gateway_runner is not None:
+                raise PermissionError("Explicit API store requires an isolated loopback listener")
+            self._require_explicit_session_home()
         with self._session_db_cache_lock:
             self._session_db_cache_closed = False
         if not self._api_key_passes_startup_guard():
@@ -4585,24 +4590,28 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             return False
         try:
             mws = [mw for mw in (
-                self._make_profile_prefix_middleware(), cors_middleware, body_limit_middleware,
+                None if scoped else self._make_profile_prefix_middleware(), cors_middleware, body_limit_middleware,
                 security_headers_middleware) if mw is not None]
             self._app = web.Application(middlewares=mws, client_max_size=MAX_REQUEST_BYTES)
             assert self._app is not None
-            # Native routes + multiplex /p/<profile>/ mirrors (the prefix middleware validates and
-            # scopes config/credentials when multiplexing is on).
-            for method, path, handler in self._http_route_table():
-                self._app.router.add_route(method, path, handler)
-                self._app.router.add_route(method, f"/p/{{profile}}{path}", handler)
-            # Registered LAST so every native mirror above wins: anything else under /p/<profile>/ is a
-            # secondary profile's inbound-port platform (Twilio, LINE, Teams, ...) served on this listener.
-            self._app.router.add_route("*", "/p/{profile}/{tail:.*}", self._handle_profile_ingress)
+            if scoped:
+                self._app.router.add_get("/api/sessions/{session_id}/messages", self._handle_session_messages)
+            else:
+                # Native routes + multiplex /p/<profile>/ mirrors (the prefix middleware validates and
+                # scopes config/credentials when multiplexing is on).
+                for method, path, handler in self._http_route_table():
+                    self._app.router.add_route(method, path, handler)
+                    self._app.router.add_route(method, f"/p/{{profile}}{path}", handler)
+                # Registered LAST so every native mirror above wins: anything else under /p/<profile>/ is a
+                # secondary profile's inbound-port platform (Twilio, LINE, Teams, ...) served on this listener.
+                self._app.router.add_route("*", "/p/{profile}/{tail:.*}", self._handle_profile_ingress)
             # After native routes: Relay bootstrap shims feature-detect on this key and must
             # no-op rather than shadow the native session-control handlers.
             self._app["api_server_adapter"] = self
             if self.gateway_runner is not None:
                 self._app["gateway_runner"] = self.gateway_runner
-            self._track_background_task(asyncio.create_task(self._sweep_orphaned_runs()))
+            if not scoped:
+                self._track_background_task(asyncio.create_task(self._sweep_orphaned_runs()))
             # Network-accessible + unsandboxed local terminal backend = host-user RCE surface;
             # warn, don't refuse (the operator may have a firewall / strong key).
             if is_network_accessible(self._host):
@@ -4621,7 +4630,8 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                         self.name, self._host)
 
             # Plugin-registered native handlers, wired before AppRunner.setup() freezes the router.
-            self._wire_plugin_handlers(self._app)
+            if not scoped:
+                self._wire_plugin_handlers(self._app)
             self._runner = web.AppRunner(self._app)
             await self._runner.setup()
 # Bind directly instead of probing 127.0.0.1 first — the old single-family pre-probe raced the
@@ -4670,8 +4680,9 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             self._mark_connected(listener_base=listener_base_url(self._host, self._port))
             # Publish a metrics-bearing snapshot at bind and keep it fresh: the
             # heartbeat loop updates last_heartbeat/metrics_today (#52323).
-            self._publish_runtime_status()
-            self._track_background_task(asyncio.create_task(self._heartbeat_loop()))
+            if not scoped:
+                self._publish_runtime_status()
+                self._track_background_task(asyncio.create_task(self._heartbeat_loop()))
             logger.info(
                 "[%s] API server listening on http://%s:%d (model: %s)",
                 self.name, self._host, self._port, self._model_name)
