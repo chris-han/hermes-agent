@@ -20,7 +20,7 @@ test('explicit File Sync in Windows Electron uses the selected account and local
   const sandbox = createSandbox('file-sync-native')
   const folder = path.join(sandbox.root, 'documents')
   fs.mkdirSync(folder)
-  const preConsentFile = path.join(folder, `not-selected-${randomUUID()}.txt`)
+  const preConsentFile = path.join(sandbox.root, `not-selected-${randomUUID()}.txt`)
   fs.writeFileSync(preConsentFile, 'Local before consent\n')
   fs.writeFileSync(path.join(sandbox.hermesHome, 'config.yaml'), 'language: en\ndisplay:\n  language: en\n')
   const fixture = new DesktopFixtureSession(sandbox, buildAppEnv(sandbox, {
