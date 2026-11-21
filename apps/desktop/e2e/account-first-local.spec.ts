@@ -41,9 +41,11 @@ test('one account login preserves the local gateway and leaves capabilities off'
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   const address = server.address()
   if (!address || typeof address === 'string') {throw new Error('Fixture origin unavailable')}
-  const origin = `http://127.0.0.1:${address.port}`
+  const connected = process.env.ACCOUNT_MODEL_E2E_FIXTURE
+    ? JSON.parse(fs.readFileSync(process.env.ACCOUNT_MODEL_E2E_FIXTURE, 'utf8')) : null
+  const origin = connected?.origin || `http://127.0.0.1:${address.port}`
   const sandbox = createSandbox('account-first-local')
-  fs.writeFileSync(sandbox.hermesHome + '/config.yaml', 'language: en\n')
+  fs.writeFileSync(sandbox.hermesHome + '/config.yaml', 'language: en\nauxiliary:\n  title_generation:\n    model_upgrade_enabled: false\n')
   const root = path.resolve(import.meta.dirname, '../../..')
   const support = path.join(sandbox.root, 'python-fixture')
   fs.mkdirSync(support)
@@ -88,16 +90,33 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
     const popupPromise = app.waitForEvent('window')
     await page.getByRole('button', { name: 'Sign in', exact: true }).click()
     const popup = await popupPromise
+    if (connected) {
+      await popup.getByLabel('Login').fill(connected.login)
+      await popup.getByLabel('Password').fill(connected.password)
+    }
     await popup.getByRole('button', { name: 'Sign in fixture', exact: true }).click()
-    await expect(page.getByText('Fixture', { exact: true })).toBeVisible({ timeout: 20_000 })
+    if (connected) {
+      await expect.poll(() => page.evaluate(() => (window as any).hermesDesktop.workspace.modelDefault()),
+        { timeout: 90_000 }).toMatchObject({ model: 'deepseek-v4.1-flash-1017' })
+    } else {
+      await expect(page.getByText('Fixture', { exact: true })).toBeVisible({ timeout: 20_000 })
+    }
     await expect(page.getByText('Preference off.', { exact: false })).toBeVisible({ timeout: 20_000 })
     await page.getByRole('button', { name: 'File Sync', exact: true }).click()
     await expect(page.getByText('No folder selected', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Close settings', exact: true }).click()
     await expect(page.getByRole('button', { name: 'default', exact: true })).toHaveAttribute('aria-pressed', 'true')
     expect((await page.evaluate(() => (window as any).hermesDesktop.connections.list())).primary).toBe(localBefore.primary)
-    expect(requests.filter(request => request === 'POST /login')).toHaveLength(1)
-    expect(requests.some(request => /\/api\/(?:file-sync\/binding|winman\/messages)/.test(request))).toBe(false)
+    if (connected && process.env.ACCOUNT_MODEL_E2E_PROMPT === '1') {
+      const composer = page.locator('[data-slot="composer-root"] [contenteditable="true"]').filter({ visible: true }).first()
+      await composer.fill('Reply with the fixture response.')
+      await composer.press('Enter')
+      await expect(page.getByText('fixture response', { exact: true })).toBeVisible({ timeout: 90_000 })
+    }
+    if (!connected) {
+      expect(requests.filter(request => request === 'POST /login')).toHaveLength(1)
+      expect(requests.some(request => /\/api\/(?:file-sync\/binding|winman\/messages)/.test(request))).toBe(false)
+    }
   } finally {
     await fixture.close()
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
