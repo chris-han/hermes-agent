@@ -77,6 +77,19 @@ test('two Windows devices require separate File Sync consent and stop independen
     await choose(b.app, b.page, folders[1])
     await expect.poll(() => fs.promises.readFile(path.join(folders[1], first), 'utf8').catch(() => ''), { timeout: 40_000 })
       .toBe('Device A fixture bytes\n')
+    // Both copies share the same baseline before device B is paused. The two
+    // independent edits must survive B's explicit resume, including conflicts.
+    await b.page.getByRole('button', { name: 'Pause', exact: true }).click()
+    await expect(b.page.getByText('Paused', { exact: true })).toBeVisible()
+    fs.writeFileSync(path.join(folders[1], first), 'Device B offline edit\n')
+    fs.writeFileSync(path.join(folders[0], first), 'Device A online edit\n')
+    await expect.poll(() => read(first), { timeout: 40_000 }).toBe('Device A online edit\n')
+    await b.page.getByRole('button', { name: 'Resume', exact: true }).click()
+    await expect.poll(async () => {
+      const names = await fs.promises.readdir(folders[1])
+      const versions = await Promise.all(names.map(name => fs.promises.readFile(path.join(folders[1], name), 'utf8').catch(() => '')))
+      return versions.includes('Device B offline edit\n') && versions.includes('Device A online edit\n')
+    }, { timeout: 40_000 }).toBe(true)
     const gate = async (action: string) => {
       const response = await fetch(origin + '/__fixture/filex-gate', { method: 'POST', headers: { cookie,
         'Content-Type': 'application/json' }, body: JSON.stringify({ action }) })
