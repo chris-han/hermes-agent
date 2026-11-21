@@ -134,6 +134,26 @@ it.skipIf(!fixture)(
       await expect
         .poll(() => fs.readFile(path.join(folder, name), 'utf8'), { timeout: 15000 })
         .toBe('Web returned portable supervisor bytes\n')
+
+      const secondChosen = path.join(root, 'second-chosen')
+      await fs.mkdir(secondChosen)
+      await secondDevice.enable(origin, secondChosen, await options.identity())
+      await expect
+        .poll(() => fs.readFile(path.join(secondChosen, name), 'utf8').catch(() => ''), { timeout: 20000 })
+        .toBe('Web returned portable supervisor bytes\n')
+      expect((await secondDevice.owners())[0].id).not.toBe((await supervisor.owners())[0].id)
+      const secondUpload = 'second-device-upload-' + randomUUID() + '.md'
+      await fs.writeFile(path.join(secondChosen, secondUpload), 'Second device bytes\n')
+      await expect
+        .poll(() => fs.readFile(path.join(folder, secondUpload), 'utf8').catch(() => ''), { timeout: 25000 })
+        .toBe('Second device bytes\n')
+      await secondDevice.pause()
+      const pausedOnly = 'paused-device-' + randomUUID() + '.md'
+      await fs.writeFile(path.join(secondChosen, pausedOnly), 'Paused device bytes\n')
+      const afterPause = await request('/api/file-sync/files')
+      expect((await afterPause.json()).files.map((file: { name: string }) => file.name)).not.toContain(pausedOnly)
+      expect(await fs.readFile(path.join(secondChosen, pausedOnly), 'utf8')).toBe('Paused device bytes\n')
+      expect((await secondDevice.statusFor(origin, await options.identity())).state).toBe('Paused')
     } finally {
       await supervisor.shutdown()
       await secondDevice.shutdown()
