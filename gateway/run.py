@@ -4161,9 +4161,10 @@ class GatewayRunner(
             executor.shutdown(wait=False)
         return list(getattr(executor, "_threads", None) or ())
 
-    def _shutdown_executor(self, drain_timeout: float = 0.0) -> int:
+    def _shutdown_executor(self, drain_timeout: float | None = 0.0) -> int:
         """Stop the gateway-owned pools; returns the number of worker threads still running.
-        ``drain_timeout=0`` is fire-and-forget; shutdown passes a bounded budget so blocking DB work
+        ``drain_timeout=0`` is fire-and-forget. Use None to wait for every worker.
+        Shutdown passes a bounded budget so blocking DB work
         cannot outlive ``SessionDB.close()``. ``cancel_futures`` only drops unstarted work and cancelling
         a ``run_in_executor`` awaitable does not stop its thread, so running workers are joined — on
         the turn pool AND the housekeeping pool, both of which write to SessionDB."""
@@ -4181,12 +4182,15 @@ class GatewayRunner(
         # are therefore joined under the SAME drain deadline and both contribute to the live count.
         # Class-qualified: run_shutdown and tests invoke these unbound on a duck-typed `self`.
         workers = GatewayRunner._stop_pool(executor) + GatewayRunner._stop_pool(housekeeping)
-        deadline = time.monotonic() + max(float(drain_timeout or 0.0), 0.0)
+        deadline = None if drain_timeout is None else time.monotonic() + max(float(drain_timeout), 0.0)
         for worker in workers:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            worker.join(remaining)
+            if deadline is None:
+                worker.join()
+            else:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                worker.join(remaining)
         return sum(1 for worker in workers if worker.is_alive())
 
     # (section, key) config values baked into the agent at construction: a change MUST invalidate the
