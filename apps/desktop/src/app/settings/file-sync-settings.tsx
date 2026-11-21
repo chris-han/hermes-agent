@@ -19,6 +19,7 @@ export function FileSyncSettings() {
   const generation = useRef(0)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [actionError, setActionError] = useState('')
   const api = window.hermesDesktop?.fileSync
   const connected = Boolean(account)
   const stopMessage = status.stopState && (zh
@@ -33,6 +34,7 @@ export function FileSyncSettings() {
     setBusy(false)
     setStatus({ state: 'Paused' })
     setError('')
+    setActionError('')
 
     let request = 0
     let polling = false
@@ -72,13 +74,14 @@ export function FileSyncSettings() {
     const current = ++generation.current
     setBusy(true)
     setError('')
+    setActionError('')
 
     try {
       const result = await api[action]()
 
       if (current === generation.current) {setStatus(result)}
     } catch (error) {
-      if (current === generation.current) {setError(error instanceof Error ? error.message : String(error))}
+      if (current === generation.current) {setActionError(error instanceof Error ? error.message : String(error))}
     } finally {
       if (current === generation.current) {
         generation.current++
@@ -92,8 +95,8 @@ export function FileSyncSettings() {
       <SectionHeading icon={RefreshCw} title={zh ? '文件同步' : 'File Sync'} />
       <p className="text-sm text-muted-foreground">
         {zh
-          ? '选择一个个人文件夹，在桌面端与工作区的“同步文件”之间保持更新。'
-          : 'Choose one personal folder to keep up to date with Workspace → Synced Files.'}
+          ? '选择一个个人文件夹，在桌面端与工作区的“同步文件”之间保持更新。首次设置请选择空文件夹；已有绑定可以继续使用原文件夹。'
+          : 'Choose one personal folder to keep up to date with Workspace → Synced Files. For a new setup, choose an empty folder; an existing binding can keep its folder.'}
       </p>
       {!connected || !api ? (
         <p>{zh ? '请先登录 Semantier 账户。' : 'Sign in to your Semantier account first.'}</p>
@@ -134,9 +137,9 @@ export function FileSyncSettings() {
           </p>
         </>
       )}
-      {(error || stopMessage || status.message) && (
+      {(actionError || error || stopMessage || status.message) && (
         <p className="text-sm text-destructive" role="alert">
-          {stopMessage || error || status.message}
+          {stopMessage || actionError || error || status.message}
         </p>
       )}
     </div>

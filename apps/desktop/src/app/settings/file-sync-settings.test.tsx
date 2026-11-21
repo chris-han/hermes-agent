@@ -232,3 +232,23 @@ it('surfaces a slow failed poll and recovers after it settles', async () => {
   expect(screen.getByText('Synced')).toBeTruthy()
   expect(screen.queryByRole('alert')).toBeNull()
 })
+
+it('retains a rejected folder message through status polls until another action', async () => {
+  vi.useFakeTimers()
+  const choose = vi.fn()
+    .mockRejectedValueOnce(new Error('Choose an empty folder for a new File Sync binding. Existing files are preserved.'))
+    .mockResolvedValue({ state: 'Paused' })
+  const status = vi.fn().mockResolvedValue({ state: 'Paused' })
+  window.hermesDesktop = { ...original, fileSync: { status, choose, pause: vi.fn(), resume: vi.fn() } }
+  connect('a')
+  render(<FileSyncSettings />)
+  await act(async () => {})
+  fireEvent.click(screen.getByRole('button', { name: 'Choose and enable' }))
+  await act(async () => {})
+  expect(screen.getByRole('alert').textContent).toContain('Choose an empty folder')
+  await act(async () => { await vi.advanceTimersByTimeAsync(4000) })
+  expect(screen.getByRole('alert').textContent).toContain('Choose an empty folder')
+  fireEvent.click(screen.getByRole('button', { name: 'Choose and enable' }))
+  await act(async () => {})
+  expect(screen.queryByRole('alert')).toBeNull()
+})

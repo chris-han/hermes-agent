@@ -20,7 +20,9 @@ test('explicit File Sync in Windows Electron uses the selected account and local
   const sandbox = createSandbox('file-sync-native')
   const folder = path.join(sandbox.root, 'documents')
   fs.mkdirSync(folder)
-  const preConsentFile = path.join(sandbox.root, `not-selected-${randomUUID()}.txt`)
+  const nonemptyFolder = path.join(sandbox.root, 'unselected-documents')
+  fs.mkdirSync(nonemptyFolder)
+  const preConsentFile = path.join(nonemptyFolder, `not-selected-${randomUUID()}.txt`)
   fs.writeFileSync(preConsentFile, 'Local before consent\n')
   fs.writeFileSync(path.join(sandbox.hermesHome, 'config.yaml'), 'language: en\ndisplay:\n  language: en\n')
   const fixture = new DesktopFixtureSession(sandbox, buildAppEnv(sandbox, {
@@ -69,6 +71,14 @@ test('explicit File Sync in Windows Electron uses the selected account and local
     await page.getByRole('button', { name: 'File Sync', exact: true }).click()
     await expect(page.getByText('No folder selected', { exact: true })).toBeVisible()
     if (process.env.NATIVE_MODEL_E2E === '1') {
+      await app.evaluate(({ dialog }, selected) => {
+        ;(dialog as any).showOpenDialog = async () => ({ canceled: false, filePaths: [selected] })
+        ;(dialog as any).showMessageBox = async () => ({ response: 1, checkboxChecked: false })
+      }, nonemptyFolder)
+      await page.getByRole('button', { name: 'Choose and enable', exact: true }).click()
+      await expect(page.getByRole('alert')).toContainText('Choose an empty folder')
+      await new Promise(resolve => setTimeout(resolve, 4500))
+      await expect(page.getByRole('alert')).toContainText('Choose an empty folder')
       const off = await request('/__fixture/file-sync-off')
       expect(off.status).toBe(200)
       expect(await off.json()).toEqual({ device_issuance: 0, engine_requests: 0 })
