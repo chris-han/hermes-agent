@@ -170,7 +170,7 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
       await page.getByRole('button', { name: labels.enable, exact: true }).click()
       await page.getByRole('button', { name: labels.confirm, exact: true }).click()
       await expect(page.getByText(labels.requested, { exact: false })).toBeVisible({ timeout: 20_000 })
-      await page.getByRole('button', { name: labels.disable, exact: true }).click()
+      await page.getByRole('main').getByRole('button', { name: labels.disable, exact: true }).click()
       await expect(page.getByText(labels.off, { exact: false })).toBeVisible({ timeout: 20_000 })
     }
     await page.getByRole('button', { name: labels.fileSync, exact: true }).click()
