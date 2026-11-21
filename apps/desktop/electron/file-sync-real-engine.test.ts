@@ -26,7 +26,7 @@ it.skipIf(!fixture)(
 
     expect(login.status).toBe(200)
 
-    const cookie = login.headers
+    let cookie = login.headers
       .getSetCookie()
       .map(value => value.split(';')[0])
       .join('; ')
@@ -154,6 +154,22 @@ it.skipIf(!fixture)(
       expect((await afterPause.json()).files.map((file: { name: string }) => file.name)).not.toContain(pausedOnly)
       expect(await fs.readFile(path.join(secondChosen, pausedOnly), 'utf8')).toBe('Paused device bytes\n')
       expect((await secondDevice.statusFor(origin, await options.identity())).state).toBe('Paused')
+
+      if (f.other_login) {
+        await supervisor.accountChanging(origin)
+        const otherLogin = await fetch(origin + '/auth/password/login', {
+          method: 'POST', headers: { 'content-type': 'application/json', Origin: origin },
+          body: JSON.stringify({ login: f.other_login, password: f.password })
+        })
+        expect(otherLogin.status).toBe(200)
+        cookie = otherLogin.headers.getSetCookie().map(value => value.split(';')[0]).join('; ')
+        supervisor.accountChanged()
+        const otherIdentity = await options.identity()
+        expect(otherIdentity.userId).not.toBe(activeOwner.userId)
+        expect((await supervisor.statusFor(origin, otherIdentity)).state).toBe('Paused')
+        await expect(supervisor.enable(origin, folder, otherIdentity)).rejects.toThrow(/another account|folder binding/i)
+        expect(await fs.readFile(path.join(folder, name), 'utf8')).toBe('Web returned portable supervisor bytes\n')
+      }
     } finally {
       await supervisor.shutdown()
       await secondDevice.shutdown()
