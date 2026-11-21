@@ -120,6 +120,13 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
       await expect(page.getByText('Fixture', { exact: true })).toBeVisible({ timeout: 20_000 })
     }
     await expect(page.getByText('Preference off.', { exact: false })).toBeVisible({ timeout: 20_000 })
+    if (connected) {
+      await page.getByRole('button', { name: 'Request enablement', exact: true }).click()
+      await page.getByRole('button', { name: 'Confirm request', exact: true }).click()
+      await expect(page.getByText('Enablement requested.', { exact: false })).toBeVisible({ timeout: 20_000 })
+      await page.getByRole('button', { name: 'Turn preference off', exact: true }).click()
+      await expect(page.getByText('Preference off.', { exact: false })).toBeVisible({ timeout: 20_000 })
+    }
     await page.getByRole('button', { name: 'File Sync', exact: true }).click()
     await expect(page.getByText('No folder selected', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Close settings', exact: true }).click()
