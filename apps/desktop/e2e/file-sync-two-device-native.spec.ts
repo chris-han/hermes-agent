@@ -84,6 +84,7 @@ test('two Windows devices require separate File Sync consent and stop independen
     await expect.poll(() => read(second), { timeout: 40_000 }).toBe('Device B fixture bytes\n')
     await new Promise(resolve => setTimeout(resolve, 6500))
     expect(fs.existsSync(path.join(folders[0], second))).toBe(false)
+    expect((await a.page.evaluate(() => (window as any).hermesDesktop.connections.list())).primary).toBe('local')
     expect((await b.page.evaluate(() => (window as any).hermesDesktop.connections.list())).primary).toBe('local')
     await b.page.getByRole('button', { name: 'Pause', exact: true }).click()
     await expect(b.page.getByText('Paused', { exact: true })).toBeVisible()
