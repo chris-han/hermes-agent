@@ -82,11 +82,22 @@ def is_gateway_route(base_url: str) -> bool:
 def capture_agent_route(agent):
     """Retain the native task's credential/account route across later profile edits."""
     agent._semantier_cloud_settings = None
+    agent._semantier_credential_ref = None
     from gateway.session_host_runtime import host_cloud_route
-    if host_cloud_route(agent.base_url, agent.api_key) or is_gateway_route(str(agent.base_url or '')):
+    hosted = host_cloud_route(agent.base_url, agent.api_key)
+    if hosted or is_gateway_route(str(agent.base_url or '')):
         if not isinstance(agent.api_key,str) or not agent.api_key:
             raise ValueError('Cloud scoped credential required.')
         agent._semantier_cloud_settings = GatewaySettings(str(agent.base_url).rstrip('/'),agent.api_key)
+        if not hosted:
+            config = cloud_connection_config()
+            if config and config.get('credential_ref'):
+                from hermes_cli.cloud_device_client import credential, CloudCredentialError
+                import hmac
+                ref = config['credential_ref']
+                if not hmac.compare_digest(credential(ref, base_url=agent.base_url), agent.api_key):
+                    raise CloudCredentialError('Cloud account credential changed; reconnect.')
+                agent._semantier_credential_ref = ref
         from gateway.session_host_runtime import host_cloud_metadata
         metadata = host_cloud_metadata(agent.base_url, agent.api_key)
         if metadata is not None:
@@ -98,6 +109,12 @@ def agent_cloud_settings(agent):
     settings = getattr(agent,'_semantier_cloud_settings',None)
     if (isinstance(settings,GatewaySettings) and str(agent.base_url or '').rstrip('/') == settings.base_url
             and agent.api_key == settings.api_key):
+        ref = getattr(agent, '_semantier_credential_ref', None)
+        if ref:
+            from hermes_cli.cloud_device_client import credential, CloudCredentialError
+            import hmac
+            if not hmac.compare_digest(credential(ref, base_url=settings.base_url), settings.api_key):
+                raise CloudCredentialError('Cloud account credential changed; reconnect.')
         return settings
     return None
 

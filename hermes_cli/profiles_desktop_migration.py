@@ -18,7 +18,7 @@ from hermes_cli.backup_sqlite import _safe_copy_db
 from utils import atomic_write_bytes
 
 _LEGACY = 'semantier-local'
-_SKIP = {'gateway.pid', 'gateway.lock', '.cloud-device.lock'}
+_SKIP = {'gateway.pid', 'gateway.lock', '.cloud-device.lock', '.cloud-account-fence.bin', '.cloud-account-fence.lock'}
 _PROTECTED = {'.cloud-device.bin', '.semantier-feedback.bin'}
 
 

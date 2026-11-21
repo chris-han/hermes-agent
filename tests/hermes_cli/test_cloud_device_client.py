@@ -117,7 +117,9 @@ def test_account_preparation_ack_recovery_preserves_model(native, monkeypatch):
     started = device.start(prepare_only=True, expected_actor=ACTOR)
     with pytest.raises(ValueError, match='lost ack'):
         device.poll(started['session_id'])
-    assert device.start(prepare_only=True, expected_actor=ACTOR) == started
+    recovered = device.start(prepare_only=True, expected_actor=ACTOR)
+    assert recovered['session_id'] == started['session_id']
+    assert recovered['verification_url'] == started['verification_url']
     assert device.poll(started['session_id'])['status'] == 'approved'
     assert calls.count('intent-test/claim') == 1
     assert device._config()['model'] == before
@@ -172,6 +174,147 @@ def test_account_preparation_sends_expected_actor_and_rejects_missing_recovery_s
     assert (home/'config.yaml').read_bytes() == before
 
 
+def test_account_prepared_credential_requires_matching_device_fence(native, monkeypatch):
+    from hermes_cli import cloud_device_client as device
+    import hermes_constants
+    device, home = native
+    monkeypatch.setattr(hermes_constants, 'get_default_hermes_root', lambda **_: home)
+    calls = install_wire(device, monkeypatch)
+    started = device.start(prepare_only=True, expected_actor=ACTOR)
+    assert device.poll(started['session_id'])['status'] == 'approved'
+    base = 'http://127.0.0.1:8765/v1'
+    with pytest.raises(device.CloudConnectionError, match='account'):
+        device.credential('token-test', base_url=base)
+    blocked = device.status()
+    assert blocked['account_id'] is None and blocked['account_context_unavailable'] is True
+    assert blocked['reauthorization_required'] is False and 'readiness' not in calls
+    device.set_account_fence({'origin': 'http://127.0.0.1:8765', **ACTOR})
+    assert device.credential('token-test', base_url=base) == 'private-account-token'
+    device.set_account_fence(None)
+    with pytest.raises(device.CloudConnectionError, match='account'):
+        device.credential('token-test', base_url=base)
+    assert device.status()['readiness'] is None
+    device.set_account_fence({'origin': 'http://127.0.0.1:8765', **{**ACTOR, 'user_id': 'other-user'}})
+    with pytest.raises(device.CloudConnectionError, match='account'):
+        device.credential('token-test', base_url=base)
+
+
+def test_existing_manual_credential_is_suspended_without_deleting_it(native, monkeypatch):
+    import hermes_constants
+    device, home = native
+    monkeypatch.setattr(hermes_constants, 'get_default_hermes_root', lambda **_: home)
+    install_wire(device, monkeypatch)
+    started = device.start()
+    device.poll(started['session_id'])
+    base = 'http://127.0.0.1:8765/v1'
+    assert device.credential('token-test', base_url=base) == 'private-account-token'
+    original = device._read()['credentials']
+    device.set_account_fence(None)
+    with pytest.raises(device.CloudConnectionError, match='account'):
+        device.credential('token-test', base_url=base)
+    assert device._read()['credentials'] == original
+    device.set_account_fence({'origin': 'http://127.0.0.1:8765', **ACTOR})
+    with pytest.raises(device.CloudConnectionError, match='account'):
+        device.credential('token-test', base_url=base)
+
+
+def test_corrupt_account_fence_fails_closed(native, monkeypatch):
+    import hermes_constants
+    device, home = native
+    monkeypatch.setattr(hermes_constants, 'get_default_hermes_root', lambda **_: home)
+    install_wire(device, monkeypatch)
+    started = device.start()
+    device.poll(started['session_id'])
+    (home/'.cloud-account-fence.bin').write_bytes(b'not-protected')
+    with pytest.raises(device.CloudConnectionError, match='account'):
+        device.credential('token-test', base_url='http://127.0.0.1:8765/v1')
+
+
+def test_account_fence_local_api_is_authenticated_and_never_returns_credentials(native, monkeypatch):
+    import hermes_constants
+    from fastapi.testclient import TestClient
+    from hermes_cli.web_server import app, _SESSION_TOKEN
+    device, home = native
+    monkeypatch.setattr(hermes_constants, 'get_default_hermes_root', lambda **_: home)
+    client = TestClient(app)
+    path = '/api/providers/oauth/semantier-cloud/account-context'
+    assert client.put(path, json={'account': None}).status_code == 401
+    headers = {'X-Hermes-Session-Token': _SESSION_TOKEN}
+    response = client.put(path, headers=headers, json={'account': {'origin': 'http://127.0.0.1:8765', **ACTOR}})
+    assert response.status_code == 200 and response.json() == {'ok': True}
+    assert b'user-test' not in (home/'.cloud-account-fence.bin').read_bytes()
+    assert client.put(path, headers=headers, json={'account': None}).json() == {'ok': True}
+    assert device._read_account_fence()['account'] is None
+
+
+def test_account_fence_applies_across_local_profiles(native, monkeypatch):
+    import hermes_constants
+    from hermes_constants import set_hermes_home_override, reset_hermes_home_override
+    device, home = native
+    monkeypatch.setattr(hermes_constants, 'get_default_hermes_root', lambda **_: home)
+    install_wire(device, monkeypatch)
+    initial_config = (home/'config.yaml').read_text()
+    start = device.start(prepare_only=True, expected_actor=ACTOR)
+    device.poll(start['session_id'])
+    second = home/'profiles'/'second'
+    second.mkdir(parents=True)
+    (second/'config.yaml').write_text(initial_config)
+    token = set_hermes_home_override(str(second))
+    try:
+        start = device.start(prepare_only=True, expected_actor=ACTOR)
+        device.poll(start['session_id'])
+        device.set_account_fence({'origin': 'http://127.0.0.1:8765', **ACTOR})
+        assert device.credential('token-test', base_url='http://127.0.0.1:8765/v1') == 'private-account-token'
+        device.set_account_fence(None)
+        with pytest.raises(device.CloudConnectionError, match='account'):
+            device.credential('token-test', base_url='http://127.0.0.1:8765/v1')
+    finally:
+        reset_hermes_home_override(token)
+    with pytest.raises(device.CloudConnectionError, match='account'):
+        device.credential('token-test', base_url='http://127.0.0.1:8765/v1')
+
+
+def test_account_switch_during_readiness_does_not_publish_old_account(native, monkeypatch):
+    import hermes_constants
+    device, home = native
+    monkeypatch.setattr(hermes_constants, 'get_default_hermes_root', lambda **_: home)
+    install_wire(device, monkeypatch)
+    started = device.start(prepare_only=True, expected_actor=ACTOR)
+    device.poll(started['session_id'])
+    device.set_account_fence({'origin': 'http://127.0.0.1:8765', **ACTOR})
+    state = device._read()
+    state.pop('next_readiness', None)
+    device._write(state)
+    original = device._wire
+    def wire(origin, operation, body=None, bearer=None):
+        if operation == 'readiness':
+            device.set_account_fence(None)
+            return {'account_id': 'account-test', 'currency': 'CNY', 'catalog': {'data': ['old-account-model']}}
+        return original(origin, operation, body, bearer)
+    monkeypatch.setattr(device, '_wire', wire)
+    result = device.status()
+    assert result['account_context_unavailable'] is True
+    assert result['account_id'] is None and result['readiness'] is None
+
+
+def test_captured_agent_route_rechecks_account_fence_before_later_requests(native, monkeypatch):
+    import hermes_constants
+    from types import SimpleNamespace
+    from agent import semantier_gateway
+    device, home = native
+    monkeypatch.setattr(hermes_constants, 'get_default_hermes_root', lambda **_: home)
+    install_wire(device, monkeypatch)
+    started = device.start(prepare_only=True, expected_actor=ACTOR)
+    device.poll(started['session_id'])
+    device.set_account_fence({'origin': 'http://127.0.0.1:8765', **ACTOR})
+    agent = SimpleNamespace(base_url='http://127.0.0.1:8765/v1', api_key='private-account-token')
+    semantier_gateway.capture_agent_route(agent)
+    assert semantier_gateway.agent_cloud_settings(agent).api_key == agent.api_key
+    device.set_account_fence(None)
+    with pytest.raises(device.CloudConnectionError, match='account'):
+        semantier_gateway.agent_cloud_settings(agent)
+
+
 def test_cancel_persists_terminal_before_lost_remote_reply(native, monkeypatch):
     device, _ = native
     monkeypatch.setattr(device, '_wire', lambda origin, operation, body=None, bearer=None: {
@@ -213,7 +356,7 @@ def install_wire(device, monkeypatch, *, ack_lost=False):
             status, data = 'approved', binding
         elif operation.endswith('/claim'):
             status = 'claimed'
-            data = {**binding, **ACTOR, 'claim_id':state['claim_id'],
+            data = {**binding, 'organization_id':'org-test', 'claim_id':state['claim_id'],
                 'credential':{'token_id':'token-test','secret':'private-account-token',
                               'expires_at':'2099-02-01T00:00:00+00:00'},
                 'inference_origin':origin,'billing_origin':origin,
@@ -221,6 +364,8 @@ def install_wire(device, monkeypatch, *, ack_lost=False):
                 'readiness_path':'/api/cloud-provider/device/readiness',
                 'installation_expires_at':'2099-01-01T00:00:00+00:00',
                 'renewal':'reauthorization_required'}
+            if state.get('prepare_only'):
+                data.update(ACTOR)
         elif operation.endswith('/ack'):
             if ack_lost and calls.count(operation) == 1:
                 raise ValueError('lost ack')
@@ -404,6 +549,8 @@ def test_scope_export_classifies_native_proof_and_credential_store_private():
     from hermes_cli.profiles import profile_path_is_private
     assert profile_path_is_private(('.cloud-device.bin',))
     assert profile_path_is_private(('.cloud-device.lock',))
+    assert profile_path_is_private(('.cloud-account-fence.bin',))
+    assert profile_path_is_private(('.cloud-account-fence.lock',))
 
 
 def test_runtime_and_auxiliary_resolve_protected_reference_only_for_approved_endpoint(native,monkeypatch):

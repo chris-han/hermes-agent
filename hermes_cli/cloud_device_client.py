@@ -23,6 +23,7 @@ CONTRACT = 'semantier-cloud-device-connection/v1'
 _TERMINAL = {'denied', 'expired', 'cancelled', 'revoked'}
 _THREAD_LOCK = threading.RLock()
 _LOCK_HOLDER = threading.local()
+_ACCOUNT_FENCE_LOCK_HOLDER = threading.local()
 
 
 # Canonical public service, also linked by the provider catalog. An explicit
@@ -182,6 +183,70 @@ def _write(state):
     from utils import atomic_write_bytes
     state['home'] = str(get_hermes_home().resolve())
     atomic_write_bytes(_path(), _protect(json.dumps(state).encode()), mode=0o600, fsync_dir=True)
+
+
+def _account_fence_path():
+    """A protected device-local restriction shared across this owner's profiles."""
+    from hermes_constants import get_default_hermes_root
+    root = get_default_hermes_root()
+    if not root.is_dir() or root.is_symlink() or getattr(root, 'is_junction', lambda: False)():
+        raise CloudConnectionError('cloud_account_context_unavailable', 'Cloud account context is unavailable.', 503)
+    path = root / '.cloud-account-fence.bin'
+    if path.is_symlink() or getattr(path, 'is_junction', lambda: False)():
+        raise CloudConnectionError('cloud_account_context_unavailable', 'Cloud account context is unavailable.', 503)
+    return path
+
+
+def _normalize_account_fence(account):
+    fields = {'origin', 'user_id', 'workspace_id', 'organization_id'}
+    if not isinstance(account, dict) or set(account) != fields:
+        raise CloudConnectionError('cloud_account_context_unavailable', 'Cloud account context is unavailable.', 409)
+    if any(not isinstance(account[k], str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,128}', account[k]) for k in fields - {'origin'}):
+        raise CloudConnectionError('cloud_account_context_unavailable', 'Cloud account context is unavailable.', 409)
+    return {'origin': _origin(account['origin']), **{key: account[key] for key in ('user_id', 'workspace_id', 'organization_id')}}
+
+
+def set_account_fence(account):
+    """Restrict future use; this device preference never grants server authority."""
+    from hermes_cli.auth import _file_lock
+    from utils import atomic_write_bytes
+    value = None if account is None else _normalize_account_fence(account)
+    path = _account_fence_path()
+    lock_path = path.with_suffix('.lock')
+    if lock_path.is_symlink() or getattr(lock_path, 'is_junction', lambda: False)():
+        raise CloudConnectionError('cloud_account_context_unavailable', 'Cloud account context is unavailable.', 503)
+    with _THREAD_LOCK, _file_lock(lock_path, _ACCOUNT_FENCE_LOCK_HOLDER, 10, 'Account context is busy; retry.'):
+        _account_fence_path()
+        atomic_write_bytes(path, _protect(json.dumps({'version': 1, 'account': value}).encode()), mode=0o600, fsync_dir=True)
+    return {'ok': True}
+
+
+def _read_account_fence():
+    path = _account_fence_path()
+    if not path.exists():
+        return None
+    try:
+        if path.stat().st_size > 16384:
+            raise ValueError('oversized')
+        value = json.loads(_unprotect(path.read_bytes()))
+        if not isinstance(value, dict) or set(value) != {'version', 'account'} or value['version'] != 1:
+            raise ValueError('invalid')
+        if value['account'] is not None:
+            value['account'] = _normalize_account_fence(value['account'])
+        return value
+    except Exception as exc:
+        raise CloudConnectionError('cloud_account_context_unavailable', 'Cloud account context is unavailable.', 503) from exc
+
+
+def _require_account_fence(data):
+    fence = _read_account_fence()
+    bound = bool(data.get('user_id') or data.get('workspace_id'))
+    if fence is None and not bound:
+        return  # Existing standalone manual credentials retain their prior behavior.
+    selected = fence and fence['account']
+    if (not selected or not bound or any(data.get(key) != selected[key] for key in ('user_id', 'workspace_id', 'organization_id'))
+            or _origin(data.get('inference_origin')) != selected['origin']):
+        raise CloudConnectionError('cloud_account_context_unavailable', 'Cloud account context does not match this credential.', 409)
 
 
 def _time(value):
@@ -597,7 +662,9 @@ def _refresh_readiness(state):
     state['next_readiness'] = _after(30)
     try:
         data = state['credentials'][state['credential_ref']]
+        _require_account_fence(data)
         readiness = _wire(state['origin'],'readiness',bearer=data['credential']['secret'])
+        _require_account_fence(data)
         if readiness.get('account_id') != state['account_id'] or readiness.get('currency') != state['currency']:
             raise CloudConnectionError('cloud_profile_mismatch', 'Cloud readiness account mismatch.', 409, recovery='original_profile')
         state['readiness'] = {key:readiness.get(key) for key in (
@@ -619,21 +686,38 @@ def credential(ref, *, base_url):
             raise CloudCredentialError('Cloud credential unavailable or expired; reauthorize.')
         if _origin(base_url) != _origin(data['inference_origin']) or urlsplit(base_url).path != '/v1':
             raise CloudConnectionError('cloud_profile_mismatch', 'Protected Cloud credential cannot be sent to another endpoint.', 409, recovery='original_profile')
+        _require_account_fence(data)
         return data['credential']['secret']
 
 
 def status():
     with _locked():
         state = _read()
-        if state.get('status') == 'approved':
-            _refresh_readiness(state)
-            _write(state)
         ref = state.get('credential_ref')
         installed = state.get('credentials',{}).get(ref)
         usable = bool(installed and _time(installed['credential']['expires_at']) > _now())
+        context_blocked = False
+        if usable:
+            try:
+                _require_account_fence(installed)
+            except CloudConnectionError:
+                usable = False
+                context_blocked = True
+        if state.get('status') == 'approved' and usable:
+            _refresh_readiness(state)
+            _write(state)
+            usable = ref in state.get('credentials', {}) and state.get('status') != 'revoked'
+            if usable:
+                try:
+                    _require_account_fence(installed)
+                except CloudConnectionError:
+                    usable = False
+                    context_blocked = True
         return {'logged_in':bool(state.get('status') == 'approved' and usable), 'source':'semantier-cloud',
-                'account_id':state.get('account_id'), 'expires_at':installed['credential']['expires_at'] if installed else None,
-                'readiness':state.get('readiness'), 'reauthorization_required':not usable or state.get('status') == 'revoked'}
+                'account_id':state.get('account_id') if usable else None, 'expires_at':installed['credential']['expires_at'] if usable else None,
+                'readiness':state.get('readiness') if usable else None,
+                'account_context_unavailable':context_blocked,
+                'reauthorization_required':not context_blocked and (not usable or state.get('status') == 'revoked')}
 
 
 def disconnect():

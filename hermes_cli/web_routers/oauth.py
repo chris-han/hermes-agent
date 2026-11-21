@@ -864,6 +864,23 @@ async def _cloud_poll(profile, session_id, operation_id):
     return await asyncio.shield(task)
 
 
+@router.put("/api/providers/oauth/semantier-cloud/account-context")
+async def set_cloud_account_context(request: Request, profile: Optional[str] = None):
+    """Restrict local device credential use without granting or revoking authority."""
+    _require_token(request)
+    _validate_oauth_profile(profile)
+    raw = await request.body()
+    if len(raw) > 8192:
+        raise HTTPException(413, "Account scope too large.")
+    try:
+        value = await request.json()
+    except ValueError as exc:
+        raise HTTPException(422, "Account scope required.") from exc
+    if not isinstance(value, dict) or set(value) != {'account'}:
+        raise HTTPException(422, "Account scope required.")
+    return await _cloud_device_request(profile, 'set_account_fence', value['account'])
+
+
 @router.post("/api/providers/oauth/{provider_id}/start")
 async def start_oauth_login(provider_id: str, request: Request, profile: Optional[str] = None, account_prepare: bool = False):
     """Initiate an OAuth login flow. Token-protected."""
