@@ -8,12 +8,13 @@ import { expect, it, vi } from 'vitest'
 
 const mock = vi.hoisted(() => ({
   handlers: new Map<string, (...args: any[]) => any>(), root: '', folder: '',
-  client: null as any, seal: (_value: string) => Buffer.alloc(0)
+  client: null as any, seal: (_value: string) => Buffer.alloc(0),
+  picker: async () => ({ canceled: false, filePaths: [mock.folder] })
 }))
 vi.mock('electron', () => ({
   app: { isPackaged: false, getAppPath: () => mock.root, getPath: () => mock.root, getLocale: () => 'en' },
   ipcMain: { handle: (name: string, handler: any) => mock.handlers.set(name, handler) },
-  dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: [mock.folder] }),
+  dialog: { showOpenDialog: () => mock.picker(),
     showMessageBox: async () => ({ response: 1 }) },
   safeStorage: { isEncryptionAvailable: () => true, getSelectedStorageBackend: () => 'secret_service',
     encryptString: (value: string) => mock.seal(value) }
@@ -57,6 +58,29 @@ it.skipIf(!fixture)('uses Desktop File Sync IPC with real account and FileX owne
   try {
     expect(await invoke('status')).toEqual({ state: 'Paused' })
     expect(await supervisor.owners()).toEqual([])
+    const ownerA = account
+    let pickerOpened!: () => void
+    let finishPicker!: (value: { canceled: boolean; filePaths: string[] }) => void
+    const opened = new Promise<void>(resolve => {pickerOpened = resolve})
+    mock.picker = () => new Promise(resolve => {finishPicker = resolve; pickerOpened()})
+    const pendingChoice = invoke('choose')
+    const rejectedChoice = expect(pendingChoice).rejects.toThrow(/account changed/i)
+    await opened
+    await supervisor.accountChanging(origin)
+    await login(f.other_login)
+    const switched = await mock.client.identity()
+    account = { origin, scope: { userId: switched.user.user_id, workspaceId: switched.workspace.id,
+      organizationId: switched.organization_id } }
+    supervisor.accountChanged()
+    finishPicker({ canceled: false, filePaths: [mock.folder] })
+    await rejectedChoice
+    expect(await supervisor.owners()).toEqual([])
+    expect(await fs.readdir(mock.folder)).toEqual([])
+    await supervisor.accountChanging(origin)
+    await login(f.login)
+    account = ownerA
+    supervisor.accountChanged()
+    mock.picker = async () => ({ canceled: false, filePaths: [mock.folder] })
     expect(await invoke('choose')).toMatchObject({ folder: mock.folder })
     const filename = 'ipc-upload-' + randomUUID() + '.md'
     await fs.writeFile(path.join(mock.folder, filename), 'IPC fixture bytes\n')
