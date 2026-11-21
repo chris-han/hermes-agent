@@ -16,7 +16,7 @@ function fixture() {
   const modelRecommendations = vi.fn(async () => ({ recommended_model: 'preferred' }))
   const fence = vi.fn(async (_account: Record<string, string> | null) => {})
   const native = vi.fn<(path: string, method?: string, body?: unknown) => Promise<any>>(async path => {
-    if (path === '/api/providers/oauth') {return { providers: [{ id: 'semantier-cloud', status: { logged_in: false } }] }}
+    if (path === '/api/providers/oauth/semantier-cloud/status?refresh=true') {return { logged_in: false }}
     if (path.includes('/start?')) {return { session_id: 'cloud-session', verification_url: 'https://cloud.example/billing/connect?intent_ref=dci_test' }}
     if (path.includes('/approval-attempt/')) {return { first: true }}
     if (path.includes('/poll/')) {return { status: 'approved', readiness: { account_provisioning: { inference_ready: true }, catalog: { status: 'available', data: [{ id: 'eligible' }] } } }}
@@ -66,6 +66,7 @@ describe('account model preparation', () => {
   it('uses the selected account and the native device flow without changing the agent runtime', async () => {
     const f = fixture()
     expect(await f.owner.prepare(account)).toBe('ready')
+    expect(f.native).toHaveBeenCalledWith('/api/providers/oauth/semantier-cloud/status?refresh=true')
     expect(f.approve).toHaveBeenCalledWith('dci_test')
     expect(f.native).toHaveBeenCalledWith('/api/providers/oauth/semantier-cloud/start?account_prepare=true', 'POST', {
       expected_actor: { user_id: 'user-a', workspace_id: 'workspace-a', organization_id: 'org-a' }, origin: 'https://cloud.example'
@@ -77,7 +78,7 @@ describe('account model preparation', () => {
     const f = fixture()
     f.native.mockImplementation(async (path: string) => path.includes('/start?')
       ? { session_id: 'cloud-session', verification_url: 'https://foreign.example/billing/connect?intent_ref=dci_test' }
-      : path === '/api/providers/oauth' ? { providers: [] } : { ok: true })
+      : path === '/api/providers/oauth/semantier-cloud/status?refresh=true' ? { logged_in: false } : { ok: true })
     await expect(f.owner.prepare(account)).rejects.toThrow('origin')
     expect(f.approve).not.toHaveBeenCalled()
   })

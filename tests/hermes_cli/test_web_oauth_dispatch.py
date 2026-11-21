@@ -790,3 +790,14 @@ def test_dashboard_poller_saves_only_into_the_profile_the_login_started_in(tmp_p
         _web_server_oauth._oauth_sessions.pop(sid, None)
 
     assert saved_into == ([] if event == "cancel" else [str(coder_home)])
+
+
+def test_cloud_device_refresh_status_requires_native_session(monkeypatch):
+    from hermes_cli import cloud_device_client
+    calls = []
+    monkeypatch.setattr(cloud_device_client, 'status', lambda force_refresh=False: calls.append(force_refresh) or {'logged_in': False})
+    denied = client.get('/api/providers/oauth/semantier-cloud/status?refresh=true')
+    assert denied.status_code == 401 and calls == []
+    allowed = client.get('/api/providers/oauth/semantier-cloud/status?refresh=true', headers=HEADERS)
+    assert allowed.status_code == 200 and allowed.json() == {'logged_in': False}
+    assert calls == [True]

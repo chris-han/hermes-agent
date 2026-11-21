@@ -699,8 +699,8 @@ def _ack(state):
     return _public(state)
 
 
-def _refresh_readiness(state):
-    if state.get('next_readiness') and _now() < _time(state['next_readiness']):
+def _refresh_readiness(state, *, force=False):
+    if not force and state.get('next_readiness') and _now() < _time(state['next_readiness']):
         return
     state['next_readiness'] = _after(30)
     try:
@@ -733,7 +733,7 @@ def credential(ref, *, base_url):
         return data['credential']['secret']
 
 
-def status():
+def status(force_refresh=False):
     with _locked():
         state = _read()
         ref = state.get('credential_ref')
@@ -747,7 +747,7 @@ def status():
                 usable = False
                 context_blocked = True
         if state.get('status') == 'approved' and usable:
-            _refresh_readiness(state)
+            _refresh_readiness(state, force=force_refresh)
             _write(state)
             usable = ref in state.get('credentials', {}) and state.get('status') != 'revoked'
             if usable:

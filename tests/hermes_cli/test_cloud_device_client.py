@@ -960,3 +960,28 @@ def test_settings_can_return_to_installed_cloud_from_byok(native, monkeypatch):
     assert saved['providers']['semantier-cloud']['credential_ref'] == 'token-test'
     assert not {'api_key', 'key_env', 'api_key_env'} & saved['model'].keys()
     assert 'private-account-token' not in (home / 'config.yaml').read_text()
+
+
+def test_explicit_readiness_refresh_detects_revocation_inside_cache(native, monkeypatch):
+    import hermes_constants
+    device, home = native
+    monkeypatch.setattr(hermes_constants, 'get_default_hermes_root', lambda **_: home)
+    calls = install_wire(device, monkeypatch)
+    started = device.start(prepare_only=True, expected_actor=ACTOR, expected_origin=ACCOUNT_ORIGIN)
+    device.poll(started['session_id'])
+    device.set_account_fence({'origin': ACCOUNT_ORIGIN, **ACTOR})
+    assert device.status()['logged_in'] is True
+    before = calls.count('readiness')
+    original = device._wire
+    def expired(origin, operation, body=None, bearer=None):
+        if operation == 'readiness':
+            calls.append('readiness')
+            raise device.CloudDeviceError(401)
+        return original(origin, operation, body, bearer)
+    monkeypatch.setattr(device, '_wire', expired)
+    assert device.status()['logged_in'] is True
+    assert calls.count('readiness') == before
+    refreshed = device.status(force_refresh=True)
+    assert refreshed['logged_in'] is False
+    assert refreshed['reauthorization_required'] is True
+    assert calls.count('readiness') == before + 1

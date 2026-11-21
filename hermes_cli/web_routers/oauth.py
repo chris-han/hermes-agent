@@ -881,6 +881,14 @@ async def set_cloud_account_context(request: Request, profile: Optional[str] = N
     return await _cloud_device_request(profile, 'set_account_fence', value['account'])
 
 
+@router.get("/api/providers/oauth/semantier-cloud/status")
+async def cloud_device_status(request: Request, refresh: bool = False, profile: Optional[str] = None):
+    """Read the selected profile's device status; explicit refresh bypasses its readiness cache."""
+    _require_token(request)
+    _validate_oauth_profile(profile)
+    return await _cloud_device_request(profile, 'status', refresh)
+
+
 @router.get("/api/providers/oauth/semantier-cloud/account-default-eligibility")
 async def cloud_account_default_eligibility(request: Request, profile: Optional[str] = None):
     _require_token(request)

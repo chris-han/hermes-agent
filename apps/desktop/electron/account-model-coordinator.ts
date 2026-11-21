@@ -95,9 +95,8 @@ export class AccountModelCoordinator {
       await this.options.fence({ origin, ...expected })
     })
     await current()
-    const providers = await this.options.native('/api/providers/oauth')
+    const status = await this.options.native('/api/providers/oauth/semantier-cloud/status?refresh=true')
     await current()
-    const status = providers?.providers?.find((item: any) => item.id === 'semantier-cloud')?.status
     if (status?.logged_in) {return this.ready(status.readiness)}
 
     const started = await this.options.native('/api/providers/oauth/semantier-cloud/start?account_prepare=true', 'POST', { expected_actor: expected, origin })
