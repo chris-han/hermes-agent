@@ -201,6 +201,16 @@ it.skipIf(!fixture)(
       expect((await secondDevice.statusFor(origin, await options.identity())).state).toBe('Paused')
 
       if (f.other_login) {
+        const gate = async (action?: string) => {
+          const response = await request('/__fixture/filex-gate', action ? { method: 'POST',
+            headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action }) } : undefined)
+          expect(response.status).toBe(200)
+          return response.json()
+        }
+        await gate('arm')
+        const inFlight = 'in-flight-' + randomUUID() + '.md'
+        await fs.writeFile(path.join(folder, inFlight), 'Owner A upload already in flight\n')
+        await expect.poll(async () => (await gate()).entered, { timeout: 20000 }).toBe(true)
         await supervisor.accountChanging(origin)
         const heldAfterSwitch = 'account-switch-paused-' + randomUUID() + '.md'
         await fs.writeFile(path.join(folder, heldAfterSwitch), 'Held until account A resumes\n')
@@ -212,6 +222,8 @@ it.skipIf(!fixture)(
         expect(otherLogin.status).toBe(200)
         cookie = otherLogin.headers.getSetCookie().map(value => value.split(';')[0]).join('; ')
         supervisor.accountChanged()
+        await gate('release')
+        await expect.poll(async () => (await gate()).finished, { timeout: 15000 }).toBe(true)
         const otherIdentity = await options.identity()
         expect(otherIdentity.userId).not.toBe(activeOwner.userId)
         expect(await readWinman()).toMatchObject({ desired: { enabled: false }, execution: 'unavailable' })
@@ -235,12 +247,27 @@ it.skipIf(!fixture)(
         expect(await supervisor.statusFor(origin, otherIdentity)).toEqual({ state: 'Paused' })
         await expect(supervisor.enable(origin, folder, otherIdentity)).rejects.toThrow(/another account|folder binding/i)
         expect(await fs.readFile(path.join(folder, name), 'utf8')).toBe('Web returned portable supervisor bytes\n')
+        const otherBinding = await fetch(origin + '/api/file-sync/binding', { method: 'POST', headers: { cookie,
+          Origin: origin, 'x-semantier-csrf': '1', 'X-Semantier-User-Id': otherIdentity.userId,
+          'X-Semantier-Workspace-Id': otherIdentity.workspaceId } })
+        expect(otherBinding.status).toBe(200)
+        const otherFiles = await fetch(origin + '/api/file-sync/files', { headers: { cookie,
+          'X-Semantier-User-Id': otherIdentity.userId, 'X-Semantier-Workspace-Id': otherIdentity.workspaceId } })
+        expect(otherFiles.status, await otherFiles.clone().text()).toBe(200)
+        expect((await otherFiles.json()).files.map((file: { name: string }) => file.name)).not.toContain(inFlight)
         // Observe longer than the real engine's five-second watch interval.
         await new Promise(resolve => setTimeout(resolve, 6200))
         const ownerFiles = await fetch(origin + '/api/file-sync/files', { headers: { cookie: secondCookie,
           'X-Semantier-User-Id': selected.userId, 'X-Semantier-Workspace-Id': selected.workspaceId } })
         expect(ownerFiles.status).toBe(200)
         expect((await ownerFiles.json()).files.map((file: { name: string }) => file.name)).not.toContain(heldAfterSwitch)
+        const gateOutcome = await gate()
+        if (gateOutcome.kind === 'direct' && gateOutcome.status >= 200 && gateOutcome.status < 300) {
+          const committed = await fetch(origin + '/api/file-sync/files?download=true&path=' + inFlight, { headers: {
+            cookie: secondCookie, 'X-Semantier-User-Id': selected.userId, 'X-Semantier-Workspace-Id': selected.workspaceId } })
+          expect(committed.status).toBe(206)
+          expect(await committed.text()).toBe('Owner A upload already in flight\n')
+        }
         await supervisor.accountChanging(origin)
         cookie = secondCookie
         supervisor.accountChanged()
