@@ -166,7 +166,7 @@ it.skipIf(!fixture)(
         supervisor.accountChanged()
         const otherIdentity = await options.identity()
         expect(otherIdentity.userId).not.toBe(activeOwner.userId)
-        expect((await supervisor.statusFor(origin, otherIdentity)).state).toBe('Paused')
+        expect(await supervisor.statusFor(origin, otherIdentity)).toEqual({ state: 'Paused' })
         await expect(supervisor.enable(origin, folder, otherIdentity)).rejects.toThrow(/another account|folder binding/i)
         expect(await fs.readFile(path.join(folder, name), 'utf8')).toBe('Web returned portable supervisor bytes\n')
       }
