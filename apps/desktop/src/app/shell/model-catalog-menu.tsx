@@ -245,6 +245,25 @@ export function ModelCatalogMenu({
   useEffect(() => {
     if (ownerKey) {void refreshModelsOnConnectionReady(ownerConnectionId ?? connection?.connectionId ?? null, profile, connection)}
   }, [connection, ownerConnectionId, ownerKey, profile])
+  useEffect(() => {
+    if (connection?.mode !== 'local' || profile !== 'default' ||
+        (ownerConnectionId && ownerConnectionId !== connection.connectionId)) {return}
+
+    const api = window.hermesDesktop?.workspace
+    let live = true
+    let updates = 0
+
+    const refresh = (state: { state: string }) => {
+      if (live && state.state === 'ready') {
+        void refreshModelsOnConnectionReady(ownerConnectionId ?? connection.connectionId ?? null, profile, connection, true)
+      }
+    }
+
+    const unsubscribe = api?.onModelStatus?.(state => {updates++; refresh(state)})
+    void api?.modelStatus?.().then(state => {if (updates === 0) {refresh(state)}}).catch(() => {})
+
+    return () => {live = false; unsubscribe?.()}
+  }, [connection, ownerConnectionId, profile])
   const closeMenu = useContext(ModelMenuCloseContext)
   const [search, setSearch] = useState<string>('')
   // "Add custom model…" turns the search box into slug entry: the catalog

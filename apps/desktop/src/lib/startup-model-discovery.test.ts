@@ -22,6 +22,28 @@ beforeEach(() => {
 })
 
 describe('connection-ready model discovery', () => {
+  it('refreshes the local catalog after account model preparation succeeds', async () => {
+    const { refreshModelsOnConnectionReady } = await import('./startup-model-discovery')
+    await refreshModelsOnConnectionReady('local', 'default', { baseUrl: 'http://127.0.0.1', mode: 'local' })
+    await refreshModelsOnConnectionReady('local', 'default', { baseUrl: 'http://127.0.0.1', mode: 'local' }, true)
+    expect(requestModelOptions).toHaveBeenCalledTimes(2)
+    expect(requestModelOptions.mock.calls[1][0]).toMatchObject({ queryScope: 'local', profile: 'default', refresh: true })
+  })
+
+  it('waits for older discovery to settle before refreshing an authorized account', async () => {
+    let release!: (value: unknown) => void
+    requestModelOptions.mockImplementationOnce(() => new Promise(resolve => {release = resolve}))
+    const { refreshModelsOnConnectionReady } = await import('./startup-model-discovery')
+    const connection = { baseUrl: 'http://127.0.0.1', mode: 'local' as const }
+    const first = refreshModelsOnConnectionReady('local', 'default', connection)
+    await vi.waitFor(() => expect(requestModelOptions).toHaveBeenCalledTimes(1))
+    const next = refreshModelsOnConnectionReady('local', 'default', connection, true)
+    await Promise.resolve()
+    expect(requestModelOptions).toHaveBeenCalledTimes(1)
+    release({ discovery_contract: 'provider-query-v1', providers: [] })
+    await Promise.all([first, next])
+    expect(requestModelOptions).toHaveBeenCalledTimes(2)
+  })
   it('refreshes each connection and profile only once without blocking readiness', async () => {
     let release!: (value: unknown) => void
     requestModelOptions.mockImplementationOnce(() => new Promise(resolve => { release = resolve }))

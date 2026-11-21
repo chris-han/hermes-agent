@@ -27,7 +27,7 @@ import {
   setModelVisibilityOpen,
   setVisibleModels
 } from '@/store/model-visibility'
-import { $defaultReasoningEffort } from '@/store/session'
+import { $connection, $defaultReasoningEffort } from '@/store/session'
 
 import { ModelCatalogMenu, ModelMenuCloseContext, type ModelMenuController } from './model-catalog-menu'
 import { MODEL_MENU_ROW_AREA, type ModelMenuRowContribution } from './model-menu-row-decorations'
@@ -72,7 +72,48 @@ afterEach(() => {
   // The backend mock echoes this snapshot; retire fixture jobs before jsdom
   // disappears so an in-flight app-level poll cannot schedule another tick.
   $defaultReasoningEffort.set('')
+  $connection.set(null)
   vi.clearAllMocks()
+})
+
+it('refreshes local default-profile discovery when account model preparation is ready', async () => {
+  const original = Object.getOwnPropertyDescriptor(window, 'hermesDesktop')
+  const connection = { mode: 'local', baseUrl: 'http://127.0.0.1', connectionId: 'test' }
+  const unsubscribe = vi.fn()
+  const onModelStatus = vi.fn(() => unsubscribe)
+  Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: { workspace: {
+    modelStatus: vi.fn(async () => ({ state: 'ready' })), onModelStatus
+  } } })
+
+  try {
+    $connection.set(connection as never)
+    renderMenu()
+    await waitFor(() => expect(refreshModelsOnConnectionReady).toHaveBeenCalledWith('test', 'default', connection, true))
+  } finally {
+    cleanup()
+
+    if (original) {Object.defineProperty(window, 'hermesDesktop', original)} else {delete (window as { hermesDesktop?: unknown }).hermesDesktop}
+  }
+
+  expect(unsubscribe).toHaveBeenCalled()
+})
+
+it('does not refresh a remote catalog from local account model status', async () => {
+  const original = Object.getOwnPropertyDescriptor(window, 'hermesDesktop')
+  Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: { workspace: {
+    modelStatus: vi.fn(async () => ({ state: 'ready' })), onModelStatus: vi.fn(() => () => {})
+  } } })
+
+  try {
+    $connection.set({ mode: 'remote', baseUrl: 'https://remote.example', connectionId: 'remote' } as never)
+    renderMenu()
+    await waitFor(() => expect(refreshModelsOnConnectionReady).toHaveBeenCalled())
+    expect(vi.mocked(refreshModelsOnConnectionReady).mock.calls.every(args => args[3] !== true)).toBe(true)
+  } finally {
+    cleanup()
+
+    if (original) {Object.defineProperty(window, 'hermesDesktop', original)} else {delete (window as { hermesDesktop?: unknown }).hermesDesktop}
+  }
 })
 
 describe('model menu row decorations (MODEL_MENU_ROW_AREA)', () => {

@@ -8,11 +8,13 @@ import { $connection } from '@/store/session'
 // One bounded provider refresh per source/profile per renderer launch. Reconnects
 // do not repeat it; the explicit refresh action remains available after failure.
 const started = new Set<string>()
+const pending = new Map<string, Promise<void>>()
 
 export async function refreshModelsOnConnectionReady(
   connectionId: null | string,
   profile: string,
-  connection?: DiscoveryConnection | null
+  connection?: DiscoveryConnection | null,
+  force = false
 ): Promise<void> {
   let source: string
 
@@ -26,40 +28,56 @@ export async function refreshModelsOnConnectionReady(
   const ownerKey = modelDiscoveryOwnerKey(connectionId, connection)
   const launchKey = JSON.stringify([source, profileKey])
 
-  if (started.has(launchKey)) {return}
+  const active = pending.get(launchKey)
+
+  if (active) {
+    if (!force) {return}
+    await active
+
+    return refreshModelsOnConnectionReady(connectionId, profile, connection, true)
+  }
+
+  if (started.has(launchKey) && !force) {return}
   started.add(launchKey)
 
-  if (ownerKey) {setModelDiscoveryRefreshing(ownerKey, profileKey, true)}
+  const run = async () => {
+    if (ownerKey) {setModelDiscoveryRefreshing(ownerKey, profileKey, true)}
 
-  try {
-    if (connection?.transport === 'semantier-workspace-http') {
-      await requestDiscoveredModelOptions({connection,ownerConnectionId:connectionId,profile:profileKey,refresh:true})
-    } else {
-    await requestModelOptions({
-      profile: profileKey,
-      queryOnly: true,
-      queryScope: source,
-      refresh: true,
-      request: <T>(method: string, params?: Record<string, unknown>) =>
-        requestGatewayForAgent<T>(connectionId, profileKey, method, params)
-    })
-    }
-
-    const activeSource = await modelDiscoveryScope(activeGatewayConnectionId(), $connection.get()).catch(() => null)
-    await queryClient.invalidateQueries({
-      predicate: query => {
-        const key = query.queryKey
-
-        if (key[0] !== 'model-options' || key[1] !== profileKey) {return false}
-
-        if (key[3] === 'owner') {return key[4] === ownerKey}
-
-        return activeSource === source
+    try {
+      if (connection?.transport === 'semantier-workspace-http') {
+        await requestDiscoveredModelOptions({connection,ownerConnectionId:connectionId,profile:profileKey,refresh:true})
+      } else {
+        await requestModelOptions({
+          profile: profileKey,
+          queryOnly: true,
+          queryScope: source,
+          refresh: true,
+          request: <T>(method: string, params?: Record<string, unknown>) =>
+            requestGatewayForAgent<T>(connectionId, profileKey, method, params)
+        })
       }
-    })
-  } catch {
-    // Startup must remain usable offline; a manual refresh can retry later.
-  } finally {
-    if (ownerKey) {setModelDiscoveryRefreshing(ownerKey, profileKey, false)}
+
+      const activeSource = await modelDiscoveryScope(activeGatewayConnectionId(), $connection.get()).catch(() => null)
+      await queryClient.invalidateQueries({
+        predicate: query => {
+          const key = query.queryKey
+
+          if (key[0] !== 'model-options' || key[1] !== profileKey) {return false}
+
+          if (key[3] === 'owner') {return key[4] === ownerKey}
+
+          return activeSource === source
+        }
+      })
+    } catch {
+      // Startup must remain usable offline; a manual refresh can retry later.
+    } finally {
+      if (ownerKey) {setModelDiscoveryRefreshing(ownerKey, profileKey, false)}
+    }
   }
+
+  const task = run()
+  pending.set(launchKey, task)
+
+  try {await task} finally {if (pending.get(launchKey) === task) {pending.delete(launchKey)}}
 }
