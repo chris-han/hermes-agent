@@ -1,5 +1,6 @@
 """Exercise the embedded Setup against native Framework and local fixtures."""
 import os
+import shutil
 import subprocess
 import zipfile
 from pathlib import Path
@@ -71,6 +72,18 @@ class SetupContractTests {
       BootstrapperWinHttp.Download(requests,new Uri("https://assets.semantier.cn/releases/channel-builds/"+new string('a',32)+"/SemantierAgent.msix"),output,6,total=>{});
       if(Encoding.ASCII.GetString(output.ToArray())!="abcdef" || requests.Calls!=3)throw new Exception("Resume or fallback failed");
     }
+    using(var cancelled=new System.Threading.CancellationTokenSource()){
+      cancelled.Cancel();bool stopped=false;var noRequests=new Requests();
+      try {using(var output=new MemoryStream())BootstrapperWinHttp.Download(noRequests,new Uri("https://assets.semantier.cn/releases/a.msix"),output,6,x=>{},cancelled.Token);}
+      catch(OperationCanceledException){stopped=true;}
+      if(!stopped || noRequests.Calls!=0)throw new Exception("Cancelled download must not open a network request");
+    }
+    using(var midTransfer=new System.Threading.CancellationTokenSource()){
+      bool stopped=false;var requests2=new Requests();
+      try {using(var output=new MemoryStream())BootstrapperWinHttp.Download(requests2,new Uri("https://assets.semantier.cn/releases/a.msix"),output,6,x=>{midTransfer.Cancel();},midTransfer.Token);}
+      catch(OperationCanceledException){stopped=true;}
+      if(!stopped || requests2.Calls!=2)throw new Exception("Mid-transfer cancellation must not retry or resume");
+    }
     if(typeof(Program).Assembly.GetReferencedAssemblies().Any(a=>a.Name=="System.Net.Http" || a.Name=="System.Private.CoreLib"))throw new Exception("Unexpected runtime dependency");
     Console.WriteLine("NATIVE_SETUP_CONTRACT_PASS");return 0;
   }
@@ -140,3 +153,63 @@ def test_private_oss_staging_transport_contract(tmp_path):
     subprocess.run([str(compiler),'/nologo','/target:exe','/out:'+str(exe),str(path)],check=True,capture_output=True)
     result=subprocess.run([str(exe)],check=True,capture_output=True,text=True)
     assert result.stdout.startswith('PASS:')
+
+@pytest.mark.parametrize("cancel_after_first_chunk", [False, True])
+def test_download_cancellation_cross_platform(tmp_path, cancel_after_first_chunk):
+    """Compile/run the same WinHTTP transfer core with a fake stream; no real network."""
+    pwsh = shutil.which("pwsh")
+    if not pwsh:
+        pytest.skip("PowerShell C# compiler unavailable")
+    source_file = Path(__file__).resolve().parents[2] / "win-native-installer" / "WinHttp.cs"
+    harness = r'''
+using System;
+using System.IO;
+using System.ComponentModel;
+using System.Globalization;
+using System.Runtime.InteropServices;
+public class CancelHarness {
+  public static string Run(bool afterChunk) {
+    using(var cts=new System.Threading.CancellationTokenSource()){
+      var network=new FakeNetwork();
+      if(!afterChunk)cts.Cancel();
+      bool stopped=false;
+      try {
+        using(var output=new MemoryStream()){
+          BootstrapperWinHttp.Download(network,new Uri("https://assets.semantier.cn/releases/test.msix"),output,3,
+            done=>{if(afterChunk)cts.Cancel();},cts.Token);
+        }
+      } catch(OperationCanceledException){stopped=true;}
+      if(!stopped || network.Calls!=(afterChunk?1:0))
+        throw new Exception("Cancellation failed to prevent network retry or continuation.");
+      return "CANCEL_OK";
+    }
+  }
+  sealed class FakeNetwork:IWinHttpRequests {
+    internal int Calls;
+    public IWinHttpResponse Open(Uri uri,long offset,bool http3){Calls++;return new FakeResponse();}
+  }
+  sealed class FakeResponse:IWinHttpResponse {
+    public int StatusCode {get{return 200;}}
+    public long ContentLength {get{return 3;}}
+    public string ContentRange {get{return null;}}
+    public int Protocol {get{return 2;}}
+    public Stream Body {get;private set;}
+    public FakeResponse(){Body=new MemoryStream(new byte[]{1,2,3});}
+    public void Dispose(){Body.Dispose();}
+  }
+}
+'''
+    combined = tmp_path / "CancelHarness.cs"
+    combined.write_text(harness + source_file.read_text(encoding="utf-8"), encoding="utf-8")
+    runner = tmp_path / "run.ps1"
+    runner.write_text(
+        "$ErrorActionPreference='Stop'\n"
+        "$code=Get-Content -LiteralPath $args[0] -Raw\n"
+        "Add-Type -TypeDefinition $code -IgnoreWarnings -WarningAction SilentlyContinue -ErrorAction Stop\n"
+        "[CancelHarness]::Run([bool]::Parse($args[1]))\n", encoding="utf-8")
+    result = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-File", str(runner),
+                             str(combined), str(cancel_after_first_chunk)],
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "CANCEL_OK" in result.stdout
+

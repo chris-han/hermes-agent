@@ -65,34 +65,28 @@ internal static class Program {
       if(args.Length!=0)return 2;
 #endif
       Application.EnableVisualStyles();
-      using(var form=new InstallerWindow(report=>{
+      using(var form=new InstallerWindow((report,cancellation,beginInstall)=>{
 #if LOCAL_SETUP
+        cancellation.ThrowIfCancellationRequested();
         report("Verifying package and publisher…");
         string package=ResolveLocalPackage(AppDomain.CurrentDomain.BaseDirectory);
         VerifyIdentity(package);
-        report("Installing for the current Windows user…");Install(package,report);
+        cancellation.ThrowIfCancellationRequested();
+        Install(package,report,cancellation,beginInstall);
         report("Semantier Agent "+AppVersionString+" installed.");
 #else
-        RunOnlineInstall(report);
+        string directory=TemporaryDirectory();
+        try{
+          report("Downloading signed release…");
+          string package=DownloadPackage(directory,(done,total)=>report("Downloading "+(100*done/total).ToString(CultureInfo.InvariantCulture)+"%"),null,report,null,null,0,cancellation);
+          cancellation.ThrowIfCancellationRequested();
+          Install(package,report,cancellation,beginInstall);
+          report("Semantier Agent "+AppVersionString+" installed.");
+        }finally{try{Directory.Delete(directory,true);}catch(IOException){report("Temporary files may remain.");}catch(UnauthorizedAccessException){report("Temporary files may remain.");}}
 #endif
       })){Application.Run(form);}
       return 0;
     }catch(Exception error){File.WriteAllText(Path.Combine(Path.GetTempPath(),"semantier-setup-last-error.txt"),error.ToString());return 1;}
-  }
-  internal static void RunOnlineInstall(Action<string> report){
-    // A fresh PC must consent to the pinned development publisher before
-    // Authenticode trust validation, and before the expensive download.
-    EnsurePublisherTrust(report);
-    string directory=Path.Combine(Path.GetDirectoryName(LogPath),"download");
-    Directory.CreateDirectory(directory);
-    bool installed=false;
-    try{
-      report("Downloading signed release…");
-      string package=DownloadPackage(directory,(done,total)=>report("Downloading "+(100*done/total).ToString(CultureInfo.InvariantCulture)+"%"),null,report,reuseVerified:true);
-      report("Installing for the current Windows user…");Install(package,report);
-      installed=true;
-      report("Semantier Agent "+AppVersionString+" installed.");
-    }finally{if(installed){try{Directory.Delete(directory,true);}catch(IOException){report("Temporary files may remain.");}catch(UnauthorizedAccessException){report("Temporary files may remain.");}}else{Log("Retained failed installation files: "+directory);}}
   }
   internal static string ResolveLocalPackage(string directory){
     Log("Looking for local MSIX in "+directory);
@@ -104,55 +98,39 @@ internal static class Program {
     return files[0];
   }
   static string TemporaryDirectory(){string path=Path.Combine(Path.GetTempPath(),"semantier-install-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(path);return path;}
-  static IWinHttpResponse Open(NativeWinHttpRequests client,Uri uri,bool head){
+  static IWinHttpResponse Open(NativeWinHttpRequests client,Uri uri,bool head,CancellationToken cancellation=default(CancellationToken)){
+    cancellation.ThrowIfCancellationRequested();
     try{return head?client.OpenHead(uri,true):client.Open(uri,0,true);}
-    catch(IOException){return head?client.OpenHead(uri,false):client.Open(uri,0,false);}
+    catch(IOException){cancellation.ThrowIfCancellationRequested();return head?client.OpenHead(uri,false):client.Open(uri,0,false);}
   }
-  internal static byte[] ReadMetadata(NativeWinHttpRequests client,string url){
+  internal static byte[] ReadMetadata(NativeWinHttpRequests client,string url,CancellationToken cancellation=default(CancellationToken)){
     if(!url.StartsWith(ReleaseSelection.MetadataBase+"/releases/",StringComparison.Ordinal))throw new InvalidDataException("Untrusted metadata origin.");
-    using(var response=Open(client,new Uri(url),false))using(var output=new MemoryStream()){
+    using(var response=Open(client,new Uri(url),false,cancellation))using(var output=new MemoryStream()){
       if(response.StatusCode!=200 || response.ContentLength<=0 || response.ContentLength>4194304)throw new InvalidDataException("Invalid metadata response.");
       var buffer=new byte[65536];int n;
-      while((n=response.Body.Read(buffer,0,buffer.Length))>0){if(output.Length+n>response.ContentLength)throw new InvalidDataException("Metadata size mismatch.");output.Write(buffer,0,n);}
+      while(true){cancellation.ThrowIfCancellationRequested();n=response.Body.Read(buffer,0,buffer.Length);cancellation.ThrowIfCancellationRequested();if(n<=0)break;if(output.Length+n>response.ContentLength)throw new InvalidDataException("Metadata size mismatch.");output.Write(buffer,0,n);}
       if(output.Length!=response.ContentLength)throw new InvalidDataException("Incomplete metadata.");return output.ToArray();
     }
   }
-  static bool PackageBytesMatch(string file,long size,string expected){
-    if(!File.Exists(file) || new FileInfo(file).Length!=size)return false;
-    using(var stream=File.OpenRead(file))using(var sha=SHA256.Create()){
-      return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-","").ToLowerInvariant()==expected;
-    }
-  }
-  internal static void PreparePackageBytes(string file,long size,string expected,bool reuseVerified,Action download,Action<string> report){
-    if(reuseVerified && File.Exists(file)){
-      if(PackageBytesMatch(file,size,expected)){
-        if(report!=null)report("Reusing verified download…");
-        return;
-      }
-      // Only this attempt's known download is replaceable; never trust a receipt alone.
-      File.Delete(file);
-    }
-    download();
-    if(!PackageBytesMatch(file,size,expected))throw new InvalidDataException("MSIX size/SHA256 mismatch; no full-file retry.");
-  }
-  internal static string DownloadPackage(string directory,Action<long,long> progress,string expected,Action<string> report=null,string candidateBuild=null,string candidateManifestHash=null,long candidateSequence=0,bool reuseVerified=false){
+  internal static string DownloadPackage(string directory,Action<long,long> progress,string expected,Action<string> report=null,string candidateBuild=null,string candidateManifestHash=null,long candidateSequence=0,CancellationToken cancellation=default(CancellationToken)){
     using(var metadata=new NativeWinHttpRequests())using(var client=new NativeWinHttpRequests()){
-      var release=ReleaseSelection.Resolve(url=>ReadMetadata(metadata,url),candidateBuild,candidateManifestHash,candidateSequence);
+      var release=ReleaseSelection.Resolve(url=>ReadMetadata(metadata,url,cancellation),candidateBuild,candidateManifestHash,candidateSequence);
       if(expected!=null && !string.Equals(release.Sha256,expected,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Selected release differs from expected SHA256.");
+      using(var head=Open(client,release.Uri,true,cancellation))if(head.StatusCode!=200 || head.ContentLength!=release.Size)throw new InvalidDataException("OSS package size mismatch.");
       string file=Path.Combine(directory,"SemantierAgent.msix");
+      // CreateNew prevents an accidental second full download over retained evidence.
+      using(var output=new FileStream(file,FileMode.CreateNew,FileAccess.Write,FileShare.None)){
+        var clock=Stopwatch.StartNew();long last=0;
+        BootstrapperWinHttp.Download(client,release.Uri,output,release.Size,done=>{if(progress!=null && (done==release.Size || clock.ElapsedMilliseconds-last>=200)){progress(done,release.Size);last=clock.ElapsedMilliseconds;}},cancellation);
+      }
+      cancellation.ThrowIfCancellationRequested();
       if(report!=null)report("Verifying package and publisher…");
-      PreparePackageBytes(file,release.Size,release.Sha256,reuseVerified,()=>{
-        using(var head=Open(client,release.Uri,true))if(head.StatusCode!=200 || head.ContentLength!=release.Size)throw new InvalidDataException("OSS package size mismatch.");
-        // Qualification retains CreateNew semantics; interactive retry alone may reuse bytes.
-        using(var output=new FileStream(file,FileMode.CreateNew,FileAccess.Write,FileShare.None)){
-          var clock=Stopwatch.StartNew();long last=0;
-          BootstrapperWinHttp.Download(client,release.Uri,output,release.Size,done=>{if(progress!=null && (done==release.Size || clock.ElapsedMilliseconds-last>=200)){progress(done,release.Size);last=clock.ElapsedMilliseconds;}});
-        }
-      },report);
-      if(report!=null)report("Verifying package and publisher…");
-      string observed=release.Sha256;
-      VerifyIdentity(file,release);VerifySignature(file);
-      var current=ReleaseSelection.Resolve(url=>ReadMetadata(metadata,url),candidateBuild,candidateManifestHash,candidateSequence);
+      string observed;using(var stream=File.OpenRead(file))using(var sha=SHA256.Create()){observed=BitConverter.ToString(sha.ComputeHash(stream)).Replace("-","").ToLowerInvariant();}
+      cancellation.ThrowIfCancellationRequested();
+      if(observed!=release.Sha256)throw new InvalidDataException("MSIX SHA256 mismatch; no full-file retry.");
+      VerifyIdentity(file,release);cancellation.ThrowIfCancellationRequested();VerifySignature(file);cancellation.ThrowIfCancellationRequested();
+      var current=ReleaseSelection.Resolve(url=>ReadMetadata(metadata,url,cancellation),candidateBuild,candidateManifestHash,candidateSequence);
+      cancellation.ThrowIfCancellationRequested();
       if(current.ManifestSha256!=release.ManifestSha256 || current.ChannelSha256!=release.ChannelSha256)throw new InvalidDataException("Selected release changed during download.");
       File.WriteAllText(Path.Combine(directory,"download-receipt.json"),"{\"status\":\"DOWNLOADED_VERIFIED_NOT_INSTALLED\",\"selection\":\""+(candidateBuild==null?"ACTIVE_CHANNEL_HEAD":"PINNED_STAGED_CANDIDATE")+"\",\"producedAt\":\""+DateTime.UtcNow.ToString("o")+"\",\"manifestSha256\":\""+release.ManifestSha256+"\",\"channelSha256\":\""+release.ChannelSha256+"\",\"buildId\":\""+release.BuildId+"\",\"version\":\""+release.Version+"\",\"sha256\":\""+observed+"\",\"uri\":\""+release.Uri.AbsoluteUri+"\",\"sourceCommit\":\""+release.Commit+"\",\"nativeDigest\":\""+release.NativeDigest+"\",\"signature\":\"PINNED_SIGNER_VALID\",\"origin\":\""+ReleaseSelection.PackageBase+"\",\"ossResponseBytes\":"+client.ReceivedBytes+",\"responses\":"+client.OpenedResponses+",\"protocol\":"+client.LastProtocol+"}",new UTF8Encoding(false));
       return file;
@@ -173,17 +151,14 @@ internal static class Program {
     }
   }
   internal static void VerifySignature(string file){
-    string command="$ErrorActionPreference='Stop'; $s=Get-AuthenticodeSignature -LiteralPath '"+file.Replace("'","''")+"'; Write-Output ('Authenticode status='+$s.Status+'; message='+$s.StatusMessage); if($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -cne 'CN=Semantier Technology, O=Semantier Technology' -or $s.SignerCertificate.Thumbprint -cne '57BF15739B4AA447842EAF388856A01B4E5029FF'){exit 1}";
+    string command="$ErrorActionPreference='Stop'; $s=Get-AuthenticodeSignature -LiteralPath '"+file.Replace("'","''")+"'; if($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -cne 'CN=Semantier Technology, O=Semantier Technology' -or $s.SignerCertificate.Thumbprint -cne '57BF15739B4AA447842EAF388856A01B4E5029FF'){exit 1}";
     string shell=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe");
-    var info=new ProcessStartInfo(shell,"-NoProfile -NonInteractive -EncodedCommand "+Convert.ToBase64String(Encoding.Unicode.GetBytes(command))){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
+    var info=new ProcessStartInfo(shell,"-NoProfile -NonInteractive -EncodedCommand "+Convert.ToBase64String(Encoding.Unicode.GetBytes(command))){UseShellExecute=false,CreateNoWindow=true};
     info.EnvironmentVariables["PSModulePath"]=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","Modules");
     using(var process=Process.Start(info)){
       if(process==null)throw new IOException("Cannot start Windows signature verifier.");
-      var output=process.StandardOutput.ReadToEndAsync();var errors=process.StandardError.ReadToEndAsync();
       if(!process.WaitForExit(600000)){process.Kill();throw new IOException("Windows signature verification timed out.");}
-      Task.WaitAll(output,errors);
-      Log("Signature verifier exit="+process.ExitCode+"; "+output.Result+errors.Result);
-      if(process.ExitCode!=0)throw new InvalidDataException("MSIX signature or pinned publisher verification failed. "+output.Result.Trim()+" "+errors.Result.Trim());
+      if(process.ExitCode!=0)throw new InvalidDataException("MSIX signature or pinned publisher verification failed.");
     }
   }
   internal static X509Certificate2 PublisherCertificate(){
@@ -217,14 +192,20 @@ internal static class Program {
         if(store.Certificates.Find(X509FindType.FindByThumbprint,cert.Thumbprint,false).Count==0)throw new IOException("Certificate trust was not applied.");
       }
       Log("Pinned publisher certificate trusted in LocalMachine/TrustedPeople.");
-      if(report!=null)report("Installing for the current Windows user…");
     }
   }
-  internal static void Install(string file,Action<string> report=null){
+  internal static void Install(string file,Action<string> report=null,CancellationToken cancellation=default(CancellationToken),Action beginInstall=null){
+    cancellation.ThrowIfCancellationRequested();
     EnsurePublisherTrust(report);
+    cancellation.ThrowIfCancellationRequested();
+    cancellation.ThrowIfCancellationRequested();
     Log("Installing "+file+" for "+Environment.UserDomainName+"\\"+Environment.UserName);
     string command="$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=New-Object Text.UTF8Encoding($false); try { Add-AppxPackage -Path '"+file.Replace("'","''")+"' -ForceApplicationShutdown } catch { [Console]::Error.WriteLine(($_ | Format-List * -Force | Out-String)); exit 1 }";
     var info=new ProcessStartInfo("powershell.exe","-NoProfile -NonInteractive -OutputFormat Text -EncodedCommand "+Convert.ToBase64String(Encoding.Unicode.GetBytes(command))){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8};
+    // Commit under the same gate as the Cancel button: never report cancelled
+    // after starting the non-interruptible Windows package transaction.
+    if(beginInstall!=null)beginInstall();else cancellation.ThrowIfCancellationRequested();
+    if(report!=null)report("Installing for the current Windows user…");
     using(var process=Process.Start(info)){
       if(process==null)throw new IOException("Cannot start Windows installer.");
       var output=process.StandardOutput.ReadToEndAsync();var errors=process.StandardError.ReadToEndAsync();
