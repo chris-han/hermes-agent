@@ -7,6 +7,24 @@ vi.mock('@/i18n', () => ({ useI18n: () => ({ locale: 'en' }) }))
 vi.mock('@/store/connections', () => ({ refreshConnectionsRegistry: vi.fn() }))
 afterEach(() => vi.restoreAllMocks())
 
+it('signs into the account without selecting a remote runtime', async () => {
+  const identity = vi.fn().mockResolvedValue({ authenticated: false })
+  const login = vi.fn().mockResolvedValue({
+    authenticated: true, user: { user_id: 'a', workspace_id: 'wa' },
+    workspace: { id: 'wa' }, organization_id: 'org'
+  })
+  const save = vi.fn().mockResolvedValue({ connection: { id: 'account-cloud' } })
+  const onConnect = vi.fn()
+  Object.defineProperty(window, 'hermesDesktop', {
+    configurable: true, value: { workspace: { identity, login }, connections: { save } }
+  })
+  render(<SemantierWorkspaceSettings accountOnly connections={[]} onConnect={onConnect} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }))
+  await waitFor(() => expect(screen.getByText('Signed in')).toBeTruthy())
+  expect(login).toHaveBeenCalledWith('https://cloud.semantier.cn')
+  expect(onConnect).not.toHaveBeenCalled()
+})
+
 it('signs in and opens the existing server workspace without creating another connection', async () => {
   const identity = vi.fn().mockResolvedValue({ authenticated: false })
 

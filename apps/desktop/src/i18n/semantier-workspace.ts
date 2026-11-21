@@ -14,7 +14,12 @@ const en = {
   forbidden: 'Workspace access is denied for this account or organization.',
   failed: 'Could not open the workspace. Check the address and try again.',
   other: 'Other cloud agents',
-  identityRequired: 'Sign-in did not return an authenticated workspace.'
+  identityRequired: 'Sign-in did not return an authenticated workspace.',
+  accountTitle: 'Semantier Account',
+  accountDescription: 'Sign in to use your account without changing the agent runtime.',
+  accountSignIn: 'Sign in',
+  accountSignedOut: 'Sign in to use eligible account services.',
+  accountRetry: 'Check account'
 }
 
 const zh: typeof en = {
@@ -33,7 +38,12 @@ const zh: typeof en = {
   forbidden: '此账户或组织无权访问工作区。',
   failed: '无法打开工作区。请检查地址后重试。',
   other: '其他云端智能体',
-  identityRequired: '登录未返回已认证的工作区。'
+  identityRequired: '登录未返回已认证的工作区。',
+  accountTitle: 'Semantier 账户',
+  accountDescription: '登录账户不会更改智能体的运行位置。',
+  accountSignIn: '登录',
+  accountSignedOut: '登录后可使用账户有权使用的服务。',
+  accountRetry: '检查账户'
 }
 
 const hant: typeof en = {
@@ -52,7 +62,12 @@ const hant: typeof en = {
   forbidden: '此帳戶或組織無權存取工作區。',
   failed: '無法開啟工作區。請檢查地址後重試。',
   other: '其他雲端智能體',
-  identityRequired: '登入未傳回已驗證的工作區。'
+  identityRequired: '登入未傳回已驗證的工作區。',
+  accountTitle: 'Semantier 帳戶',
+  accountDescription: '登入帳戶不會更改智能體的執行位置。',
+  accountSignIn: '登入',
+  accountSignedOut: '登入後可使用帳戶有權使用的服務。',
+  accountRetry: '檢查帳戶'
 }
 
 export function semantierWorkspaceCopy(locale: string): typeof en {

@@ -14,9 +14,11 @@ import { SemantierManagedDevices } from './semantier-managed-devices'
 import { SemantierPersonalSync } from './semantier-personal-sync'
 
 export function SemantierWorkspaceSettings({
+  accountOnly = false,
   connections,
   onConnect
 }: {
+  accountOnly?: boolean
   connections: DesktopRegistryConnection[]
   onConnect: (id: string) => Promise<void> | void
 }) {
@@ -94,6 +96,8 @@ export function SemantierWorkspaceSettings({
       }
 
       setIdentity(actual)
+
+      if (accountOnly) { return }
       const normalized = new URL(origin).origin
 
       const saved = connections.find(
@@ -154,7 +158,7 @@ export function SemantierWorkspaceSettings({
         }
       }}
     >
-      <ListRow description={copy.description} title={copy.title} />
+      <ListRow description={accountOnly ? copy.accountDescription : copy.description} title={accountOnly ? copy.accountTitle : copy.title} />
       <div className="grid gap-1.5">
         <label className="text-xs text-muted-foreground" htmlFor={addressId}>
           {copy.address}
@@ -169,7 +173,7 @@ export function SemantierWorkspaceSettings({
         />
       </div>
       <p className="break-words text-xs text-muted-foreground" role="status">
-        {checking ? copy.checking : error ? '' : identity?.authenticated ? identity.user?.name || copy.signedIn : copy.signedOut}
+        {checking ? copy.checking : error ? '' : identity?.authenticated ? identity.user?.name || copy.signedIn : accountOnly ? copy.accountSignedOut : copy.signedOut}
       </p>
       {error ? (
         <p className="text-xs text-destructive" role="alert">
@@ -178,7 +182,7 @@ export function SemantierWorkspaceSettings({
       ) : null}
       <div className="flex flex-wrap gap-2">
         <Button disabled={checking || busy} type="submit">
-          {busy ? copy.waiting : error ? copy.retry : identity?.authenticated ? copy.open : copy.signIn}
+          {busy ? copy.waiting : error ? copy.retry : accountOnly ? identity?.authenticated ? copy.accountRetry : copy.accountSignIn : identity?.authenticated ? copy.open : copy.signIn}
         </Button>
         {identity?.authenticated ? (
           <Button disabled={busy} onClick={() => void signOut()} type="button" variant="outline">

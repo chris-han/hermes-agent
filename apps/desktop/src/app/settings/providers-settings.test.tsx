@@ -21,6 +21,8 @@ const startManualProviderOAuth = vi.fn()
 const startManualLocalEndpoint = vi.fn()
 const onboarding = atom({ manual: false })
 
+vi.mock('./semantier-workspace-settings', () => ({ SemantierWorkspaceSettings: () => <div>Semantier Account</div> }))
+
 vi.mock('@/store/profile', () => ({
   $activeGatewayProfile: atom('alpha'),
   $profiles: atom([]),
@@ -123,6 +125,18 @@ async function renderProvidersSettings() {
 }
 
 describe('ProvidersSettings', () => {
+  it('keeps the account entry available while local provider metadata is unavailable', () => {
+    const previous = window.hermesDesktop
+    Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: { workspace: {} } })
+    getEnvVars.mockReturnValueOnce(new Promise(() => {}))
+    try {
+      render(<ProvidersSettings onClose={vi.fn()} onViewChange={vi.fn()} view="accounts" />)
+      expect(screen.getByText('Semantier Account')).toBeTruthy()
+    } finally {
+      Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: previous })
+    }
+  })
+
   it('keeps creation available while key metadata is pending', async () => {
     getEnvVars.mockReturnValueOnce(new Promise(() => {}))
     const onViewChange = vi.fn()

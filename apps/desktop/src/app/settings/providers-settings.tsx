@@ -14,6 +14,7 @@ import { modelServiceCopy } from '@/i18n/model-service'
 import { Check, ChevronRight, KeyRound, Loader2, Plus, Terminal, Trash2 } from '@/lib/icons'
 import { normalize } from '@/lib/text'
 import { confirm } from '@/store/confirm'
+import { $connectionsRegistry } from '@/store/connection-registry-state'
 import { notify, notifyError } from '@/store/notifications'
 import { $desktopOnboarding, startManualProviderOAuth } from '@/store/onboarding'
 import { $settingsRequestProfile } from '@/store/settings-scope'
@@ -25,6 +26,7 @@ import { SettingsCategoryHeading, useEnvCredentials } from './env-credentials'
 import { providerGroup, providerMeta, providerPriority } from './helpers'
 import { SettingsContent, SettingsSkeleton } from './primitives'
 import { SettingsProfileScope } from './profile-scope'
+import { SemantierWorkspaceSettings } from './semantier-workspace-settings'
 import { useDeepLinkHighlight } from './use-deep-link-highlight'
 
 // The embedded terminal (and thus the "run disconnect command" path) only
@@ -371,6 +373,7 @@ export function ProvidersSettings({
   view
 }: ProvidersSettingsProps) {
   const { t, locale } = useI18n()
+  const registry = useStore($connectionsRegistry)
   const scopeProfile = useStore($settingsRequestProfile)
   const { rowProps, vars } = useEnvCredentials(scopeProfile)
   const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([])
@@ -540,6 +543,9 @@ export function ProvidersSettings({
       <AddProviderButton onOpen={() => onViewChange('custom-endpoints')} />
     </div>
   )
+  const accountSection = window.hermesDesktop?.workspace ? (
+    <SemantierWorkspaceSettings accountOnly connections={registry?.connections ?? []} onConnect={() => {}} />
+  ) : null
 
   if (view === 'custom-endpoints') {
     return <CustomEndpointsSettings onConfigSaved={onConfigSaved} onMainModelChanged={onMainModelChanged} />
@@ -548,6 +554,7 @@ export function ProvidersSettings({
   if (!vars) {
     return (
       <SettingsContent>
+        {view === 'accounts' ? accountSection : null}
         <SettingsProfileScope className="mb-5" />
         {view === 'keys' && providerToolbar}
         <SettingsSkeleton sections={[{ rows: 6 }]} />
@@ -558,7 +565,7 @@ export function ProvidersSettings({
   const hasOauth = oauthProviders.length > 0
   // The sidebar subnav owns the Accounts/API-keys split now; with no OAuth
   // providers there's nothing for the "Accounts" view to show, so fall to keys.
-  const showApiKeys = view === 'keys' || !hasOauth
+  const showApiKeys = view === 'keys' || (!hasOauth && !accountSection)
 
   const keyGroups = buildProviderKeyGroups(vars)
 
@@ -608,6 +615,7 @@ export function ProvidersSettings({
 
   return (
     <SettingsContent>
+      {accountSection}
       <SettingsProfileScope className="mb-5" />
       <OAuthPicker
         disconnecting={disconnecting}

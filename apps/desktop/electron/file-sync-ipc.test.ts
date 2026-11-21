@@ -95,6 +95,18 @@ it('restores the unique enabled folder and resumes the persisted selection after
   expect(await paused.owners()).toHaveLength(2)
 })
 
+it('refuses restoration when the authenticated account no longer owns the retained binding', async () => {
+  const { s } = await setup()
+  await s.shutdown()
+  const before = await s.owners()
+  mock.user = 'b'
+  const restarted = createFileSyncIpc(() => 'https://cloud.example')
+  supervisors.push(restarted)
+  Object.assign(restarted.options, s.options)
+  await expect(restarted.restore()).rejects.toThrow('belongs to another account')
+  expect(await restarted.owners()).toEqual(before)
+})
+
 it('isolates A to B to A, including resume and pause', async () => {
   const { s, current, invoke } = await setup()
   await s.accountChanging('https://cloud.example')
