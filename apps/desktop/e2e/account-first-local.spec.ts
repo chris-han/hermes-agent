@@ -131,6 +131,10 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
         const expired = await fetch(origin + '/__fixture/expire-device', { method: 'POST', headers: { cookie, Origin: origin } })
         expect(expired.status).toBe(200)
         await page.evaluate(() => (window as any).hermesDesktop.workspace.prepareModel())
+        await expect.poll(async () => {
+          const state = await fetch(origin + '/__fixture/expiry-state', { headers: { cookie } })
+          return state.ok ? state.json() : null
+        }, { timeout: 90_000 }).toMatchObject({ approvals: 2, readiness_unauthorized: true })
         await expect.poll(() => page.evaluate(() => (window as any).hermesDesktop.workspace.modelDefault()),
           { timeout: 90_000 }).toMatchObject({ model: 'deepseek-v4.1-flash-1017' })
         expect(await app.evaluate(async ({ session }, name) => session.fromPartition(name).cookies.get({}), ownedPartition)).toEqual(cookies)
