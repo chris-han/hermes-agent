@@ -865,13 +865,15 @@ async def _cloud_poll(profile, session_id, operation_id):
 
 
 @router.post("/api/providers/oauth/{provider_id}/start")
-async def start_oauth_login(provider_id: str, request: Request, profile: Optional[str] = None):
+async def start_oauth_login(provider_id: str, request: Request, profile: Optional[str] = None, account_prepare: bool = False):
     """Initiate an OAuth login flow. Token-protected."""
     _require_token(request)
     _gc_oauth_sessions()
     _validate_oauth_profile(profile)
     if provider_id == "semantier-cloud":
-        return await _cloud_device_request(profile, "start")
+        return await _cloud_device_request(profile, "start", True) if account_prepare else await _cloud_device_request(profile, "start")
+    if account_prepare:
+        raise HTTPException(400, "Account preparation is only available for Semantier Cloud.")
     catalog_entry = next((p for p in _OAUTH_PROVIDER_CATALOG if p["id"] == provider_id), None)
     if catalog_entry is None:
         raise HTTPException(status_code=400, detail=f"Unknown provider {provider_id}")

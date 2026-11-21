@@ -328,7 +328,7 @@ def _started(state):
             'expires_in':max(0, int(_time(state['expires_at'])-_now())), 'poll_interval':5}
 
 
-def _new_state(previous):
+def _new_state(previous, prepare_only=False):
     cfg = _config()
     provider = (cfg.get('providers') or {}).get('semantier-cloud') or {}
     model = cfg.get('model') or {}
@@ -347,21 +347,25 @@ def _new_state(previous):
             'runtime_ref':_digest(str(get_default_hermes_root().resolve()).encode()),
             'profile_ref':_digest(home.encode()), 'generation':previous.get('generation',0)+1,
             'config_hash':_config_hash(), 'status':'starting',
-            'credentials':previous.get('credentials',{})}
+            'credentials':previous.get('credentials',{}), 'prepare_only':prepare_only}
 
 
-def start():
+def start(prepare_only=False):
+    if not isinstance(prepare_only, bool):
+        raise CloudConnectionError('cloud_config_invalid', 'Invalid account preparation mode.', 422)
     with _locked():
         state = _read()
         if state and state.get('status') not in _TERMINAL | {'approved'}:
             if state.get('expires_at') and _time(state['expires_at']) <= _now():
                 state['status'] = 'expired'
+            elif state.get('prepare_only', False) != prepare_only:
+                raise CloudConnectionError('cloud_intent_in_progress', 'Another Cloud connection is already in progress.', 409, recovery='retry')
             elif state.get('verification_uri') and (state.get('config_hash') == _config_hash()
                     or state.get('committed_hash') == _config_hash()
                     or state.get('staged_config') == _config()):
                 return _started(state)
         if not state or state.get('status') != 'starting':
-            state = _new_state(state)
+            state = _new_state(state, prepare_only)
             _write(state)  # persist idempotency/proof BEFORE a possibly lost start reply
         for attempt in range(2):
             body = {k:state[k] for k in ('runtime_ref','profile_ref','generation')}
@@ -376,7 +380,7 @@ def start():
                 # An older client may have persisted the proof before losing its
                 # reply, then upgraded its start payload. Only that exact conflict
                 # permits a new intent; retain all already-installed credentials.
-                state = _new_state(state)
+                state = _new_state(state, prepare_only)
                 _write(state)
         uri = reply['data']['verification_uri']
         if _origin(f'{urlsplit(uri).scheme}://{urlsplit(uri).netloc}') != state['portal_origin']:
@@ -510,14 +514,15 @@ def _install(state, binding):
                 entry['ssl_ca_cert'] = previous_cloud['ssl_ca_cert']
         cfg['providers'] = cfg.get('providers') or {}
         cfg['providers']['semantier-cloud'] = entry
-        if not isinstance(cfg.get('model'),dict):
+        if not state.get('prepare_only') and not isinstance(cfg.get('model'),dict):
             cfg['model'] = {'default':str(cfg.get('model') or '')}
         # Device installation publishes custody and account binding independently
         # of model discovery. A read outage must not hold ack hostage or replace
         # a working default before the user confirms a permitted model.
-        if not cfg['model'].get('default'):
+        if not state.get('prepare_only') and not cfg['model'].get('default'):
             cfg['model'].update(provider='semantier-cloud', base_url=entry['base_url'], api_mode='chat_completions')
-        state['model'] = cfg['model'].get('default', '')
+        current_model = cfg.get('model')
+        state['model'] = current_model.get('default', '') if isinstance(current_model, dict) else current_model or ''
         cfg['billing'] = cfg.get('billing') or {}
         cfg['billing'].update(backend='semantier', account_id=data['account_id'], currency=data['currency'], portal_origin=state['portal_origin'])
         # Persist the complete intended config inside the protected journal before its atomic replace.

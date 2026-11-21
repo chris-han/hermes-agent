@@ -73,6 +73,55 @@ def test_first_connect_can_claim_and_ack_before_any_preferences_exist(native, mo
     assert 'private-account-token' not in config.read_text()
 
 
+@pytest.mark.parametrize('model', [None, 'local-model', {'provider': 'custom', 'base_url': 'http://127.0.0.1:8765/v1'}])
+def test_account_preparation_installs_scoped_credential_without_selecting_model(native, monkeypatch, model):
+    from hermes_cli.config import atomic_config_replace
+    device, home = native
+    config = device._config()
+    if model is None:
+        config.pop('model', None)
+    else:
+        config['model'] = model
+    atomic_config_replace(home/'config.yaml', config)
+    install_wire(device, monkeypatch)
+    started = device.start(prepare_only=True)
+    assert device.poll(started['session_id'])['status'] == 'approved'
+    installed = device._config()
+    assert installed.get('model') == model
+    assert installed['providers']['semantier-cloud']['credential_ref'] == 'token-test'
+
+
+def test_account_preparation_does_not_adopt_an_existing_manual_intent(native, monkeypatch):
+    device, _ = native
+    install_wire(device, monkeypatch)
+    manual = device.start()
+    with pytest.raises(device.CloudConnectionError, match='already in progress'):
+        device.start(prepare_only=True)
+    assert device._read()['session_id'] == manual['session_id']
+
+
+def test_manual_connection_does_not_adopt_an_existing_account_preparation(native, monkeypatch):
+    device, _ = native
+    install_wire(device, monkeypatch)
+    preparation = device.start(prepare_only=True)
+    with pytest.raises(device.CloudConnectionError, match='already in progress'):
+        device.start()
+    assert device._read()['session_id'] == preparation['session_id']
+
+
+def test_account_preparation_ack_recovery_preserves_model(native, monkeypatch):
+    device, _ = native
+    before = device._config()['model'].copy()
+    calls = install_wire(device, monkeypatch, ack_lost=True)
+    started = device.start(prepare_only=True)
+    with pytest.raises(ValueError, match='lost ack'):
+        device.poll(started['session_id'])
+    assert device.start(prepare_only=True) == started
+    assert device.poll(started['session_id'])['status'] == 'approved'
+    assert calls.count('intent-test/claim') == 1
+    assert device._config()['model'] == before
+
+
 def test_cancel_persists_terminal_before_lost_remote_reply(native, monkeypatch):
     device, _ = native
     monkeypatch.setattr(device, '_wire', lambda origin, operation, body=None, bearer=None: {
@@ -263,6 +312,25 @@ def test_actual_local_routes_require_auth_and_bind_session_to_original_profile(n
     assert foreign.status_code == 404
     assert foreign.json()['detail']['code'] == 'cloud_session_unavailable'
     assert 'private-account-token' not in foreign.text
+
+
+def test_account_preparation_local_route_preserves_model_and_keeps_secrets_native(native, monkeypatch):
+    from fastapi.testclient import TestClient
+    from hermes_cli.web_server import app, _SESSION_TOKEN
+    device, _ = native
+    before = device._config()['model'].copy()
+    install_wire(device, monkeypatch)
+    client = TestClient(app)
+    path = '/api/providers/oauth/semantier-cloud/start?account_prepare=true'
+    assert client.post(path).status_code == 401
+    headers = {'X-Hermes-Session-Token': _SESSION_TOKEN}
+    started = client.post(path, headers=headers)
+    assert started.status_code == 200
+    assert 'proof' not in started.text
+    result = client.get('/api/providers/oauth/semantier-cloud/poll/'+started.json()['session_id'], headers=headers)
+    assert result.status_code == 200 and result.json()['status'] == 'approved'
+    assert 'private-account-token' not in result.text
+    assert device._config()['model'] == before
 
 
 def test_profile_copy_rejects_private_original_binding(native):
