@@ -73,17 +73,25 @@ internal static class Program {
         report("Installing for the current Windows user…");Install(package,report);
         report("Semantier Agent "+AppVersionString+" installed.");
 #else
-        string directory=TemporaryDirectory();
-        try{
-          report("Downloading signed release…");
-          string package=DownloadPackage(directory,(done,total)=>report("Downloading "+(100*done/total).ToString(CultureInfo.InvariantCulture)+"%"),null,report);
-          report("Installing for the current Windows user…");Install(package,report);
-          report("Semantier Agent "+AppVersionString+" installed.");
-        }finally{try{Directory.Delete(directory,true);}catch(IOException){report("Temporary files may remain.");}catch(UnauthorizedAccessException){report("Temporary files may remain.");}}
+        RunOnlineInstall(report);
 #endif
       })){Application.Run(form);}
       return 0;
     }catch(Exception error){File.WriteAllText(Path.Combine(Path.GetTempPath(),"semantier-setup-last-error.txt"),error.ToString());return 1;}
+  }
+  internal static void RunOnlineInstall(Action<string> report){
+    // A fresh PC must consent to the pinned development publisher before
+    // Authenticode trust validation, and before the expensive download.
+    EnsurePublisherTrust(report);
+    string directory=TemporaryDirectory();
+    bool installed=false;
+    try{
+      report("Downloading signed release…");
+      string package=DownloadPackage(directory,(done,total)=>report("Downloading "+(100*done/total).ToString(CultureInfo.InvariantCulture)+"%"),null,report);
+      report("Installing for the current Windows user…");Install(package,report);
+      installed=true;
+      report("Semantier Agent "+AppVersionString+" installed.");
+    }finally{if(installed){try{Directory.Delete(directory,true);}catch(IOException){report("Temporary files may remain.");}catch(UnauthorizedAccessException){report("Temporary files may remain.");}}else{Log("Retained failed installation files: "+directory);}}
   }
   internal static string ResolveLocalPackage(string directory){
     Log("Looking for local MSIX in "+directory);
@@ -144,14 +152,17 @@ internal static class Program {
     }
   }
   internal static void VerifySignature(string file){
-    string command="$ErrorActionPreference='Stop'; $s=Get-AuthenticodeSignature -LiteralPath '"+file.Replace("'","''")+"'; if($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -cne 'CN=Semantier Technology, O=Semantier Technology' -or $s.SignerCertificate.Thumbprint -cne '57BF15739B4AA447842EAF388856A01B4E5029FF'){exit 1}";
+    string command="$ErrorActionPreference='Stop'; $s=Get-AuthenticodeSignature -LiteralPath '"+file.Replace("'","''")+"'; Write-Output ('Authenticode status='+$s.Status+'; message='+$s.StatusMessage); if($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -cne 'CN=Semantier Technology, O=Semantier Technology' -or $s.SignerCertificate.Thumbprint -cne '57BF15739B4AA447842EAF388856A01B4E5029FF'){exit 1}";
     string shell=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe");
-    var info=new ProcessStartInfo(shell,"-NoProfile -NonInteractive -EncodedCommand "+Convert.ToBase64String(Encoding.Unicode.GetBytes(command))){UseShellExecute=false,CreateNoWindow=true};
+    var info=new ProcessStartInfo(shell,"-NoProfile -NonInteractive -EncodedCommand "+Convert.ToBase64String(Encoding.Unicode.GetBytes(command))){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
     info.EnvironmentVariables["PSModulePath"]=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","Modules");
     using(var process=Process.Start(info)){
       if(process==null)throw new IOException("Cannot start Windows signature verifier.");
+      var output=process.StandardOutput.ReadToEndAsync();var errors=process.StandardError.ReadToEndAsync();
       if(!process.WaitForExit(600000)){process.Kill();throw new IOException("Windows signature verification timed out.");}
-      if(process.ExitCode!=0)throw new InvalidDataException("MSIX signature or pinned publisher verification failed.");
+      Task.WaitAll(output,errors);
+      Log("Signature verifier exit="+process.ExitCode+"; "+output.Result+errors.Result);
+      if(process.ExitCode!=0)throw new InvalidDataException("MSIX signature or pinned publisher verification failed. "+output.Result.Trim()+" "+errors.Result.Trim());
     }
   }
   internal static X509Certificate2 PublisherCertificate(){
