@@ -2755,7 +2755,7 @@ def set_runtime_main(
     provider: str, model: str, *, requested_provider: str = "", base_url: str = "",
     api_key: Any = "", api_mode: str = "", auth_mode: str = "", session_id: str = "",
     cache_scope: str = "", task_id: str = "", root_run_id: str = "", parent_run_id: str = "",
-    run_id: str = "", business_object_ref: str = "", cloud_route: str = "", auxiliary_snapshot: Optional[dict] = None, capability_revision: str = "",
+    run_id: str = "", business_object_ref: str = "", cloud_route: str = "", cloud_credential_ref: str = "", auxiliary_snapshot: Optional[dict] = None, capability_revision: str = "",
 ) -> contextvars.Token:
     """Record the current context's live main runtime for auxiliary routing.
 
@@ -2778,6 +2778,7 @@ def set_runtime_main(
         "session_id": (session_id or "").strip(),
         "cache_scope": (cache_scope or "").strip(),
         "cloud_route": cloud_route,
+        "cloud_credential_ref": cloud_credential_ref,
         "capability_revision": capability_revision,
         **({"auxiliary_snapshot": auxiliary_snapshot} if auxiliary_snapshot is not None else {}),
         **{k:v for k,v in {"task_id":task_id,"root_run_id":root_run_id,"parent_run_id":parent_run_id,"run_id":run_id,"business_object_ref":business_object_ref}.items() if v},
@@ -3101,7 +3102,7 @@ def _try_anthropic(explicit_api_key: Optional[str | Callable[[], str]] = None,
 
 _MAIN_RUNTIME_FIELDS = ("provider", "model", "base_url", "api_key", "api_mode", "auth_mode")
 _MAIN_RUNTIME_CONTEXT_FIELDS = _MAIN_RUNTIME_FIELDS + (
-    "requested_provider", "session_id", "cache_scope", "run_id", "task_id", "root_run_id", "parent_run_id", "business_object_ref", "cloud_route", "capability_revision",
+    "requested_provider", "session_id", "cache_scope", "run_id", "task_id", "root_run_id", "parent_run_id", "business_object_ref", "cloud_route", "cloud_credential_ref", "capability_revision",
 )
 
 
@@ -7544,6 +7545,12 @@ def _prepare_aux_request(
     from agent.semantier_gateway import is_gateway_route
     actual_base = str(base_info or resolved_base_url or '').rstrip('/')
     actual_key = str(getattr(client, 'api_key', '') or resolved_api_key or '')
+    ref = frozen.get('cloud_credential_ref')
+    if ref and actual_base == cloud_base and actual_key == frozen.get('api_key'):
+        from hermes_cli.cloud_device_client import credential, CloudCredentialError
+        import hmac
+        if not hmac.compare_digest(credential(ref, base_url=actual_base), actual_key):
+            raise CloudCredentialError('Cloud account credential changed; reconnect.')
     bound = (GatewaySettings(actual_base,actual_key) if actual_key and
         (actual_base == cloud_base or is_gateway_route(actual_base)) else None)
     if bound and task not in {'compression','title_generation','vision'}:

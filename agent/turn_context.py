@@ -245,6 +245,7 @@ def _maybe_title_session_at_turn_start(
         bound = agent_cloud_settings(agent)
         if bound:
             main_runtime["cloud_route"] = bound.base_url
+            main_runtime["cloud_credential_ref"] = getattr(agent, "_semantier_credential_ref", "")
         main_runtime["capability_revision"] = getattr(agent,"_semantier_cloud_revision","")
         main_runtime["auxiliary_snapshot"] = getattr(agent,"_semantier_auxiliary_snapshot",{})
         # See #19027.
@@ -566,6 +567,7 @@ def _publish_runtime_main(agent: Any) -> None:
             auxiliary_snapshot=getattr(agent,"_semantier_auxiliary_snapshot",None),
             cache_scope=_cache_scope,
             cloud_route=getattr(getattr(agent,"_semantier_cloud_settings",None),"base_url", ""),
+            cloud_credential_ref=getattr(agent,"_semantier_credential_ref", "") or "",
             **getattr(agent, "_semantier_task_context", {}),
         )
 

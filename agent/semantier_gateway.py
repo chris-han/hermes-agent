@@ -161,6 +161,7 @@ def bind_task_context(agent, task_id, run_id):
         compressor._semantier_main_runtime = {**{key:getattr(agent,key,None) for key in
             ('model','provider','base_url','api_key','api_mode','session_id')}, **context,
             'cloud_route':getattr(getattr(agent,'_semantier_cloud_settings',None),'base_url',''),
+            'cloud_credential_ref':getattr(agent,'_semantier_credential_ref',None),
             'auxiliary_snapshot':agent._semantier_auxiliary_snapshot,
             'capability_revision':getattr(agent,'_semantier_cloud_revision','')}
     return dict(context)

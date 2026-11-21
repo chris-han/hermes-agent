@@ -435,6 +435,43 @@ def test_account_agent_is_fenced_when_legacy_gateway_coexists(native, monkeypatc
     assert semantier_gateway.agent_cloud_settings(legacy_agent).api_key == 'legacy-secret'
 
 
+def test_compression_cannot_prepare_captured_cloud_route_after_account_switch(native, monkeypatch):
+    import hermes_constants
+    from types import SimpleNamespace
+    from agent import auxiliary_client as aux, semantier_gateway as cloud
+    device, home = native
+    monkeypatch.setattr(hermes_constants, 'get_default_hermes_root', lambda **_: home)
+    install_wire(device, monkeypatch)
+    started = device.start(prepare_only=True, expected_actor=ACTOR, expected_origin=ACCOUNT_ORIGIN)
+    device.poll(started['session_id'])
+    device.set_account_fence({'origin': ACCOUNT_ORIGIN, **ACTOR})
+    base = ACCOUNT_ORIGIN + '/v1'
+    client = SimpleNamespace(base_url=base, api_key='private-account-token')
+    monkeypatch.setattr(aux, '_resolve_task_provider_model', lambda *a: ('custom', 'fixture', base, client.api_key, 'chat_completions'))
+    monkeypatch.setattr(aux, '_resolve_call_client', lambda *a, **kw: (client, 'fixture', 'custom', 'custom'))
+    monkeypatch.setattr(aux, '_get_task_extra_body', lambda *a: {})
+    monkeypatch.setattr(aux, '_compression_fast_lane_controls', lambda *a, **kw: (None, {}))
+    monkeypatch.setattr(aux, '_build_call_kwargs', lambda *a, **kw: {'model': 'fixture', 'messages': []})
+    monkeypatch.setattr(cloud, 'configure_cloud_request', lambda kwargs, **kw: kwargs)
+    monkeypatch.setattr(cloud, 'attribute_request', lambda kwargs, **kw: kwargs)
+    agent = SimpleNamespace(model='fixture', provider='custom', base_url=base, api_key=client.api_key,
+        api_mode='chat_completions', session_id='fixture', context_compressor=SimpleNamespace(),
+        _semantier_cloud_settings=cloud.GatewaySettings(base, client.api_key), _semantier_credential_ref='token-test',
+        _semantier_auxiliary_snapshot={})
+    cloud.bind_task_context(agent, 'task', 'run')
+    runtime = agent.context_compressor._semantier_main_runtime
+    assert runtime['cloud_credential_ref'] == 'token-test'
+    device.set_account_fence(None)
+    def prepare():
+        return aux._prepare_aux_request('compression', provider=None, model=None, base_url=None, api_key=None,
+            main_runtime=runtime, messages=[], temperature=None, max_tokens=None, tools=None, timeout=None,
+            extra_body=None, reasoning_config=None, extra_headers=None, api_mode=None, route_info=None, async_mode=False)
+    with pytest.raises(device.CloudConnectionError, match='account'):
+        prepare()
+    client.api_key = 'independent-credential'
+    assert prepare().client is client
+
+
 def test_cancel_persists_terminal_before_lost_remote_reply(native, monkeypatch):
     device, _ = native
     monkeypatch.setattr(device, '_wire', lambda origin, operation, body=None, bearer=None: {

@@ -66,6 +66,8 @@ it.skipIf(!origin)('passes the connected account default to the standalone local
     expect(turn.title_started).toBe(true)
     expect(turn.title_finished).toBe(true)
     expect(turn.after_switch_completed).toBe(true)
+    expect(turn.compression_bound).toBe(true)
+    expect(turn.compression_refused).toBe(true)
     expect(turn.after_switch_history.filter((item: { role: string; content: string }) =>
       item.role === 'assistant' && item.content === 'fixture response')).toHaveLength(1)
   } finally {
