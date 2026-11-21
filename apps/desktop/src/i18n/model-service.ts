@@ -321,3 +321,21 @@ export function providerTestStatus(locale: string, status: string): string {
 
   return messages[status] ?? messages.unknown
 }
+
+/** Billing authority refusals describe a repair, never a request to log in. */
+export function billingAccountIssueCopy(locale: string, issue: string): string {
+  const scope = issue === 'billing_account_scope_mismatch'
+
+  if (/^zh[-_](hant|tw|hk)/i.test(locale)) {
+    return scope ? '計費帳戶屬於其他組織。請確認組織與帳戶，或聯絡管理員。'
+      : '計費帳戶需要核對。請確認帳戶，或聯絡管理員。'
+  }
+
+  if (/^zh/i.test(locale)) {
+    return scope ? '计费账户属于其他组织。请确认组织与账户，或联系管理员。'
+      : '计费账户需要核对。请确认账户，或联系管理员。'
+  }
+
+  return scope ? 'The billing account belongs to a different organization. Check the organization and account, or contact an administrator.'
+    : 'The billing account needs reconciliation. Check the account or contact an administrator.'
+}

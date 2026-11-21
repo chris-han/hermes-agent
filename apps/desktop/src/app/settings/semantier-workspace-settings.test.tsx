@@ -91,3 +91,49 @@ it('does not save or open a workspace when hosted sign-in is cancelled', async (
     'https://cloud.semantier.cn'
   )
 })
+
+it('keeps identity outage distinct from sign-out and retries without opening login', async () => {
+  const identity = vi.fn().mockRejectedValue(new Error('TimeoutError'))
+  const login = vi.fn()
+  Object.defineProperty(window, 'hermesDesktop', {
+    configurable: true, value: { workspace: { identity, login }, connections: { save: vi.fn() } }
+  })
+  render(<SemantierWorkspaceSettings connections={[]} onConnect={vi.fn()} />)
+  expect(await screen.findByText('Workspace identity is unavailable. Try again.')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  await waitFor(() => expect(identity).toHaveBeenCalledTimes(2))
+  expect(login).not.toHaveBeenCalled()
+  expect((screen.getByRole('textbox', { name: 'Workspace address' }) as HTMLInputElement).value).toBe('https://cloud.semantier.cn')
+})
+
+it('shows forbidden workspace access without proposing sign-in', async () => {
+  const identity = vi.fn().mockRejectedValue(new Error('Semantier workspace request failed (403).'))
+  const login = vi.fn()
+  Object.defineProperty(window, 'hermesDesktop', {
+    configurable: true, value: { workspace: { identity, login }, connections: { save: vi.fn() } }
+  })
+  render(<SemantierWorkspaceSettings connections={[]} onConnect={vi.fn()} />)
+  expect(await screen.findByText('Workspace access is denied for this account or organization.')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'Sign in and open workspace' })).toBeNull()
+  expect(login).not.toHaveBeenCalled()
+})
+
+it('does not start login for a stale origin after the address changes', async () => {
+  let resolveOld!: (value: { authenticated: boolean }) => void
+
+  const identity = vi.fn()
+    .mockResolvedValueOnce({ authenticated: false })
+    .mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve }))
+    .mockResolvedValue({ authenticated: false })
+
+  const login = vi.fn()
+  Object.defineProperty(window, 'hermesDesktop', {
+    configurable: true, value: { workspace: { identity, login }, connections: { save: vi.fn() } }
+  })
+  render(<SemantierWorkspaceSettings connections={[]} onConnect={vi.fn()} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Sign in and open workspace' }))
+  fireEvent.change(screen.getByRole('textbox', { name: 'Workspace address' }), { target: { value: 'https://other.example' } })
+  resolveOld({ authenticated: false })
+  await waitFor(() => expect(identity).toHaveBeenCalledWith('https://other.example'))
+  expect(login).not.toHaveBeenCalled()
+})

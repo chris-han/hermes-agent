@@ -46,9 +46,9 @@ export function SemantierWorkspaceSettings({
           setIdentity(value)
         }
       })
-      .catch(() => {
+      .catch(reason => {
         if (generation.current === current) {
-          setError(copy.failed)
+          setError(String(reason).includes('Semantier workspace request failed (403).') ? copy.forbidden : copy.unavailable)
         }
       })
       .finally(() => {
@@ -60,12 +60,13 @@ export function SemantierWorkspaceSettings({
     return () => {
       generation.current++
     }
-  }, [origin, copy.failed])
+  }, [origin, copy.forbidden, copy.unavailable])
 
   const connect = async () => {
     const current = generation.current
     setBusy(true)
     setError('')
+    let signingIn = false
 
     try {
       const api = window.hermesDesktop.workspace
@@ -77,7 +78,10 @@ export function SemantierWorkspaceSettings({
       // Re-read before deciding whether to open hosted login; UI state is not authority.
       let actual = await api.identity(origin)
 
-      if (!actual.authenticated) {
+      if (generation.current !== current) { return }
+
+      if (actual.authenticated === false) {
+        signingIn = true
         actual = await api.login(origin)
       }
 
@@ -115,9 +119,10 @@ export function SemantierWorkspaceSettings({
 
       await refreshConnectionsRegistry()
       await onConnect(connection.id)
-    } catch {
+    } catch (reason) {
       if (generation.current === current) {
-        setError(copy.failed)
+        setError(signingIn ? copy.failed : String(reason).includes('Semantier workspace request failed (403).')
+          ? copy.forbidden : copy.unavailable)
       }
     } finally {
       setBusy(false)
@@ -164,7 +169,7 @@ export function SemantierWorkspaceSettings({
         />
       </div>
       <p className="break-words text-xs text-muted-foreground" role="status">
-        {checking ? copy.checking : identity?.authenticated ? identity.user?.name || copy.signedIn : copy.signedOut}
+        {checking ? copy.checking : error ? '' : identity?.authenticated ? identity.user?.name || copy.signedIn : copy.signedOut}
       </p>
       {error ? (
         <p className="text-xs text-destructive" role="alert">
@@ -173,7 +178,7 @@ export function SemantierWorkspaceSettings({
       ) : null}
       <div className="flex flex-wrap gap-2">
         <Button disabled={checking || busy} type="submit">
-          {busy ? copy.waiting : identity?.authenticated ? copy.open : copy.signIn}
+          {busy ? copy.waiting : error ? copy.retry : identity?.authenticated ? copy.open : copy.signIn}
         </Button>
         {identity?.authenticated ? (
           <Button disabled={busy} onClick={() => void signOut()} type="button" variant="outline">

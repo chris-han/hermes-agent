@@ -31,6 +31,7 @@ describe('selected model-service facts', () => {
     expect(cloudServiceStatus({ ok: false, refusal: { kind: 'provider_not_configured', message: 'Not configured' } }).state).toBe('setup')
     expect(cloudServiceStatus({ ok: false, refusal: { kind: 'unauthenticated', message: 'Expired' } }).state).toBe('reauth')
     expect(cloudServiceStatus({ ok: false, refusal: { kind: 'membership_revoked', message: 'Denied' } }).state).toBe('denied')
+    expect(cloudServiceStatus({ ok: false, refusal: { kind: 'billing_account_scope_mismatch', message: 'Denied' } }).state).toBe('denied')
   })
 
   it('projects real rights and provisioning independently', () => {
@@ -80,4 +81,15 @@ describe('selected model-service facts', () => {
       expect(Object.keys(modelServiceCopy[locale]).sort()).toEqual(Object.keys(modelServiceCopy.en).sort())
     }
   })
+})
+
+it('does not turn an incomplete Workspace admission check into readiness or login', async () => {
+  const request = async <T,>(method: string): Promise<T> => {
+    if (method === 'setup.status') { return { provider_configured: true, source: 'semantier-workspace' } as T }
+    throw new Error('read unavailable')
+  }
+
+  const result = await evaluateRuntimeReadiness(request)
+  expect(result.ready).toBe(false)
+  expect(result.modelService?.state).toBe('unavailable')
 })

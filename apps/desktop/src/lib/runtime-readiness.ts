@@ -4,6 +4,7 @@ import { decodeCloudSignInError } from './cloud-sign-in-error'
 import type { ModelServiceStatus } from './model-service-status'
 
 export interface SetupStatusSnapshot {
+  source?: string
   provider_configured?: boolean
   /** Additive launch-profile fields (newer backends only; absent on older
    *  ones). Carried for consumers that read the record — readiness itself
@@ -212,6 +213,23 @@ export async function evaluateRuntimeReadiness(
 ): Promise<RuntimeReadinessResult> {
   const signals = await fetchRuntimeReadinessSignals(requestGateway, options.requestedProvider)
   const result = interpretRuntimeReadiness(signals, options)
+
+  if (signals.runtime?.source === 'semantier-workspace' || signals.setup?.source === 'semantier-workspace') {
+    if (signals.runtime?.source !== 'semantier-workspace' || typeof signals.runtime.ok !== 'boolean') {
+      return { ...result, ready: false, modelService: { state: 'unavailable' }, reason: null }
+    }
+
+    const reason = signals.runtime.error_code
+
+    const issue = ['billing_account_scope_mismatch', 'billing_account_mismatch', 'billing_account_missing', 'billing_account_inconsistent']
+      .includes(reason ?? '') ? reason as ModelServiceStatus['issue'] : undefined
+
+    const modelService: ModelServiceStatus = { state: result.ready ? 'ready'
+      : reason === 'PREPARING' ? 'preparing'
+      : issue || reason === 'NO_ACCESS' ? 'denied' : 'unavailable', issue }
+
+    return { ...result, modelService, reason: null }
+  }
 
   if (signals.runtime?.source !== 'semantier-cloud') { return result }
 

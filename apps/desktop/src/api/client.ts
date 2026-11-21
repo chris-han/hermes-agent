@@ -406,8 +406,8 @@ export class HermesGateway extends JsonRpcGatewayClient {
       if (typeof ready !== 'boolean') { throw new Error('Cloud inference readiness is unavailable.') }
 
       return (method === 'setup.status'
-        ? { ready, provider_configured: ready }
-        : { ok: ready, error: ready ? undefined : identity.account_provisioning?.reason }) as T
+        ? { ready, provider_configured: ready, source: 'semantier-workspace' }
+        : { ok: ready, source: 'semantier-workspace', error_code: ready ? undefined : identity.account_provisioning?.reason }) as T
     }
 
     if (method === 'session.resume' || method === 'session.activate') {

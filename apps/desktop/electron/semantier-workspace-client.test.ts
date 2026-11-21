@@ -25,11 +25,47 @@ it('does not retry an uncertain send and retains its request identity', async ()
   expect(JSON.parse(String(options?.body))).toMatchObject({ sessionKey: 'session_original', requestIdentity: 'request-001', idempotencyKey: 'request-001' })
 })
 
-it('marks revoked authentication for recovery without retry', async () => {
+it('does not mark forbidden scope as a login failure', async () => {
   const transport = vi.fn<typeof fetch>().mockResolvedValue(new Response('', { status: 403 }))
   const client = createSemantierWorkspaceClient('https://cloud.example', transport)
-  await expect(client.identity()).rejects.toMatchObject({ statusCode: 403, needsWorkspaceLogin: true })
+  await expect(client.identity()).rejects.toMatchObject({ statusCode: 403, needsWorkspaceLogin: false })
   expect(transport).toHaveBeenCalledTimes(1)
+})
+
+it('represents an explicit 401 as signed out but keeps outages distinct', async () => {
+  const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response('', { status: 401 }))
+    .mockResolvedValueOnce(new Response('', { status: 503 }))
+
+  const client = createSemantierWorkspaceClient('https://cloud.example', transport)
+  await expect(client.identity()).resolves.toEqual({ authenticated: false })
+  await expect(client.identity()).rejects.toMatchObject({ statusCode: 503, needsWorkspaceLogin: false })
+})
+
+it('rejects malformed identity and preserves the bounded idempotent read', async () => {
+  const timeout = vi.spyOn(AbortSignal, 'timeout')
+
+  const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({}))
+    .mockRejectedValueOnce(new DOMException('timed out', 'TimeoutError'))
+
+  const client = createSemantierWorkspaceClient('https://cloud.example', transport)
+  await expect(client.identity()).rejects.toThrow('identity is unavailable')
+  await expect(client.identity()).rejects.toMatchObject({ name: 'TimeoutError' })
+  expect(timeout).toHaveBeenCalledWith(15_000)
+  expect(transport).toHaveBeenCalledTimes(2)
+  timeout.mockRestore()
+})
+
+it('reads the Workspace-owned default model for a fresh draft', async () => {
+  const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
+    source: 'core_workspace_configuration', provider: 'semantier-cloud', model: 'eligible-model', configured: true
+  }))
+
+  const client = createSemantierWorkspaceClient('https://cloud.example', transport)
+  await expect(workspaceDesktopRead(client, '/api/model/info')).resolves.toMatchObject({
+    provider: 'semantier-cloud', model: 'eligible-model'
+  })
+  expect(transport.mock.calls[0][0]).toBe('https://cloud.example/api/model/info')
+  expect(transport.mock.calls[0][1]).toMatchObject({ credentials: 'include', method: 'GET' })
 })
 
 it('projects server conversation and message IDs without replacement or precision loss', async () => {

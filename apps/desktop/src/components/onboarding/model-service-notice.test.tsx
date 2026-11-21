@@ -64,3 +64,15 @@ test('a fresh unconfigured Cloud account offers explicit sign-in without automat
   fireEvent.click(screen.getByRole('button', { name: /Sign in to Semantier/ }))
   expect(signIn).toHaveBeenCalledWith('semantier-cloud', { connectionId: null, profile: 'work' })
 })
+
+test('a billing account scope mismatch explains access and never starts sign-in', () => {
+  $desktopOnboarding.set({ ...$desktopOnboarding.get(), readiness: {
+    ready: false, source: 'runtime', modelService: { state: 'denied', issue: 'billing_account_scope_mismatch' }
+  } as never, readinessScope: { connectionId: null, profile: 'work' } })
+  render(<MemoryRouter><I18nProvider configClient={null} initialLocale="en">
+    <ModelServiceNotice profile="work" requestGateway={vi.fn()} />
+  </I18nProvider></MemoryRouter>)
+  expect(screen.getByRole('status').textContent).toContain('billing account belongs to a different organization')
+  expect(screen.queryByRole('button', { name: /Sign in/ })).toBeNull()
+  expect(signIn).not.toHaveBeenCalled()
+})

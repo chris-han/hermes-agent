@@ -284,3 +284,38 @@ def test_unconnected_cloud_model_options_remain_available_for_first_onboarding(t
     assert result.providers[0].authenticated is False
     assert result.providers[0].models==[]
     assert result.providers[0].eligible_models==[]
+
+
+def test_billing_scope_refusal_preserves_safe_backend_code(tmp_path, monkeypatch):
+    import requests
+    configure(tmp_path, monkeypatch)
+
+    class Response:
+        status_code = 403
+        headers = {}
+        def json(self):
+            return {'detail': 'billing_account_scope_mismatch'}
+
+    monkeypatch.setattr(requests, 'get', lambda *args, **kwargs: Response())
+    result = sg.billing_request('state', schema_version='semantier.billing.v2')
+    assert result['error'] == 'billing_account_scope_mismatch'
+
+@pytest.mark.parametrize('status,body,request_id,expected', [
+    (403, {'detail': 'billing_account_mismatch'}, 'req-123', ('billing_account_mismatch', 'req-123')),
+    (409, {'detail': 'billing_account_inconsistent'}, 'bad\nsecret', ('billing_account_inconsistent', None)),
+    (403, {'detail': 'private-secret'}, 'https://example.invalid/private', ('insufficient_scope', None)),
+    (503, {'detail': ['private-secret']}, '', ('billing_unavailable', None)),
+    (401, {'detail': 'billing_account_scope_mismatch'}, '', ('unauthenticated', None)),
+])
+def test_billing_refusals_are_status_bound_and_sanitized(tmp_path, monkeypatch, status, body, request_id, expected):
+    import requests
+    configure(tmp_path, monkeypatch)
+    class Response:
+        status_code = status
+        headers = {'x-request-id': request_id}
+        def json(self):
+            return body
+    monkeypatch.setattr(requests, 'get', lambda *args, **kwargs: Response())
+    result = sg.billing_request('state', schema_version='semantier.billing.v2')
+    assert (result['error'], result['request_id']) == expected
+    assert 'private-secret' not in str(result)

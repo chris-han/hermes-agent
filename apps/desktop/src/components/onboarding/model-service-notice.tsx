@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router'
 
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/i18n'
-import { modelServiceCopy } from '@/i18n/model-service'
+import { billingAccountIssueCopy, modelServiceCopy } from '@/i18n/model-service'
 import type { RuntimeReadinessResult } from '@/lib/runtime-readiness'
 import { $desktopBoot } from '@/store/boot'
 import { openCloudPortal } from '@/store/cloud-sign-in'
@@ -42,6 +42,7 @@ function ServiceRecovery({ readiness, scope, requestGateway }: ModelServiceNotic
 
   const setup = state === 'setup' || state === 'reauth'
   const portal = readiness.modelService?.portalUrl
+  const issue = readiness.modelService?.issue
 
   const openCustom = () => {
     setSettingsScope(scope.profile || 'default')
@@ -53,8 +54,8 @@ function ServiceRecovery({ readiness, scope, requestGateway }: ModelServiceNotic
 
   return <section className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs text-(--ui-text-secondary)">
     <div className="min-w-0 flex-1">
-      <p aria-live="polite" role="status">{copy[state]}</p>
-      {(readiness.modelService?.detail || readiness.reason) && <details>
+      <p aria-live="polite" role="status">{issue ? billingAccountIssueCopy(locale, issue) : copy[state]}</p>
+      {!issue && (readiness.modelService?.detail || readiness.reason) && <details>
         <summary>{copy.details}</summary>
         <p className="break-words">{readiness.modelService?.detail || readiness.reason}</p>
       </details>}

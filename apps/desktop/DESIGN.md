@@ -789,3 +789,12 @@ Semantier-owned Billing, package, top-up, order and readiness links open in the 
 Skills & Tools uses the shared `SegmentedControl` with `animated` for the Asimov List/Cards group. Its one active primary-colored indicator slides within the group; reduced motion settles immediately, and native button focus/pressed state remain intact. Other segmented-control callers retain their existing appearance by default.
 
 The page search returns scoped Skills, Toolsets, installed/catalog Plugins, Connectors and Marketplace matches together in labeled groups. It composes the existing read/catalog owners; unavailable sources retain their own error/retry and do not hide installed matches. Selecting a match opens its existing tab/inspector; Back to search restores the query and search focus. Navigation does not install or enable anything.
+
+Workspace identity recovery distinguishes an explicit signed-out response from
+an unavailable identity read and a forbidden account or organization. The
+existing address and origin-owned session remain intact; unavailable and
+forbidden reads offer retry without initiating sign-in. Model-service readiness
+uses the authenticated Workspace provisioning result, while Billing account
+scope failures explain the need to check the organization or account. A new
+Cloud draft reads its configured default from the scoped Workspace model-info
+owner; a catalog or a configured default alone does not grant model access.

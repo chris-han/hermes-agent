@@ -208,16 +208,26 @@ def billing_request(resource: str, *, schema_version: str | None = None) -> dict
                 response = client.get(settings.base_url[:-3] + path, **args)
         else:
             response = requests.get(settings.base_url[:-3] + path, **args)
+        import re
         request_id = response.headers.get('x-request-id')
+        if not isinstance(request_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', request_id):
+            request_id = None
         if response.status_code != 200:
             codes = {401: 'unauthenticated', 403: 'insufficient_scope', 429: 'rate_limited'}
             # Backend error codes are data; upstream messages/URLs can contain secrets and never cross.
             code = codes.get(response.status_code, 'billing_unavailable')
             try:
-                error = response.json().get('error', {})
+                body = response.json()
+                error = body.get('error', body.get('detail'))
                 candidate = error.get('code') if isinstance(error, dict) else error
-                if candidate in {'membership_revoked', 'insufficient_scope', 'billing_unavailable',
-                                  'unauthenticated', 'unsupported_capability'}:
+                allowed = {
+                    401: {'unauthenticated'},
+                    403: {'membership_revoked', 'insufficient_scope', 'billing_account_scope_mismatch',
+                          'billing_account_mismatch'},
+                    409: {'billing_account_missing', 'billing_account_inconsistent'},
+                    503: {'billing_unavailable'},
+                }
+                if isinstance(candidate, str) and candidate in allowed.get(response.status_code, set()):
                     code = candidate
             except (ValueError, AttributeError):
                 pass

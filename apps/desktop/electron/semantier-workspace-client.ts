@@ -171,7 +171,7 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
       throw Object.assign(new Error(`Semantier workspace request failed (${response.status}).`), {
         statusCode: response.status,
         ...(managedDeviceCode ? { managedDeviceCode } : {}),
-        needsWorkspaceLogin: response.status === 401 || response.status === 403
+        needsWorkspaceLogin: response.status === 401
       })
     }
 
@@ -223,6 +223,9 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
         result.sessionKey !== result.entry?.key) { throw new Error('Main creation did not return its server-owned conversation.') }
 
       return { sessionKey: result.sessionKey }
+    },
+    async modelInfo() {
+      return (await request('/api/model/info')).json()
     },
     async auxiliaryModels() {
       const data = await (await request('/api/hermes-config')).json()
@@ -289,7 +292,20 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
       return {ok:true,provider:body.provider,model:body.model}
     },
     async identity(): Promise<WorkspaceIdentity> {
-      return (await request('/auth/context')).json()
+      try {
+        const identity: unknown = await (await request('/auth/context')).json()
+
+        if (!identity || typeof identity !== 'object' || !('authenticated' in identity) ||
+          typeof identity.authenticated !== 'boolean') { throw new Error('Workspace identity is unavailable.') }
+
+        return identity as WorkspaceIdentity
+      } catch (error) {
+        if (typeof error === 'object' && error !== null && 'statusCode' in error && error.statusCode === 401) {
+          return { authenticated: false }
+        }
+
+        throw error
+      }
     },
     async winman(): Promise<WorkspaceWinmanProfile> {
       const result = await (await request('/api/winman')).json()
@@ -422,6 +438,10 @@ export async function workspaceDesktopRead(
   const url = new URL(path, 'https://desktop.invalid')
   const pathname = url.pathname
   const profile = routeProfile && routeProfile !== 'default' ? routeProfile : url.searchParams.get('profile')
+
+  if (pathname === '/api/model/info' && (!profile || profile === 'default')) {
+    return client.modelInfo()
+  }
 
   if (pathname === '/api/model/auxiliary' && (!profile || profile === 'default')) {
     return client.auxiliaryModels()

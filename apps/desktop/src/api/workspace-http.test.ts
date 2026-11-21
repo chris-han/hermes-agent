@@ -55,7 +55,7 @@ it('uses server-owned Cloud admission for readiness and a real context read for 
   await expect(gateway.request('ping')).resolves.toEqual({ ok: true })
   await expect(gateway.request('setup.runtime_check')).resolves.toMatchObject({ ok: true })
   read.mockResolvedValue({ ...identity, account_provisioning: { inference_ready: false, reason: 'admission revoked' } })
-  await expect(gateway.request('setup.runtime_check')).resolves.toEqual({ ok: false, error: 'admission revoked' })
+  await expect(gateway.request('setup.runtime_check')).resolves.toEqual({ ok: false, source: 'semantier-workspace', error_code: 'admission revoked' })
   gateway.close()
 })
 
@@ -448,4 +448,25 @@ it('refuses a recovered foreign Main binding before Native admission', async () 
     await expect(gateway.request('prompt.submit',{session_id:'canonical-a',text:'Hello',submission_id:'foreign-cold'})).rejects.toThrow('owner changed')
     expect(sendNative).not.toHaveBeenCalled()
   } finally {gateway.close()}
+})
+
+it('classifies Workspace provisioning without claiming that the device needs sign-in', async () => {
+  const { evaluateRuntimeReadiness } = await import('@/lib/runtime-readiness')
+
+  const read = vi.fn().mockResolvedValue({ ...identity, account_provisioning: {
+    inference_ready: false, reason: 'billing_account_scope_mismatch'
+  } })
+
+  Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: { workspace: { identity: read } } })
+  const gateway = new HermesGateway()
+  await gateway.connectWorkspace('https://cloud.example', scope)
+  const result = await evaluateRuntimeReadiness(gateway.request.bind(gateway))
+  expect(result.ready).toBe(false)
+  expect(result.modelService?.state).toBe('denied')
+  expect(result.modelService?.issue).toBe('billing_account_scope_mismatch')
+  read.mockResolvedValue({ ...identity, account_provisioning: { inference_ready: false, reason: 'PREPARING' } })
+  expect((await evaluateRuntimeReadiness(gateway.request.bind(gateway))).modelService?.state).toBe('preparing')
+  read.mockResolvedValue({ ...identity, account_provisioning: { inference_ready: true } })
+  expect((await evaluateRuntimeReadiness(gateway.request.bind(gateway))).ready).toBe(true)
+  gateway.close()
 })

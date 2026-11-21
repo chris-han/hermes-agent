@@ -6,6 +6,7 @@ import type { BillingBackendState } from '@/app/settings/billing/types'
 export interface ModelServiceStatus {
   state: 'setup' | 'ready' | 'plan' | 'preparing' | 'expired' | 'credit' | 'reauth' | 'denied' | 'unavailable'
   detail?: string
+  issue?: 'billing_account_scope_mismatch' | 'billing_account_mismatch' | 'billing_account_missing' | 'billing_account_inconsistent'
   portalUrl?: string
 }
 
@@ -14,7 +15,10 @@ export function cloudServiceStatus(result: BillingResult<BillingBackendState>): 
     return {
       state: result.refusal.kind === 'provider_not_configured' ? 'setup'
         : result.refusal.kind === 'unauthenticated' ? 'reauth'
-        : ['insufficient_scope', 'membership_revoked'].includes(result.refusal.kind) ? 'denied' : 'unavailable',
+        : ['insufficient_scope', 'membership_revoked', 'billing_account_scope_mismatch', 'billing_account_mismatch',
+          'billing_account_missing', 'billing_account_inconsistent'].includes(result.refusal.kind) ? 'denied' : 'unavailable',
+      issue: ['billing_account_scope_mismatch', 'billing_account_mismatch', 'billing_account_missing', 'billing_account_inconsistent']
+        .includes(result.refusal.kind) ? result.refusal.kind as ModelServiceStatus['issue'] : undefined,
       detail: result.refusal.message
     }
   }
