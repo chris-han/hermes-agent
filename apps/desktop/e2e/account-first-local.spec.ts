@@ -44,8 +44,22 @@ test('one account login preserves the local gateway and leaves capabilities off'
   const connected = process.env.ACCOUNT_MODEL_E2E_FIXTURE
     ? JSON.parse(fs.readFileSync(process.env.ACCOUNT_MODEL_E2E_FIXTURE, 'utf8')) : null
   const origin = connected?.origin || `http://127.0.0.1:${address.port}`
+  const locale = connected?.locale === 'zh' ? 'zh' : 'en'
+  const labels = locale === 'zh' ? {
+    settings: '打开设置', model: '模型服务', account: '账号', title: 'Semantier 账户', address: '工作区地址',
+    signedOut: '登录后可使用账户有权使用的服务。', login: '登录', modelDenied: '此账户无权访问。',
+    billingDenied: '计费账户不可用或与此组织不匹配。', off: '设置已关闭。', enable: '请求启用',
+    confirm: '确认请求', requested: '已请求启用。', disable: '关闭设置', fileSync: '文件同步',
+    noFolder: '尚未选择文件夹', close: '关闭设置'
+  } : {
+    settings: 'Open settings', model: 'Model service', account: 'Accounts', title: 'Semantier Account', address: 'Workspace address',
+    signedOut: 'Sign in to use eligible account services.', login: 'Sign in', modelDenied: 'Access denied for this account.',
+    billingDenied: 'The billing account is unavailable or does not match this organization.', off: 'Preference off.', enable: 'Request enablement',
+    confirm: 'Confirm request', requested: 'Enablement requested.', disable: 'Turn preference off', fileSync: 'File Sync',
+    noFolder: 'No folder selected', close: 'Close settings'
+  }
   const sandbox = createSandbox('account-first-local')
-  fs.writeFileSync(sandbox.hermesHome + '/config.yaml', 'language: en\ndisplay:\n  language: en\nauxiliary:\n  title_generation:\n    model_upgrade_enabled: false\n')
+  fs.writeFileSync(sandbox.hermesHome + '/config.yaml', `language: ${locale}\ndisplay:\n  language: ${locale}\nauxiliary:\n  title_generation:\n    model_upgrade_enabled: false\n`)
   const root = path.resolve(import.meta.dirname, '../../..')
   const support = path.join(sandbox.root, 'python-fixture')
   fs.mkdirSync(support)
@@ -106,14 +120,14 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
       session.fromPartition(partitionName).webRequest.onBeforeRequest({ urls: ['https://cloud.semantier.cn/*'] },
         (_details: unknown, callback: (value: { cancel: boolean }) => void) => callback({ cancel: true }))
     }, partition)
-    await page.getByRole('button', { name: 'Open settings', exact: true }).click()
-    await page.getByRole('button', { name: 'Model service', exact: true }).click()
-    await page.getByRole('button', { name: 'Accounts', exact: true }).click()
-    await expect(page.getByText('Semantier Account', { exact: true })).toBeVisible()
-    await page.getByLabel('Workspace address').fill(origin)
-    await expect(page.getByText('Sign in to use eligible account services.', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: labels.settings, exact: true }).click()
+    await page.getByRole('button', { name: labels.model, exact: true }).click()
+    await page.getByRole('button', { name: labels.account, exact: true }).click()
+    await expect(page.getByText(labels.title, { exact: true })).toBeVisible()
+    await page.getByLabel(labels.address).fill(origin)
+    await expect(page.getByText(labels.signedOut, { exact: true })).toBeVisible()
     const popupPromise = app.waitForEvent('window')
-    await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+    await page.getByRole('button', { name: labels.login, exact: true }).click()
     const popup = await popupPromise
     if (connected) {
       await popup.getByLabel('Login').fill(connected.login)
@@ -123,10 +137,10 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
     if (connected?.refusal) {
       await expect.poll(() => page.evaluate(() => (window as any).hermesDesktop.workspace.modelStatus()),
         { timeout: 90_000 }).toMatchObject({ state: 'denied', issue: connected.foreign_membership_denial ? undefined : connected.refusal })
-      const message = connected.foreign_membership_denial ? 'Access denied for this account.'
-        : 'The billing account is unavailable or does not match this organization.'
+      const message = connected.foreign_membership_denial ? labels.modelDenied : labels.billingDenied
       await expect(page.getByText(message, { exact: true })).toBeVisible()
-      await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toHaveCount(0)
+      await info.attach('model-denial-' + locale + '-' + connected.refusal, { body: await page.screenshot(), contentType: 'image/png' })
+      await expect(page.getByRole('button', { name: labels.login, exact: true })).toHaveCount(0)
       expect(await page.evaluate(() => (window as any).hermesDesktop.workspace.modelDefault())).toBeNull()
     } else if (connected) {
       await expect.poll(() => page.evaluate(() => (window as any).hermesDesktop.workspace.modelDefault()),
@@ -145,23 +159,23 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
         await expect.poll(() => page.evaluate(() => (window as any).hermesDesktop.workspace.modelDefault()),
           { timeout: 90_000 }).toMatchObject({ model: 'deepseek-v4.1-flash-1017' })
         expect(await app.evaluate(async ({ session }, name) => session.fromPartition(name).cookies.get({}), ownedPartition)).toEqual(cookies)
-        await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toHaveCount(0)
+        await expect(page.getByRole('button', { name: labels.login, exact: true })).toHaveCount(0)
         expect((await page.evaluate(() => (window as any).hermesDesktop.connections.list())).primary).toBe('local')
       }
     } else {
       await expect(page.getByText('Fixture', { exact: true })).toBeVisible({ timeout: 20_000 })
     }
-    await expect(page.getByText('Preference off.', { exact: false })).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByText(labels.off, { exact: false })).toBeVisible({ timeout: 20_000 })
     if (connected) {
-      await page.getByRole('button', { name: 'Request enablement', exact: true }).click()
-      await page.getByRole('button', { name: 'Confirm request', exact: true }).click()
-      await expect(page.getByText('Enablement requested.', { exact: false })).toBeVisible({ timeout: 20_000 })
-      await page.getByRole('button', { name: 'Turn preference off', exact: true }).click()
-      await expect(page.getByText('Preference off.', { exact: false })).toBeVisible({ timeout: 20_000 })
+      await page.getByRole('button', { name: labels.enable, exact: true }).click()
+      await page.getByRole('button', { name: labels.confirm, exact: true }).click()
+      await expect(page.getByText(labels.requested, { exact: false })).toBeVisible({ timeout: 20_000 })
+      await page.getByRole('button', { name: labels.disable, exact: true }).click()
+      await expect(page.getByText(labels.off, { exact: false })).toBeVisible({ timeout: 20_000 })
     }
-    await page.getByRole('button', { name: 'File Sync', exact: true }).click()
-    await expect(page.getByText('No folder selected', { exact: true })).toBeVisible()
-    await page.getByRole('button', { name: 'Close settings', exact: true }).click()
+    await page.getByRole('button', { name: labels.fileSync, exact: true }).click()
+    await expect(page.getByText(labels.noFolder, { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: labels.close, exact: true }).click()
     await expect(page.getByRole('button', { name: 'default', exact: true })).toHaveAttribute('aria-pressed', 'true')
     const afterAccount = await page.evaluate(() => (window as any).hermesDesktop.connections.list())
     expect(afterAccount.primary).toBe(localBefore.primary)
