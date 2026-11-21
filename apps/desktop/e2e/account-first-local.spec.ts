@@ -115,8 +115,10 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
     await popup.getByRole('button', { name: 'Sign in fixture', exact: true }).click()
     if (connected?.refusal) {
       await expect.poll(() => page.evaluate(() => (window as any).hermesDesktop.workspace.modelStatus()),
-        { timeout: 90_000 }).toMatchObject({ state: 'denied', issue: connected.refusal })
-      await expect(page.getByText('The billing account is unavailable or does not match this organization.', { exact: true })).toBeVisible()
+        { timeout: 90_000 }).toMatchObject({ state: 'denied', issue: connected.foreign_membership_denial ? undefined : connected.refusal })
+      const message = connected.foreign_membership_denial ? 'Access denied for this account.'
+        : 'The billing account is unavailable or does not match this organization.'
+      await expect(page.getByText(message, { exact: true })).toBeVisible()
       await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toHaveCount(0)
       expect(await page.evaluate(() => (window as any).hermesDesktop.workspace.modelDefault())).toBeNull()
     } else if (connected) {
