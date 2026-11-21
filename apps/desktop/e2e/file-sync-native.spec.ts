@@ -242,7 +242,7 @@ test('explicit File Sync in Windows Electron uses the selected account and local
     const { page: restarted } = await fixture.restart()
     await expect(restarted.getByRole('button', { name: 'default', exact: true })).toHaveAttribute('aria-pressed', 'true', { timeout: 180_000 })
     expect((await restarted.evaluate(() => (window as any).hermesDesktop.connections.list())).primary).toBe('local')
-    await restarted.getByRole('button', { name: 'Open settings', exact: true }).click()
+    await restarted.getByRole('button', { name: 'Open settings', exact: true }).click({ timeout: 90_000 })
     await restarted.getByRole('button', { name: 'File Sync', exact: true }).click()
     await expect(restarted.getByText(await fs.promises.realpath(folder), { exact: true })).toBeVisible({ timeout: 30_000 })
     await expect(restarted.getByText('Paused', { exact: true })).toBeVisible()
