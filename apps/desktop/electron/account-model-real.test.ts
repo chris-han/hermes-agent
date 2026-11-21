@@ -33,7 +33,14 @@ it.skipIf(!origin)('prepares the native device using one authenticated account s
   expect(await owner.prepare(account)).toBe(eligible ? 'ready' : 'unavailable')
   expect(approvals).toBe(1)
   expect((await native('/api/providers/oauth')).providers[0].status.logged_in).toBe(true)
-  expect(await owner.preferredModel(account)).toBe(eligible ? 'deepseek-v4.1-flash-1017' : null)
+  const model = await owner.preferredModel(account)
+  expect(model).toBe(eligible ? 'deepseek-v4.1-flash-1017' : null)
+  if (eligible) {
+    const response = await native('fixture-invoke', 'POST', { model })
+    expect(response.status).toBe(200)
+    expect(response.content).toBe('fixture response')
+  }
   await owner.suspend()
   expect((await native('/api/providers/oauth')).providers[0].status.logged_in).toBe(false)
+  if (eligible) {expect((await native('fixture-invoke', 'POST', { model })).status).toBe(403)}
 }, 30000)
