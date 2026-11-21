@@ -81,7 +81,7 @@ it.skipIf(!fixture)('uses Desktop File Sync IPC with real account and FileX owne
     account = ownerA
     supervisor.accountChanged()
     mock.picker = async () => ({ canceled: false, filePaths: [mock.folder] })
-    expect(await invoke('choose')).toMatchObject({ folder: mock.folder })
+    expect(await invoke('choose')).toMatchObject({ folder: await fs.realpath(mock.folder) })
     const filename = 'ipc-upload-' + randomUUID() + '.md'
     await fs.writeFile(path.join(mock.folder, filename), 'IPC fixture bytes\n')
     await expect.poll(async () => {
