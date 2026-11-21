@@ -578,3 +578,38 @@ it('retains a confirmed stop across shutdown if the account binding is subsequen
   expect(calls).toBe(1)
   expect((await supervisor.owners())[0]).toMatchObject({ enabled: false, deviceStop: 'STOPPED' })
 })
+
+it('keeps watcher failure visible while the final device stop is persisted', async () => {
+  const { folder, supervisor } = await setup()
+  const token = 'fxd_' + 's'.repeat(43)
+  let emit: (event: { event: string; code: string }) => void = () => {}
+  const run = supervisor.options.run!
+  supervisor.options.run = (...args) => {
+    if (args[0][1] === 'run') {emit = args[2]}
+    return run(...args)
+  }
+  supervisor.options.binding = async () => ({ userId: 'a', workspaceId: 'wa', remoteRoot: 'private://', token, enginePath: '/api/file-sync/engine', version: '0.61.1' })
+  supervisor.options.seal = value => 'sealed:' + value
+  supervisor.options.unseal = value => value.slice(7)
+  supervisor.options.stopDevice = async () => 'STOPPED'
+  await supervisor.enable('https://cloud.example', folder)
+  const internals = supervisor as unknown as { write: (...args: any[]) => Promise<void> }
+  const write = internals.write.bind(supervisor)
+  let reached: () => void = () => {}
+  let release: () => void = () => {}
+  const waiting = new Promise<void>(resolve => { reached = resolve })
+  const hold = new Promise<void>(resolve => { release = resolve })
+  internals.write = async (...args) => {
+    if (args[0].some((owner: any) => owner.deviceStop === 'STOPPED')) {reached(); await hold}
+    await write(...args)
+  }
+  emit({ event: 'error', code: 'pass.failed' })
+  try {
+    await waiting
+    expect(supervisor.status().state).toBe('Error')
+  } finally {
+    release()
+    internals.write = write
+    await supervisor.pause()
+  }
+})

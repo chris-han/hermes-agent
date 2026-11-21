@@ -158,7 +158,7 @@ export class FileSyncSupervisor {
     }
   }
   accountChanged() {this.accountTransitions = Math.max(0, this.accountTransitions - 1)}
-  private async stop() {
+  private async stop(preserveView = false) {
     if (this.controller?.signal.aborted) {
       this.stopChild?.()
     } else {
@@ -183,7 +183,7 @@ export class FileSyncSupervisor {
 
     this.controller = null
     this.running = null
-    this.view = { state: 'Paused', folder: this.current?.canonicalLocalFolder }
+    if (!preserveView) {this.view = { state: 'Paused', folder: this.current?.canonicalLocalFolder }}
   }
   async shutdown() {
     if (this.shutdownComplete) {return}
@@ -212,19 +212,19 @@ export class FileSyncSupervisor {
     if (this.ownershipCommit) {await this.ownershipCommit.catch(() => {})}
     await this.stopAndPersist()
   }
-  private async stopAndPersist() {
+  private async stopAndPersist(preserveView = false) {
     if (this.stopping) {return this.stopping}
-    this.stopping = this.stopAndPersistOnce()
+    this.stopping = this.stopAndPersistOnce(preserveView)
     try {
       await this.stopping
     } finally {
       this.stopping = null
     }
   }
-  private async stopAndPersistOnce() {
+  private async stopAndPersistOnce(preserveView: boolean) {
     const current = this.current
     if (current?.deviceGrant && !current.enabled && current.deviceStop === 'STOPPED') {
-      await this.stop()
+      await this.stop(preserveView)
       return
     }
     if (current?.deviceGrant) {
@@ -234,7 +234,7 @@ export class FileSyncSupervisor {
       } catch (error) {
         // A failed registry cannot prove a server-side fence, but it must not
         // leave the local process sending more work while reporting failure.
-        await this.stop()
+        await this.stop(preserveView)
         this.view = { state: 'Error', folder: current.canonicalLocalFolder, message: 'File Sync could not save its stop state. Your files are preserved.' }
         throw error
       }
@@ -245,7 +245,7 @@ export class FileSyncSupervisor {
           if (!['PENDING', 'UNKNOWN', 'STOPPED'].includes(result)) {result = 'UNKNOWN'}
         }
       } catch { /* Keep the durable unknown fence on transport or decryption failure. */ }
-      await this.stop()
+      await this.stop(preserveView)
       const updated = await this.owners()
       await this.write(updated.map(x => x.id === current.id ? { ...x, enabled: false, deviceStop: result } : x))
       this.current = { ...current, enabled: false, deviceStop: result }
@@ -253,7 +253,7 @@ export class FileSyncSupervisor {
         this.view = { state: 'Error', folder: current.canonicalLocalFolder, message: `File Sync stop ${result.toLowerCase()}. Your files are preserved.` }
       }
     } else {
-      await this.stop()
+      await this.stop(preserveView)
     }
 
     if (current && !current.deviceGrant) {
@@ -695,9 +695,9 @@ export class FileSyncSupervisor {
     this.view = { state: 'Error', folder: canonical, message: 'File Sync needs reconnection. Your files are preserved.' }
     this.failureStop = Promise.resolve().then(async () => {
       if (this.current?.deviceGrant) {
-        await this.stopAndPersist()
+        await this.stopAndPersist(true)
       } else {
-        await this.stop()
+        await this.stop(true)
       }
       const owners = await this.owners()
       if (this.generation === failedGeneration && recordId) {

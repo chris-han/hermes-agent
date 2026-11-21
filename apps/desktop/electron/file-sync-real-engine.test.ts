@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { createCipheriv, randomBytes, randomUUID } from 'node:crypto'
+import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -57,7 +57,7 @@ it.skipIf(!fixture)(
         return { userId: value.user.user_id, workspaceId: value.workspace.id, organizationId: value.organization_id }
       },
       binding: async () => {
-        const response = await request('/api/file-sync/binding', {
+        const response = await request(process.env.FILEX_DEVICE_SUPERVISOR === '1' ? '/api/file-sync/device-binding' : '/api/file-sync/binding', {
           method: 'POST',
           headers: { Origin: origin, 'x-semantier-csrf': '1' }
         })
@@ -72,6 +72,21 @@ it.skipIf(!fixture)(
         const cipher = createCipheriv('aes-256-gcm', key, iv)
 
         return Buffer.concat([iv, cipher.update(value), cipher.final(), cipher.getAuthTag()]).toString('base64')
+      },
+      unseal: (value: string) => {
+        const bytes = Buffer.from(value, 'base64')
+        const decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12))
+        decipher.setAuthTag(bytes.subarray(-16))
+        return Buffer.concat([decipher.update(bytes.subarray(12, -16)), decipher.final()]).toString()
+      },
+      stopDevice: async (_origin: string, token: string): Promise<'STOPPED' | 'PENDING' | 'UNKNOWN'> => {
+        const response = await fetch(origin + '/api/file-sync/device-stop', {
+          method: 'POST', headers: { Authorization: 'Bearer ' + token }, credentials: 'omit'
+        })
+        if (!response.ok) {throw new Error('Device stop unavailable')}
+        const result = await response.json()
+        if (!['STOPPED', 'PENDING', 'UNKNOWN'].includes(result.state)) {throw new Error('Invalid device stop state')}
+        return result.state
       }
     }
 
@@ -123,6 +138,9 @@ it.skipIf(!fixture)(
       expect(await secondView.json()).toMatchObject({ desired: { enabled: true }, execution: 'unavailable' })
       await supervisor.enable(origin, folder)
       expect((await supervisor.owners())[0].enabled).toBe(true)
+      if (process.env.FILEX_DEVICE_SUPERVISOR === '1') {
+        expect((await supervisor.owners())[0].deviceGrant).toBe(true)
+      }
       expect(await readWinman()).toMatchObject({ desired: { enabled: true }, execution: 'unavailable' })
       expect(await admitWinman('files-on-winman-on')).toEqual({ status: 'queued', admissions: 2 })
       await fs.writeFile(path.join(folder, name), 'Portable supervisor upload\n')
@@ -233,6 +251,10 @@ it.skipIf(!fixture)(
         .poll(() => fs.readFile(path.join(folder, secondUpload), 'utf8').catch(() => ''), { timeout: 25000 })
         .toBe('Second device bytes\n')
       await secondDevice.pause()
+      if (process.env.FILEX_DEVICE_SUPERVISOR === '1') {
+        expect((await secondDevice.owners())[0]).toMatchObject({ deviceGrant: true, enabled: false, deviceStop: 'STOPPED' })
+        expect((await supervisor.owners())[0]).toMatchObject({ deviceGrant: true, enabled: true })
+      }
       const pausedOnly = 'paused-device-' + randomUUID() + '.md'
       await fs.writeFile(path.join(secondChosen, pausedOnly), 'Paused device bytes\n')
       const afterPause = await request('/api/file-sync/files')
