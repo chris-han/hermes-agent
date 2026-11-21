@@ -113,7 +113,13 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
       await popup.getByLabel('Password').fill(connected.password)
     }
     await popup.getByRole('button', { name: 'Sign in fixture', exact: true }).click()
-    if (connected) {
+    if (connected?.refusal) {
+      await expect.poll(() => page.evaluate(() => (window as any).hermesDesktop.workspace.modelStatus()),
+        { timeout: 90_000 }).toMatchObject({ state: 'denied', issue: connected.refusal })
+      await expect(page.getByText('The billing account is unavailable or does not match this organization.', { exact: true })).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toHaveCount(0)
+      expect(await page.evaluate(() => (window as any).hermesDesktop.workspace.modelDefault())).toBeNull()
+    } else if (connected) {
       await expect.poll(() => page.evaluate(() => (window as any).hermesDesktop.workspace.modelDefault()),
         { timeout: 90_000 }).toMatchObject({ model: 'deepseek-v4.1-flash-1017' })
     } else {
