@@ -30,10 +30,15 @@ it('does not treat a post-spawn IPC/kill error as proof that the engine stopped'
     child.send = ({ args }: any, callback: () => void) => {
       callback()
 
-      if (args[1] === 'list') {child.stdout.emit('data', '[]\n')}
+      if (args[1] === 'list') {
+        child.stdout.emit('data', '[]\n')
+      }
 
-      if (args[1] === 'run') {child.stdout.emit('data', '{"event":"pass","params":{"failed":0}}\n')}
-      else {child.emit('exit', 0)}
+      if (args[1] === 'run') {
+        child.stdout.emit('data', '{"event":"pass","params":{"failed":0}}\n')
+      } else {
+        child.emit('exit', 0)
+      }
     }
 
     children.push(child)

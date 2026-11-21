@@ -65,7 +65,9 @@ export function runBillingRecovery(block: BillingBlock): void {
   }
 
   if (block.provider === 'semantier-cloud') {
-    if (!block.billing_url || !openCloudPortal(block.billing_url)) { requestBillingSettings() }
+    if (!block.billing_url || !openCloudPortal(block.billing_url)) {
+      requestBillingSettings()
+    }
 
     return
   }

@@ -133,10 +133,12 @@ it('canonical slash images submit staged bytes and deleting tokens removes paylo
   const h = mount(true)
   vi.stubEnv('HERMES_TUI_GATEWAY_URL', '')
   const path = join(h.home, 'shot.png')
+
   const bytes = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nL8AAAAASUVORK5CYII=',
     'base64'
   )
+
   writeFileSync(path, bytes)
 
   try {
@@ -387,9 +389,11 @@ it('`/queue` with an image journals its attachment in the first durable write', 
     expect(h.composer.state.input !== '' && queued.length > 0).toBe(false)
     expect(queued).toHaveLength(1)
     const journal = join(h.home, 'tui-pending-inputs')
+
     const entries = readdirSync(journal, { recursive: true })
       .map(String)
       .filter(name => name.endsWith('.json'))
+
     expect(entries.map(name => JSON.parse(readFileSync(join(journal, name), 'utf8')).attachments)).toEqual([
       [expect.objectContaining({ mime: 'image/png' })]
     ])

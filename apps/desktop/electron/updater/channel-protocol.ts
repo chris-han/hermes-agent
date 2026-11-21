@@ -442,13 +442,19 @@ function request(fields: Fields): ChannelRequest {
 
   const buildId = fields.text('buildId', BUILD_ID)
   buildPrefix(buildId)
-  const windowsVersion = fields.text('windowsVersion', canaryRelease || buildId.includes('.') ? /^\d+\.\d+\.\d+\.\d+$/ : /^\d+\.\d+\.\d+\.0$/)
+  const windowsVersion = fields.text(
+    'windowsVersion',
+    canaryRelease || buildId.includes('.') ? /^\d+\.\d+\.\d+\.\d+$/ : /^\d+\.\d+\.\d+\.0$/
+  )
 
   if (windowsVersion.split('.').some((part: string): boolean => Number(part) > 65535)) {
     throw new Error('Invalid Windows version')
   }
 
-  if (buildId.includes('.') && (buildId !== windowsVersion || fields.optional('semantierScope') !== 'semantier-windows-x64/v1')) {
+  if (
+    buildId.includes('.') &&
+    (buildId !== windowsVersion || fields.optional('semantierScope') !== 'semantier-windows-x64/v1')
+  ) {
     throw new Error('Version directory does not match signed Windows version')
   }
 
@@ -554,7 +560,9 @@ function packageEntry(value: unknown, schema: 1 | 2): ChannelPackage {
 
   if (schema === 2) {
     bindNativePackage(fields, result)
-  } else if (fields.get('native') !== undefined) {throw new Error('Native package requires manifest schema2')}
+  } else if (fields.get('native') !== undefined) {
+    throw new Error('Native package requires manifest schema2')
+  }
 
   return result
 }
@@ -563,10 +571,14 @@ function bindNativePackage(fields: Fields, result: ChannelPackage): void {
   const native = fields.object('native')
   const schema = native.get('schema')
 
-  if (schema !== 1 && schema !== 2) {throw new Error('Unsupported native package origin schema')}
+  if (schema !== 1 && schema !== 2) {
+    throw new Error('Unsupported native package origin schema')
+  }
 
-  if ((schema === 1 && native.get('packageBase') !== undefined) ||
-      (schema === 2 && native.get('packageBase') !== 'https://assets.semantier.cn')) {
+  if (
+    (schema === 1 && native.get('packageBase') !== undefined) ||
+    (schema === 2 && native.get('packageBase') !== 'https://assets.semantier.cn')
+  ) {
     throw new Error('Invalid native package origin')
   }
 
@@ -581,12 +593,13 @@ function bindNativePackage(fields: Fields, result: ChannelPackage): void {
     native.get('api') !== 'PackageManager.AddPackageByUriAsync' ||
     native.get('digestMethod') !== 'IAppxDigestProvider.GetDigest' ||
     native.get('digestEncoding') !== 'base64'
-  )
-    {throw new Error('Unsupported native API/package contract')}
+  ) {
+    throw new Error('Unsupported native API/package contract')
+  }
 
   result.native = {
     schema,
-    ...(schema === 2 ? {packageBase: 'https://assets.semantier.cn' as const} : {}),
+    ...(schema === 2 ? { packageBase: 'https://assets.semantier.cn' as const } : {}),
     api: 'PackageManager.AddPackageByUriAsync',
     digestMethod: 'IAppxDigestProvider.GetDigest',
     digestEncoding: 'base64',
@@ -610,14 +623,18 @@ export function decodeChannelManifest(body: string): ChannelManifest {
   const fields = new Fields(parseChannelJson(body))
   const schema = fields.get('schema')
 
-  if (schema !== 1 && schema !== 2) {throw new Error('Unsupported manifest schema')}
+  if (schema !== 1 && schema !== 2) {
+    throw new Error('Unsupported manifest schema')
+  }
   const entries: unknown = fields.get('packages')
 
   if (!Array.isArray(entries) || !entries.length || entries.length > 4) {
     throw new Error('Invalid channel packages')
   }
 
-  if (schema === 2 && entries.length !== 1) {throw new Error('Native manifest requires one Windows x64 target')}
+  if (schema === 2 && entries.length !== 1) {
+    throw new Error('Native manifest requires one Windows x64 target')
+  }
   const packages: ChannelPackage[] = entries.map((entry: unknown) => packageEntry(entry, schema))
   const keys = new Set(packages.map((entry: ChannelPackage): string => `${entry.platform}/${entry.arch}`))
 
@@ -628,13 +645,16 @@ export function decodeChannelManifest(body: string): ChannelManifest {
   const manifest: ChannelManifest = { schema, request: request(fields.object('request')), packages }
 
   for (const pkg of packages) {
-    if (pkg.native?.schema === 2 && (
-      manifest.request.publicBase !== 'https://cloud.semantier.cn' ||
-      manifest.request.channel !== 'semantier-acceptance' ||
-      manifest.request.repository !== 'chris-han/hermes-agent' ||
-      pkg.variant !== 'bundled' ||
-      pkg.artifact.key !== `releases/channel-builds/${manifest.request.buildId}/SemantierAgent.msix`
-    )) {throw new Error('Invalid OSS package origin binding')}
+    if (
+      pkg.native?.schema === 2 &&
+      (manifest.request.publicBase !== 'https://cloud.semantier.cn' ||
+        manifest.request.channel !== 'semantier-acceptance' ||
+        manifest.request.repository !== 'chris-han/hermes-agent' ||
+        pkg.variant !== 'bundled' ||
+        pkg.artifact.key !== `releases/channel-builds/${manifest.request.buildId}/SemantierAgent.msix`)
+    ) {
+      throw new Error('Invalid OSS package origin binding')
+    }
   }
 
   if (fields.get('receiverCapabilities') !== undefined) {
@@ -644,7 +664,7 @@ export function decodeChannelManifest(body: string): ChannelManifest {
       throw new Error('Unsupported receiver capability')
     }
 
-    manifest.receiverCapabilities = {windowsPackageUri:1}
+    manifest.receiverCapabilities = { windowsPackageUri: 1 }
   }
 
   if (fields.get('receiverProtocol') !== undefined) {
@@ -726,7 +746,9 @@ export function decodeNativePackageGraph(body: string, build: ChannelRequest, pk
     const object = nativePackageObject(entry, pkg, prefix)
     const identityKey = `${object.identity}/${object.kind}/${object.resourceId ?? ''}`
 
-    if (rows.has(object.key) || identities.has(identityKey)) {throw new Error('Ambiguous native package identity/key')}
+    if (rows.has(object.key) || identities.has(identityKey)) {
+      throw new Error('Ambiguous native package identity/key')
+    }
     rows.set(object.key, object)
     identities.add(identityKey)
 
@@ -754,12 +776,14 @@ export function decodeNativePackageGraph(body: string, build: ChannelRequest, pk
     throw new Error('Single MSIX requires exactly one main package')
   }
 
-  if (!single && (
-    main.kind !== 'main-bundle' ||
-    objects.some(row => row.kind !== 'main-bundle' && row.kind !== 'main-package' && row.kind !== 'asset-package') ||
-    main.references.length !== objects.length - 1
-  ))
-    {throw new Error('Unsupported native asset layout')}
+  if (
+    !single &&
+    (main.kind !== 'main-bundle' ||
+      objects.some(row => row.kind !== 'main-bundle' && row.kind !== 'main-package' && row.kind !== 'asset-package') ||
+      main.references.length !== objects.length - 1)
+  ) {
+    throw new Error('Unsupported native asset layout')
+  }
 
   const seen = new Set<string>(),
     active = new Set<string>()
@@ -767,11 +791,17 @@ export function decodeNativePackageGraph(body: string, build: ChannelRequest, pk
   const visit = (key: string): void => {
     const row = rows.get(key)
 
-    if (!row) {throw new Error('Missing native object')}
+    if (!row) {
+      throw new Error('Missing native object')
+    }
 
-    if (active.has(key)) {throw new Error('Native graph cycle')}
+    if (active.has(key)) {
+      throw new Error('Native graph cycle')
+    }
 
-    if (seen.has(key)) {return}
+    if (seen.has(key)) {
+      return
+    }
     active.add(key)
     row.references.forEach(visit)
     active.delete(key)
@@ -780,7 +810,9 @@ export function decodeNativePackageGraph(body: string, build: ChannelRequest, pk
 
   visit(root)
 
-  if (seen.size !== rows.size) {throw new Error('Unreachable native graph object')}
+  if (seen.size !== rows.size) {
+    throw new Error('Unreachable native graph object')
+  }
 
   return {
     schema: 1,
@@ -821,8 +853,9 @@ function nativePackageObject(entry: unknown, pkg: ChannelPackage, prefix: string
     version !== pkg.version ||
     arch !== (kind.endsWith('bundle') || kind === 'asset-package' ? 'neutral' : pkg.arch) ||
     Buffer.from(nativeDigest, 'base64').toString('base64') !== nativeDigest
-  )
-    {throw new Error('Native object binding mismatch')}
+  ) {
+    throw new Error('Native object binding mismatch')
+  }
 
   validateNativeObjectIdentity(kind, identity, resourceId, row, pkg)
 
@@ -873,8 +906,9 @@ function nativeReferences(row: Fields, kind: string): string[] {
     refs.some((ref: unknown): boolean => typeof ref !== 'string') ||
     new Set(refs).size !== refs.length ||
     (kind.endsWith('package') && refs.length > 0)
-  )
-    {throw new Error('Invalid native references')}
+  ) {
+    throw new Error('Invalid native references')
+  }
 
   return refs as string[]
 }

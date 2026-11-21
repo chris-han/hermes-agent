@@ -169,7 +169,9 @@ export function useComposerSubmit({
       .then(accepted => void (accepted === false ? rejected() : clearSessionDraft(submittedScope)))
       .catch(error => {
         // The user withdrew this exact attempt; keep newer edits and never restore it as Retry.
-        if (error instanceof WorkspaceRequestStopped && error.requestId === submissionId) {return}
+        if (error instanceof WorkspaceRequestStopped && error.requestId === submissionId) {
+          return
+        }
         rejected()
       })
   }

@@ -20,7 +20,14 @@ describe('toast titles', () => {
 
   it('keeps long resolver diagnostics inside a scrollable toast detail region', () => {
     const detail = 'Resolver: D:/repo/deliverables/work/very-long-build-root/'.repeat(25)
-    notify({ id: 'resolver-error', kind: 'error', title: 'Cannot enable disk-cleanup', message: 'Check package index', detail, durationMs: 0 })
+    notify({
+      id: 'resolver-error',
+      kind: 'error',
+      title: 'Cannot enable disk-cleanup',
+      message: 'Check package index',
+      detail,
+      durationMs: 0
+    })
     render(<NotificationStack />)
     fireEvent.click(screen.getByText('Details'))
     const log = screen.getByText(detail)

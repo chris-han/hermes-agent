@@ -76,12 +76,14 @@ it('a completion that beats the resume reply is replayed after the snapshot, cov
   vi.useFakeTimers()
   delete process.env.HERMES_TUI_GATEWAY_URL
   delete process.env.HERMES_TUI_SIDECAR_URL
+
   const gw = new GatewayClient(async () => ({
     url: 'ws://gateway.test/api/ws',
     protocols: [],
     instance_id: 'owner',
     profile_id: 'fixture'
   }))
+
   const events: any[] = []
   gw.on('event', event => events.push(event))
   let lifecycle!: ReturnType<typeof useSessionLifecycle>
@@ -122,8 +124,10 @@ it('a completion that beats the resume reply is replayed after the snapshot, cov
     socket.open()
     await vi.advanceTimersByTimeAsync(0)
     const frames = () => socket.sent.map(text => JSON.parse(text) as { id: number; method: string })
+
     const reply = (method: string, result: unknown) =>
       socket.message(JSON.stringify({ jsonrpc: '2.0', id: frames().find(f => f.method === method)!.id, result }))
+
     reply('runtime.describe', { session_create: { sources: ['tui'], parameters: [] } })
     await vi.advanceTimersByTimeAsync(0)
 

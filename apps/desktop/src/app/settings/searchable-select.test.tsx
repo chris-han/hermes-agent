@@ -74,10 +74,17 @@ describe('SearchableSelect', () => {
 
   it('searches labels and stable ids, and selects the correct id when labels match', () => {
     const onChange = vi.fn()
-    render(<SearchableSelect aria-label="Provider" onChange={onChange} options={[
-      { value: 'east-provider', label: 'Example' },
-      { value: 'west-provider', label: 'Example' }
-    ]} value="" />)
+    render(
+      <SearchableSelect
+        aria-label="Provider"
+        onChange={onChange}
+        options={[
+          { value: 'east-provider', label: 'Example' },
+          { value: 'west-provider', label: 'Example' }
+        ]}
+        value=""
+      />
+    )
     fireEvent.click(screen.getByRole('combobox', { name: 'Provider' }))
     fireEvent.change(screen.getByPlaceholderText('Search…'), { target: { value: 'WEST' } })
     fireEvent.click(screen.getByText('Example'))
@@ -86,10 +93,17 @@ describe('SearchableSelect', () => {
 
   it('keeps a disabled selected option visible but cannot select it', () => {
     const onChange = vi.fn()
-    render(<SearchableSelect aria-label="Model" onChange={onChange} options={[
-      { value: 'old', label: 'Old model', disabled: true },
-      { value: 'new', label: 'New model' }
-    ]} value="old" />)
+    render(
+      <SearchableSelect
+        aria-label="Model"
+        onChange={onChange}
+        options={[
+          { value: 'old', label: 'Old model', disabled: true },
+          { value: 'new', label: 'New model' }
+        ]}
+        value="old"
+      />
+    )
     fireEvent.click(screen.getByRole('combobox', { name: 'Model' }))
     const old = screen.getAllByText('Old model').at(-1)!
     fireEvent.click(old)
@@ -100,10 +114,17 @@ describe('SearchableSelect', () => {
 
   it('selects a filtered option with Enter', () => {
     const onChange = vi.fn()
-    render(<SearchableSelect aria-label="Provider" onChange={onChange} options={[
-      { value: 'alpha', label: 'Alpha service' },
-      { value: 'beta', label: 'Beta service' }
-    ]} value="" />)
+    render(
+      <SearchableSelect
+        aria-label="Provider"
+        onChange={onChange}
+        options={[
+          { value: 'alpha', label: 'Alpha service' },
+          { value: 'beta', label: 'Beta service' }
+        ]}
+        value=""
+      />
+    )
     fireEvent.click(screen.getByRole('combobox', { name: 'Provider' }))
     const search = screen.getByPlaceholderText('Search…')
     fireEvent.change(search, { target: { value: 'BETA' } })

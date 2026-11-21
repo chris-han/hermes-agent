@@ -9,9 +9,14 @@ export interface MinimizeToTrayStatus {
   available: boolean
 }
 
-export interface WindowCloseRequest { id: string }
+export interface WindowCloseRequest {
+  id: string
+}
 export type WindowCloseAction = 'background' | 'quit' | 'cancel'
-export interface WindowCloseResult { ok: boolean; reason?: 'invalid-request' | 'busy' | 'background-unavailable' }
+export interface WindowCloseResult {
+  ok: boolean
+  reason?: 'invalid-request' | 'busy' | 'background-unavailable'
+}
 
 interface Options {
   preferencesPath: string
@@ -32,12 +37,15 @@ export function createMinimizeToTray(options: Options) {
   let pending = Promise.resolve()
   const windows = new Set<BrowserWindow>()
   const hidden = new Set<BrowserWindow>()
-  const closeRequests = new Map<BrowserWindow, WindowCloseRequest & { busy: boolean; background: () => Promise<boolean> }>()
+  const closeRequests = new Map<
+    BrowserWindow,
+    WindowCloseRequest & { busy: boolean; background: () => Promise<boolean> }
+  >()
 
-  const requestingWindow = (event: Electron.IpcMainInvokeEvent) => [...windows].find(win =>
-    !win.isDestroyed() && win.webContents === event.sender && event.senderFrame === win.webContents.mainFrame
-  )
-
+  const requestingWindow = (event: Electron.IpcMainInvokeEvent) =>
+    [...windows].find(
+      win => !win.isDestroyed() && win.webContents === event.sender && event.senderFrame === win.webContents.mainFrame
+    )
 
   const status = (): MinimizeToTrayStatus => ({ enabled, available: !!tray && !tray.isDestroyed() })
 
@@ -298,7 +306,6 @@ export function createMinimizeToTray(options: Options) {
         const request = { id: randomUUID(), busy: false, background: startBackground }
         closeRequests.set(win, request)
         win.webContents.send('hermes:minimize-to-tray:close-requested', { id: request.id })
-
       })
     }
 
@@ -311,7 +318,6 @@ export function createMinimizeToTray(options: Options) {
         await apply(true)
 
         return hide() || win.isDestroyed() || quitting || options.isQuittingForHandoff()
-
       } finally {
         backgroundPending = false
       }
@@ -392,38 +398,51 @@ export function createMinimizeToTray(options: Options) {
 
     return request ? { id: request.id } : null
   })
-  ipcMain.handle('hermes:minimize-to-tray:close-answer', async (event, id: unknown, action: unknown): Promise<WindowCloseResult> => {
-    const win = requestingWindow(event)
-    const request = win && closeRequests.get(win)
+  ipcMain.handle(
+    'hermes:minimize-to-tray:close-answer',
+    async (event, id: unknown, action: unknown): Promise<WindowCloseResult> => {
+      const win = requestingWindow(event)
+      const request = win && closeRequests.get(win)
 
-    if (!win || !request || request.id !== id || typeof action !== 'string' || !['background', 'quit', 'cancel'].includes(action)) {
-      return { ok: false, reason: 'invalid-request' }
-    }
-
-    if (request.busy) { return { ok: false, reason: 'busy' } }
-
-    if (action === 'background') {
-      request.busy = true
-
-      try {
-        if (!await request.background()) {
-          return { ok: false, reason: 'background-unavailable' }
-        }
-      } catch (error) {
-        options.log(`[tray] background choice failed: ${error}`)
-
-        return { ok: false, reason: 'background-unavailable' }
-      } finally {
-        request.busy = false
+      if (
+        !win ||
+        !request ||
+        request.id !== id ||
+        typeof action !== 'string' ||
+        !['background', 'quit', 'cancel'].includes(action)
+      ) {
+        return { ok: false, reason: 'invalid-request' }
       }
+
+      if (request.busy) {
+        return { ok: false, reason: 'busy' }
+      }
+
+      if (action === 'background') {
+        request.busy = true
+
+        try {
+          if (!(await request.background())) {
+            return { ok: false, reason: 'background-unavailable' }
+          }
+        } catch (error) {
+          options.log(`[tray] background choice failed: ${error}`)
+
+          return { ok: false, reason: 'background-unavailable' }
+        } finally {
+          request.busy = false
+        }
+      }
+
+      closeRequests.delete(win)
+
+      if (action === 'quit') {
+        app.quit()
+      }
+
+      return { ok: true }
     }
-
-    closeRequests.delete(win)
-
-    if (action === 'quit') { app.quit() }
-
-    return { ok: true }
-  })
+  )
 
   ipcMain.handle('hermes:minimize-to-tray:get', status)
   ipcMain.handle('hermes:minimize-to-tray:set', (_event, on) => setEnabled(on === true))

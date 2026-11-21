@@ -8,7 +8,9 @@ import { FileSyncSupervisor } from './file-sync-supervisor'
 
 const roots: string[] = []
 afterEach(async () => {
-  for (const root of roots.splice(0)) {await fs.rm(root, { recursive: true, force: true })}
+  for (const root of roots.splice(0)) {
+    await fs.rm(root, { recursive: true, force: true })
+  }
 })
 
 async function setup() {
@@ -34,9 +36,13 @@ async function setup() {
     seal: () => 'encrypted',
     verifyBinary: async () => {},
     run: async args => {
-      if (args[1] === 'list') {return { code: 0, stdout: JSON.stringify(pairs) }}
+      if (args[1] === 'list') {
+        return { code: 0, stdout: JSON.stringify(pairs) }
+      }
 
-      if (args[1] === 'add') {pairs = [{ local: args[2], remote: args[3], account: args[5] }]}
+      if (args[1] === 'add') {
+        pairs = [{ local: args[2], remote: args[3], account: args[5] }]
+      }
 
       return { code: 0, events: [] }
     }
@@ -126,7 +132,9 @@ it('adopts an interrupted exact engine pair without re-adding or resetting its b
   let added = 0
 
   supervisor.options.run = async (...args) => {
-    if (args[0][1] === 'add') {added++}
+    if (args[0][1] === 'add') {
+      added++
+    }
 
     return original(...args)
   }
@@ -169,9 +177,13 @@ it('does not recreate a missing pair or launch when the selected drive is absent
   let adds = 0
 
   supervisor.options.run = async (...args) => {
-    if (args[0][1] === 'list') {return { code: 0, stdout: '[]' }}
+    if (args[0][1] === 'list') {
+      return { code: 0, stdout: '[]' }
+    }
 
-    if (args[0][1] === 'add') {adds++}
+    if (args[0][1] === 'add') {
+      adds++
+    }
 
     return original(...args)
   }
@@ -190,7 +202,6 @@ it('can pause and retry after an unavailable helper without poisoning the lifecy
   await expect(supervisor.pause()).resolves.toBeUndefined()
   await expect(supervisor.enable('https://cloud.example', folder)).rejects.toThrow(/pairing state/)
 })
-
 
 it('rejects residual files with no local owner before obtaining credentials or running the engine', async () => {
   const { folder, supervisor, switchTo } = await setup()

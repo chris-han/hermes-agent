@@ -1,8 +1,5 @@
 /** Process composition selection; model providers and credentials are independent. */
-export function desktopCloudEnvironment(
-  parent: NodeJS.ProcessEnv,
-  backend: NodeJS.ProcessEnv = {},
-): NodeJS.ProcessEnv {
+export function desktopCloudEnvironment(parent: NodeJS.ProcessEnv, backend: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const parentMode = parent.SEMANTIER_RUNTIME
   const backendMode = backend.SEMANTIER_RUNTIME
 
@@ -16,5 +13,5 @@ export function desktopCloudEnvironment(
     throw new Error('Conflicting SEMANTIER_RUNTIME composition')
   }
 
-  return {...parent, ...backend, SEMANTIER_RUNTIME: parentMode ?? backendMode ?? '0'}
+  return { ...parent, ...backend, SEMANTIER_RUNTIME: parentMode ?? backendMode ?? '0' }
 }

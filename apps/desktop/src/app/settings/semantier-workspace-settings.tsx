@@ -183,15 +183,23 @@ export function SemantierWorkspaceSettings({
       </div>
       {identity?.authenticated && identity.user?.user_id && identity.workspace?.id && identity.organization_id ? (
         <>
-        <SemantierPersonalSync key={JSON.stringify([origin,identity.user.user_id,identity.workspace.id,identity.organization_id])} origin={origin} scope={{userId:identity.user.user_id,workspaceId:identity.workspace.id,organizationId:identity.organization_id}} />
-        <SemantierManagedDevices
-          origin={origin}
-          scope={{
-            userId: identity.user.user_id,
-            workspaceId: identity.workspace.id,
-            organizationId: identity.organization_id
-          }}
-        />
+          <SemantierPersonalSync
+            key={JSON.stringify([origin, identity.user.user_id, identity.workspace.id, identity.organization_id])}
+            origin={origin}
+            scope={{
+              userId: identity.user.user_id,
+              workspaceId: identity.workspace.id,
+              organizationId: identity.organization_id
+            }}
+          />
+          <SemantierManagedDevices
+            origin={origin}
+            scope={{
+              userId: identity.user.user_id,
+              workspaceId: identity.workspace.id,
+              organizationId: identity.organization_id
+            }}
+          />
         </>
       ) : null}
     </form>

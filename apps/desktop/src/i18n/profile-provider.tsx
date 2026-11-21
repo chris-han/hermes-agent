@@ -27,13 +27,21 @@ export function ProfileI18nProvider({ children }: { children: ReactNode }) {
     profile
   ])
 
-  const configClient = useMemo(() => connection?.transport === 'semantier-workspace-http'
-    ? workspaceLocaleClient(connection.baseUrl, connection.workspaceScope)
-    : undefined, [connection?.transport, connection?.baseUrl, connection?.workspaceScope])
+  const configClient = useMemo(
+    () =>
+      connection?.transport === 'semantier-workspace-http'
+        ? workspaceLocaleClient(connection.baseUrl, connection.workspaceScope)
+        : undefined,
+    [connection?.transport, connection?.baseUrl, connection?.workspaceScope]
+  )
 
   useBackendLocalePacks(scopeKey)
 
-  return <I18nProvider configClient={configClient} scopeKey={scopeKey}>{children}</I18nProvider>
+  return (
+    <I18nProvider configClient={configClient} scopeKey={scopeKey}>
+      {children}
+    </I18nProvider>
+  )
 }
 
 /**

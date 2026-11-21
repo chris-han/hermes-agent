@@ -32,7 +32,9 @@ export function FileSyncSettings() {
 
     const update = () => {
       // A timer tick must not supersede a slow response from the current owner.
-      if (!api || !connected || polling) {return}
+      if (!api || !connected || polling) {
+        return
+      }
       const current = ++request
       const ownerGeneration = generation.current
 
@@ -46,9 +48,13 @@ export function FileSyncSettings() {
           }
         })
         .catch(() => {
-          if (live && current === request && ownerGeneration === generation.current) {setError(zh ? '请重新连接工作区。' : 'Reconnect your Workspace to see File Sync status.')}
+          if (live && current === request && ownerGeneration === generation.current) {
+            setError(zh ? '请重新连接工作区。' : 'Reconnect your Workspace to see File Sync status.')
+          }
         })
-        .finally(() => {polling = false})
+        .finally(() => {
+          polling = false
+        })
     }
 
     update()
@@ -58,10 +64,20 @@ export function FileSyncSettings() {
       live = false
       clearInterval(timer)
     }
-  }, [api, connected, connection?.connectionId, connection?.workspaceScope?.userId, connection?.workspaceScope?.workspaceId, connection?.baseUrl, zh])
+  }, [
+    api,
+    connected,
+    connection?.connectionId,
+    connection?.workspaceScope?.userId,
+    connection?.workspaceScope?.workspaceId,
+    connection?.baseUrl,
+    zh
+  ])
 
   async function act(action: 'choose' | 'pause' | 'resume') {
-    if (!api) {return}
+    if (!api) {
+      return
+    }
     const current = ++generation.current
     setBusy(true)
     setError('')
@@ -69,9 +85,13 @@ export function FileSyncSettings() {
     try {
       const result = await api[action]()
 
-      if (current === generation.current) {setStatus(result)}
+      if (current === generation.current) {
+        setStatus(result)
+      }
     } catch (error) {
-      if (current === generation.current) {setError(error instanceof Error ? error.message : String(error))}
+      if (current === generation.current) {
+        setError(error instanceof Error ? error.message : String(error))
+      }
     } finally {
       if (current === generation.current) {
         generation.current++

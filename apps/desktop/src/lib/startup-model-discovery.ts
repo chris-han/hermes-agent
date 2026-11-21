@@ -26,23 +26,32 @@ export async function refreshModelsOnConnectionReady(
   const ownerKey = modelDiscoveryOwnerKey(connectionId, connection)
   const launchKey = JSON.stringify([source, profileKey])
 
-  if (started.has(launchKey)) {return}
+  if (started.has(launchKey)) {
+    return
+  }
   started.add(launchKey)
 
-  if (ownerKey) {setModelDiscoveryRefreshing(ownerKey, profileKey, true)}
+  if (ownerKey) {
+    setModelDiscoveryRefreshing(ownerKey, profileKey, true)
+  }
 
   try {
     if (connection?.transport === 'semantier-workspace-http') {
-      await requestDiscoveredModelOptions({connection,ownerConnectionId:connectionId,profile:profileKey,refresh:true})
+      await requestDiscoveredModelOptions({
+        connection,
+        ownerConnectionId: connectionId,
+        profile: profileKey,
+        refresh: true
+      })
     } else {
-    await requestModelOptions({
-      profile: profileKey,
-      queryOnly: true,
-      queryScope: source,
-      refresh: true,
-      request: <T>(method: string, params?: Record<string, unknown>) =>
-        requestGatewayForAgent<T>(connectionId, profileKey, method, params)
-    })
+      await requestModelOptions({
+        profile: profileKey,
+        queryOnly: true,
+        queryScope: source,
+        refresh: true,
+        request: <T>(method: string, params?: Record<string, unknown>) =>
+          requestGatewayForAgent<T>(connectionId, profileKey, method, params)
+      })
     }
 
     const activeSource = await modelDiscoveryScope(activeGatewayConnectionId(), $connection.get()).catch(() => null)
@@ -50,9 +59,13 @@ export async function refreshModelsOnConnectionReady(
       predicate: query => {
         const key = query.queryKey
 
-        if (key[0] !== 'model-options' || key[1] !== profileKey) {return false}
+        if (key[0] !== 'model-options' || key[1] !== profileKey) {
+          return false
+        }
 
-        if (key[3] === 'owner') {return key[4] === ownerKey}
+        if (key[3] === 'owner') {
+          return key[4] === ownerKey
+        }
 
         return activeSource === source
       }
@@ -60,6 +73,8 @@ export async function refreshModelsOnConnectionReady(
   } catch {
     // Startup must remain usable offline; a manual refresh can retry later.
   } finally {
-    if (ownerKey) {setModelDiscoveryRefreshing(ownerKey, profileKey, false)}
+    if (ownerKey) {
+      setModelDiscoveryRefreshing(ownerKey, profileKey, false)
+    }
   }
 }
