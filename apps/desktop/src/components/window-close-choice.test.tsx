@@ -10,19 +10,29 @@ let receive: (request: { id: string }) => void
 const previous = Object.getOwnPropertyDescriptor(window, 'hermesDesktop')
 beforeEach(() => {
   answer.mockReset().mockResolvedValue({ ok: true })
-  Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: { minimizeToTray: {
-    getCloseRequest: async () => ({ id: 'request-1' }),
-    answerClose: answer,
-    onCloseRequested: (callback: typeof receive) => { receive = callback;
+  Object.defineProperty(window, 'hermesDesktop', {
+    configurable: true,
+    value: {
+      minimizeToTray: {
+        getCloseRequest: async () => ({ id: 'request-1' }),
+        answerClose: answer,
+        onCloseRequested: (callback: typeof receive) => {
+          receive = callback
 
- return vi.fn() }
-  } } })
+          return vi.fn()
+        }
+      }
+    }
+  })
 })
 afterEach(() => {
   cleanup()
 
-  if (previous) { Object.defineProperty(window, 'hermesDesktop', previous) }
-  else { Reflect.deleteProperty(window, 'hermesDesktop') }
+  if (previous) {
+    Object.defineProperty(window, 'hermesDesktop', previous)
+  } else {
+    Reflect.deleteProperty(window, 'hermesDesktop')
+  }
 })
 
 it('recovers an early native request, focuses Keep running, and cancels only this request', async () => {
@@ -44,11 +54,18 @@ it('shows tray failure inline, allows retry, and never reports background succes
   expect(screen.getByRole('dialog')).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: 'Keep running in background' }))
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), { timeout: 2000 })
-  expect(answer.mock.calls).toEqual([['request-1', 'background'], ['request-1', 'background']])
+  expect(answer.mock.calls).toEqual([
+    ['request-1', 'background'],
+    ['request-1', 'background']
+  ])
 })
 
 it('localizes the three choices and sends Quit through the native lifecycle owner', async () => {
-  render(<I18nProvider configClient={null} initialLocale="zh"><WindowCloseChoiceHost /></I18nProvider>)
+  render(
+    <I18nProvider configClient={null} initialLocale="zh">
+      <WindowCloseChoiceHost />
+    </I18nProvider>
+  )
   await screen.findByRole('dialog', { name: '关闭 Semantier Agent' })
   expect(screen.getByRole('button', { name: '在后台运行' })).toBeTruthy()
   expect(screen.getByRole('button', { name: '取消' })).toBeTruthy()
@@ -58,7 +75,10 @@ it('localizes the three choices and sends Quit through the native lifecycle owne
 
 it('does not let a late initial snapshot replace a newer pushed request', async () => {
   let finish!: (value: { id: string }) => void
-  window.hermesDesktop.minimizeToTray!.getCloseRequest = () => new Promise(resolve => { finish = resolve })
+  window.hermesDesktop.minimizeToTray!.getCloseRequest = () =>
+    new Promise(resolve => {
+      finish = resolve
+    })
   render(<WindowCloseChoiceHost />)
   act(() => receive({ id: 'newer-request' }))
   await screen.findByRole('dialog')

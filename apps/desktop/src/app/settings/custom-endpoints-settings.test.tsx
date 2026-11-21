@@ -83,18 +83,29 @@ describe('CustomEndpointsSettings', () => {
     getCustomEndpoints.mockResolvedValue(emptyResponse)
     saveCustomEndpoint.mockResolvedValue(emptyResponse)
     render(<CustomEndpointsSettings />)
-    fireEvent.change(await screen.findByPlaceholderText('http://localhost:4000/v1'), { target: { value: 'http://localhost:4000/v1' } })
+    fireEvent.change(await screen.findByPlaceholderText('http://localhost:4000/v1'), {
+      target: { value: 'http://localhost:4000/v1' }
+    })
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Fixture provider' } })
     fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'synthetic-key' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(saveCustomEndpoint).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'Fixture provider', model: '', make_default: false }), 'default'))
+    await waitFor(() =>
+      expect(saveCustomEndpoint).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'Fixture provider', model: '', make_default: false }),
+        'default'
+      )
+    )
   })
 
   it('drops a catalog completion when its URL or credential draft changed', async () => {
     getCustomEndpoints.mockResolvedValue(emptyResponse)
     let finish!: (value: unknown) => void
-    validateCustomEndpoint.mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    validateCustomEndpoint.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          finish = resolve
+        })
+    )
     render(<CustomEndpointsSettings />)
     const url = await screen.findByPlaceholderText('http://localhost:4000/v1')
     fireEvent.change(url, { target: { value: 'http://localhost:4000/v1' } })
@@ -109,7 +120,12 @@ describe('CustomEndpointsSettings', () => {
     getCustomEndpoints.mockResolvedValue(emptyResponse)
     validateCustomEndpoint.mockResolvedValueOnce({ ok: true, reachable: true, models: ['example-model'], message: '' })
     let finish!: (value: unknown) => void
-    validateCustomEndpoint.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    validateCustomEndpoint.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve
+        })
+    )
     render(<CustomEndpointsSettings />)
     const url = await screen.findByPlaceholderText('http://localhost:4000/v1')
     fireEvent.change(url, { target: { value: 'http://localhost:4000/v1' } })
@@ -146,10 +162,12 @@ describe('CustomEndpointsSettings', () => {
     fireEvent.change(url, { target: { value: 'http://localhost:4000/v1' } })
     fireEvent.change(key, { target: { value: 'test-key-only' } })
     fireEvent.click(test)
-    await waitFor(() => expect(validateCustomEndpoint).toHaveBeenCalledWith(
-      expect.objectContaining({ base_url: 'http://localhost:4000/v1', api_key: 'test-key-only' }),
-      'default'
-    ))
+    await waitFor(() =>
+      expect(validateCustomEndpoint).toHaveBeenCalledWith(
+        expect.objectContaining({ base_url: 'http://localhost:4000/v1', api_key: 'test-key-only' }),
+        'default'
+      )
+    )
   })
 
   it('preserves an unchanged masked key and manual model after catalog failure; Cancel drops a new secret', async () => {

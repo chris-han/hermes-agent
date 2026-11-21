@@ -2245,7 +2245,8 @@ export const esOverrides = {
       }
     },
     providers: {
-      cloudRemoteRevokePending: "Desconectado localmente. No se pudo confirmar la revocación remota; revoca este dispositivo desde Facturación o vuelve a autorizarlo.",
+      cloudRemoteRevokePending:
+        'Desconectado localmente. No se pudo confirmar la revocación remota; revoca este dispositivo desde Facturación o vuelve a autorizarlo.',
       connectAccount: 'Conectar una cuenta',
       haveApiKey: '¿Tienes una clave API?',
       intro:
@@ -4231,8 +4232,8 @@ export const esOverrides = {
     releaseNotes: 'Notas de la versión',
     onLatest: 'Ya tienes la versión más reciente.',
     installing: 'Se está instalando una actualización.',
-    noPublishedRelease: "Aún no hay ninguna versión disponible en este canal.",
-    cantReach: "No pudimos comprobar las actualizaciones.",
+    noPublishedRelease: 'Aún no hay ninguna versión disponible en este canal.',
+    cantReach: 'No pudimos comprobar las actualizaciones.',
     tapCheck: 'Pulsa "Comprobar ahora" para buscar actualizaciones.',
     updateReady: count =>
       `Hay una actualización lista (${count} ${count === 1 ? 'cambio incluido' : 'cambios incluidos'}).`,

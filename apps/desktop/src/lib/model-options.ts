@@ -1,4 +1,9 @@
-import { catalogModelMetadata, type ModelCapabilities, type ModelOptionProvider, type ModelOptionsResult } from '@hermes/shared'
+import {
+  catalogModelMetadata,
+  type ModelCapabilities,
+  type ModelOptionProvider,
+  type ModelOptionsResult
+} from '@hermes/shared'
 
 import { getGlobalModelOptions, type HermesGateway } from '@/hermes'
 import { type DiscoveryConnection, modelDiscoveryScope } from '@/lib/model-discovery-scope'
@@ -6,10 +11,14 @@ import { normalize } from '@/lib/text'
 
 /** Discovery is a candidate source; an independent entitlement, when supplied, still applies. */
 export function providerSelectableModels(provider?: ModelOptionProvider): string[] {
-  if (!provider || provider.authenticated === false) {return []}
+  if (!provider || provider.authenticated === false) {
+    return []
+  }
 
   if (provider.discovery_state != null) {
-    if (!provider.discovery_source_id || !['fresh', 'cached', 'stale'].includes(provider.discovery_state)) {return []}
+    if (!provider.discovery_source_id || !['fresh', 'cached', 'stale'].includes(provider.discovery_state)) {
+      return []
+    }
   } else if (provider.eligible_models == null) {
     return []
   }
@@ -20,7 +29,9 @@ export function providerSelectableModels(provider?: ModelOptionProvider): string
   return (provider.models ?? []).filter(model => {
     const modality = provider.slug === 'semantier-cloud' ? catalogModelMetadata(provider, model)?.modality : undefined
 
-    return (!eligible || eligible.has(model)) && !unavailable.has(normalize(model)) && (!modality || modality === 'chat')
+    return (
+      (!eligible || eligible.has(model)) && !unavailable.has(normalize(model)) && (!modality || modality === 'chat')
+    )
   })
 }
 
@@ -29,19 +40,26 @@ type CatalogProviderIdentity = Partial<Pick<ModelOptionProvider, 'aliases' | 'na
 
 /** Explicit user inputs stay separate from provider observations and account grants. */
 export function providerManualModels(provider?: ModelOptionProvider): string[] {
-  if (!provider || provider.authenticated === false) { return [] }
+  if (!provider || provider.authenticated === false) {
+    return []
+  }
 
-  return (provider.manual_models ?? []).filter(model =>
-    (!provider.eligible_models || provider.eligible_models.includes(model)) &&
-    !(provider.unavailable_models ?? []).some(value => normalize(value) === normalize(model)))
+  return (provider.manual_models ?? []).filter(
+    model =>
+      (!provider.eligible_models || provider.eligible_models.includes(model)) &&
+      !(provider.unavailable_models ?? []).some(value => normalize(value) === normalize(model))
+  )
 }
-
 
 /** Picker projection: user inputs remain separately labeled from discovery snapshots. */
 export function withManualModelChoices(provider: ModelOptionProvider, manualIds: string[] = []): ModelOptionProvider {
   const manual = providerManualModels({ ...provider, manual_models: [...(provider.manual_models ?? []), ...manualIds] })
 
-  return { ...provider, manual_models: manual, models: [...new Set([...providerSelectableModels(provider), ...manual])] }
+  return {
+    ...provider,
+    manual_models: manual,
+    models: [...new Set([...providerSelectableModels(provider), ...manual])]
+  }
 }
 
 /** Match the configured provider identity and its existing aliases. */
@@ -166,19 +184,24 @@ export async function requestDiscoveredModelOptions({
   connection?: DiscoveryConnection | null
   ownerConnectionId?: null | string
 }): Promise<ModelOptionsResult> {
-  if (!request.gateway && !request.request && ownerConnectionId &&
-      ownerConnectionId !== connection?.connectionId) {
+  if (!request.gateway && !request.request && ownerConnectionId && ownerConnectionId !== connection?.connectionId) {
     throw new Error('The model discovery owner is not connected.')
   }
 
   const queryScope = await modelDiscoveryScope(ownerConnectionId, connection)
 
-  if (connection?.transport === 'semantier-workspace-http' &&
-      (!ownerConnectionId || ownerConnectionId === connection.connectionId)) {
-    const result = await getGlobalModelOptions({explicitOnly:true, queryOnly:true, queryScope, refresh:request.refresh},
-      {connectionId:ownerConnectionId || connection.connectionId, profile:request.profile || 'default'})
+  if (
+    connection?.transport === 'semantier-workspace-http' &&
+    (!ownerConnectionId || ownerConnectionId === connection.connectionId)
+  ) {
+    const result = await getGlobalModelOptions(
+      { explicitOnly: true, queryOnly: true, queryScope, refresh: request.refresh },
+      { connectionId: ownerConnectionId || connection.connectionId, profile: request.profile || 'default' }
+    )
 
-    if (!hasVerifiedProvenance(result)) {throw new Error('The Workspace provider discovery contract is unavailable.')}
+    if (!hasVerifiedProvenance(result)) {
+      throw new Error('The Workspace provider discovery contract is unavailable.')
+    }
 
     return result
   }
@@ -202,21 +225,36 @@ function hasSelectableModels(options: ModelOptionsResult | null | undefined): bo
 }
 
 function hasVerifiedProvenance(options: ModelOptionsResult): boolean {
-  if (options.discovery_contract !== 'provider-query-v1' || !Array.isArray(options.providers)) {return false}
+  if (options.discovery_contract !== 'provider-query-v1' || !Array.isArray(options.providers)) {
+    return false
+  }
 
   return options.providers.every(provider => {
-    if (!provider.slug || !Array.isArray(provider.models) || provider.models.some(model => typeof model !== 'string' || !model)) {return false}
+    if (
+      !provider.slug ||
+      !Array.isArray(provider.models) ||
+      provider.models.some(model => typeof model !== 'string' || !model)
+    ) {
+      return false
+    }
     const state = provider.discovery_state
 
     if (state === 'fresh' || state === 'cached' || state === 'stale') {
       const timestamp = provider.discovery_fetched_at
 
-      return !!provider.discovery_source_id && typeof timestamp === 'string' &&
-        /(?:Z|\+00:00)$/.test(timestamp) && !Number.isNaN(Date.parse(timestamp))
+      return (
+        !!provider.discovery_source_id &&
+        typeof timestamp === 'string' &&
+        /(?:Z|\+00:00)$/.test(timestamp) &&
+        !Number.isNaN(Date.parse(timestamp))
+      )
     }
 
-    return (state === 'missing' || state === 'error' || state === 'unsupported') &&
-      provider.models.length === 0 && !(provider.eligible_models?.length)
+    return (
+      (state === 'missing' || state === 'error' || state === 'unsupported') &&
+      provider.models.length === 0 &&
+      !provider.eligible_models?.length
+    )
   })
 }
 
@@ -252,13 +290,21 @@ export async function requestModelOptions({
 
     const params: Record<string, unknown> = { query_only: true, query_scope: scope }
 
-    if (sessionId) {params.session_id = sessionId}
+    if (sessionId) {
+      params.session_id = sessionId
+    }
 
-    if (refresh) {params.refresh = true}
+    if (refresh) {
+      params.refresh = true
+    }
 
-    if (explicitOnly) {params.explicit_only = true}
+    if (explicitOnly) {
+      params.explicit_only = true
+    }
 
-    if (profile?.trim()) {params.profile = profile.trim()}
+    if (profile?.trim()) {
+      params.profile = profile.trim()
+    }
 
     const result = dispatch
       ? await dispatch<ModelOptionsResult>('model.options', params)

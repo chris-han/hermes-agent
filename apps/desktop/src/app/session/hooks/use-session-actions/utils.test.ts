@@ -2069,13 +2069,19 @@ describe('removeRepresentedLocalLiveProjection', () => {
 
 describe('overlayConcurrentMessageChanges', () => {
   it('does not resurrect a user retry retired by its terminal receipt while history was in flight', () => {
-    const committed = [msg('255-user', 'user', 'same request', { rowId: 255 }), msg('256-assistant', 'assistant', 'completed')]
+    const committed = [
+      msg('255-user', 'user', 'same request', { rowId: 255 }),
+      msg('256-assistant', 'assistant', 'completed')
+    ]
     const optimistic = msg('user-retry', 'user', 'same request')
     const baseline = [...committed, optimistic]
     expect(overlayConcurrentMessageChanges([...committed, optimistic], baseline, committed)).toEqual(committed)
     // A still-pending intent survives; an authoritative user row is never a local retirement.
     expect(overlayConcurrentMessageChanges(baseline, baseline, baseline)).toBe(baseline)
-    expect(overlayConcurrentMessageChanges(committed, committed, [committed[1]]).map(m => m.id)).toEqual(['255-user', '256-assistant'])
+    expect(overlayConcurrentMessageChanges(committed, committed, [committed[1]]).map(m => m.id)).toEqual([
+      '255-user',
+      '256-assistant'
+    ])
   })
 
   it('does not replace an authoritative row with an unchanged baseline cache row', () => {
@@ -2507,5 +2513,7 @@ it('compares Bot author values so attribution changes repaint without idle churn
   const authored = { ...base, botAuthor: { botId: 'bot_a', displayName: 'Winman' } }
   expect(chatMessagesEquivalent(base, authored)).toBe(false)
   expect(chatMessagesEquivalent(authored, { ...authored, botAuthor: { ...authored.botAuthor } })).toBe(true)
-  expect(chatMessagesEquivalent(authored, { ...authored, botAuthor: { ...authored.botAuthor, displayName: 'Custom name' } })).toBe(false)
+  expect(
+    chatMessagesEquivalent(authored, { ...authored, botAuthor: { ...authored.botAuthor, displayName: 'Custom name' } })
+  ).toBe(false)
 })

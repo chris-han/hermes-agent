@@ -119,7 +119,9 @@ it('keeps structurally identified row actions stable when rows reorder', () => {
   const render = (ids: string[]) => {
     document.body.innerHTML = ids.map(id => `<a id="${id}">编辑</a>`).join('')
 
-    for (const el of document.querySelectorAll<HTMLElement>('a')) { el.onclick = vi.fn() }
+    for (const el of document.querySelectorAll<HTMLElement>('a')) {
+      el.onclick = vi.fn()
+    }
   }
 
   render(['row-a-edit', 'row-b-edit'])

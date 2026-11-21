@@ -610,7 +610,9 @@ describe('ProvidersSettings', () => {
     expect(screen.queryByText(copy.onboarding.recommended)).toBeNull()
     expect(screen.queryByText(copy.onboarding.featuredPitch)).toBeNull()
     fireEvent.click(screen.getByText(copy.onboarding.otherProviders))
-    expect(screen.getByRole('button', { name: /Nous Portal/ }).textContent).not.toContain(modelServiceCopy[locale].signIn)
+    expect(screen.getByRole('button', { name: /Nous Portal/ }).textContent).not.toContain(
+      modelServiceCopy[locale].signIn
+    )
   })
 
   it('offers a Local / custom endpoint entry in the API-keys tab that opens the custom-endpoint flow', async () => {

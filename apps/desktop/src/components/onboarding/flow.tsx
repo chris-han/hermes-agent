@@ -85,7 +85,15 @@ export function FlowPanel({
             {t.onboarding.useApiKeyInstead}
           </Button>
           {failedProvider ? (
-            <Button onClick={() => void (flow.installed ? retryCloudModelDiscovery(ctx, failedProvider) : startProviderOAuth(failedProvider, ctx))}>{t.onboarding.tryAgain}</Button>
+            <Button
+              onClick={() =>
+                void (flow.installed
+                  ? retryCloudModelDiscovery(ctx, failedProvider)
+                  : startProviderOAuth(failedProvider, ctx))
+              }
+            >
+              {t.onboarding.tryAgain}
+            </Button>
           ) : null}
         </div>
       </div>
@@ -143,14 +151,24 @@ export function FlowPanel({
   return (
     <Step title={t.onboarding.signInWith(title)}>
       <p className="text-sm text-muted-foreground">
-        {flow.provider.id === 'semantier-cloud' ? (t.onboarding.cloudBrowserOpened ?? t.onboarding.waitingAuthorize) : t.onboarding.deviceCodeOpened(title)}
+        {flow.provider.id === 'semantier-cloud'
+          ? (t.onboarding.cloudBrowserOpened ?? t.onboarding.waitingAuthorize)
+          : t.onboarding.deviceCodeOpened(title)}
       </p>
       {flow.start.user_code ? (
         <DeviceCode code={flow.start.user_code} copied={flow.copied} onCopy={() => void copyDeviceCode()} />
       ) : null}
-      <FlowFooter left={flow.provider.id === 'semantier-cloud'
-        ? <Button onClick={() => reopenCloudVerification()} variant="text">{t.onboarding.reopenVerification}</Button>
-        : <DocsLink href={flow.start.verification_url}>{t.onboarding.reopenVerification}</DocsLink>}>
+      <FlowFooter
+        left={
+          flow.provider.id === 'semantier-cloud' ? (
+            <Button onClick={() => reopenCloudVerification()} variant="text">
+              {t.onboarding.reopenVerification}
+            </Button>
+          ) : (
+            <DocsLink href={flow.start.verification_url}>{t.onboarding.reopenVerification}</DocsLink>
+          )
+        }
+      >
         <span aria-live="polite" className="flex items-center gap-2 text-xs text-muted-foreground">
           <Loader2 className="size-3 animate-spin" />
           {t.onboarding.waitingAuthorize}

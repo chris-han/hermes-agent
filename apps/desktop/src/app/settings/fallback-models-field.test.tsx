@@ -10,8 +10,18 @@ beforeAll(() => {
 })
 
 const getGlobalModelOptions = vi.fn()
-vi.mock('@/store/session', async importOriginal => ({ ...(await importOriginal<Record<string, unknown>>()), $connection: (await import('nanostores')).atom({ mode: 'local', baseUrl: 'http://fixture', connectionId: 'test-local' }) }))
-vi.mock('@/lib/model-options', async importOriginal => ({ ...(await importOriginal<Record<string, unknown>>()), requestDiscoveredModelOptions: (...args: unknown[]) => getGlobalModelOptions(...args) }))
+vi.mock('@/store/session', async importOriginal => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  $connection: (await import('nanostores')).atom({
+    mode: 'local',
+    baseUrl: 'http://fixture',
+    connectionId: 'test-local'
+  })
+}))
+vi.mock('@/lib/model-options', async importOriginal => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  requestDiscoveredModelOptions: (...args: unknown[]) => getGlobalModelOptions(...args)
+}))
 
 vi.mock('@/hermes', async importOriginal => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -25,7 +35,12 @@ const { FallbackModelsField } = await import('./fallback-models-field')
 beforeEach(() => {
   getGlobalModelOptions.mockResolvedValue({
     providers: [
-      { name: 'GitHub Copilot', slug: 'copilot', models: ['gpt-5-mini', 'gpt-5.4-mini'], eligible_models: ['gpt-5-mini', 'gpt-5.4-mini'] },
+      {
+        name: 'GitHub Copilot',
+        slug: 'copilot',
+        models: ['gpt-5-mini', 'gpt-5.4-mini'],
+        eligible_models: ['gpt-5-mini', 'gpt-5.4-mini']
+      },
       { name: 'OpenAI Codex', slug: 'openai-codex', models: ['gpt-5.4-mini'], eligible_models: ['gpt-5.4-mini'] },
       { name: 'Nous', slug: 'nous', models: ['hermes-4'], eligible_models: ['hermes-4'] }
     ]
@@ -110,12 +125,20 @@ describe('FallbackModelsField', () => {
   })
 
   it('does not delete a saved fallback during an incomplete provider replacement', async () => {
-    const routed = { ...CHAIN[0], base_url: 'http://fixture/v1', key_env: 'FIXTURE_KEY', api_key: '${FIXTURE_KEY}', api_mode: 'responses' }
+    const routed = {
+      ...CHAIN[0],
+      base_url: 'http://fixture/v1',
+      key_env: 'FIXTURE_KEY',
+      api_key: '${FIXTURE_KEY}',
+      api_mode: 'responses'
+    }
     const onChange = renderField([routed, CHAIN[1]])
     await waitFor(() => expect(getGlobalModelOptions).toHaveBeenCalled())
     fireEvent.click(screen.getAllByRole('combobox')[0])
     fireEvent.click(await screen.findByRole('option', { name: 'Nous' }))
-    expect(onChange.mock.calls.every(([chain]) => JSON.stringify(chain) === JSON.stringify([routed, CHAIN[1]]))).toBe(true)
+    expect(onChange.mock.calls.every(([chain]) => JSON.stringify(chain) === JSON.stringify([routed, CHAIN[1]]))).toBe(
+      true
+    )
   })
 
   it('renders each {provider, model} entry as its own row (never "[object Object]")', async () => {
@@ -178,7 +201,13 @@ describe('FallbackModelsField', () => {
 })
 
 describe('fallback atomic searchable edits', () => {
-  const routed = { ...CHAIN[0], base_url: 'http://fixture/v1', key_env: 'FIXTURE_KEY', api_key: '${FIXTURE_KEY}', api_mode: 'responses' }
+  const routed = {
+    ...CHAIN[0],
+    base_url: 'http://fixture/v1',
+    key_env: 'FIXTURE_KEY',
+    api_key: '${FIXTURE_KEY}',
+    api_mode: 'responses'
+  }
 
   it('searches names locally, cancels replacement, and retains same-provider route metadata', async () => {
     const onChange = renderField([routed, CHAIN[1]])
@@ -221,21 +250,30 @@ describe('fallback atomic searchable edits', () => {
   })
 })
 
-
 describe('fallback discovery ownership', () => {
   it('drops a delayed old-source catalog and scopes discovery to the active settings profile', async () => {
     const { $connection } = await import('@/store/session')
     const { $settingsScopeOverride } = await import('@/store/settings-scope')
     let finish!: (value: unknown) => void
-    getGlobalModelOptions.mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+    getGlobalModelOptions.mockReturnValueOnce(
+      new Promise(resolve => {
+        finish = resolve
+      })
+    )
     const onChange = renderField(CHAIN)
     await waitFor(() => expect(getGlobalModelOptions).toHaveBeenCalled())
     await act(async () => {
       $settingsScopeOverride.set('research')
       $connection.set({ mode: 'remote', baseUrl: 'http://source-b', connectionId: 'source-b' } as never)
     })
-    await waitFor(() => expect(getGlobalModelOptions).toHaveBeenLastCalledWith(expect.objectContaining({ profile: 'research', ownerConnectionId: 'source-b' })))
-    await act(async () => { finish({ providers: [{ name: 'Old Private Provider', slug: 'old', models: ['private'] }] }) })
+    await waitFor(() =>
+      expect(getGlobalModelOptions).toHaveBeenLastCalledWith(
+        expect.objectContaining({ profile: 'research', ownerConnectionId: 'source-b' })
+      )
+    )
+    await act(async () => {
+      finish({ providers: [{ name: 'Old Private Provider', slug: 'old', models: ['private'] }] })
+    })
     fireEvent.click(screen.getAllByRole('combobox')[0])
     expect(screen.queryByRole('option', { name: 'Old Private Provider' })).toBeNull()
     expect(onChange).not.toHaveBeenCalled()
@@ -248,10 +286,14 @@ describe('fallback discovery ownership', () => {
 
 describe('fallback manual models', () => {
   it('allows an explicit unverified ID with IME-safe Enter and never renders route credentials', async () => {
-    getGlobalModelOptions.mockResolvedValue({ providers: [{ name: 'Nous', slug: 'nous', authenticated: true, models: [], discovery_state: 'missing' }] })
+    getGlobalModelOptions.mockResolvedValue({
+      providers: [{ name: 'Nous', slug: 'nous', authenticated: true, models: [], discovery_state: 'missing' }]
+    })
     const onChange = renderField([{ provider: 'nous', model: 'saved-id', api_key: 'synthetic-private-key' }])
     await waitFor(() => expect(getGlobalModelOptions).toHaveBeenCalled())
-    await waitFor(() => expect((screen.getByRole('combobox', { name: 'Model' }) as HTMLButtonElement).disabled).toBe(false))
+    await waitFor(() =>
+      expect((screen.getByRole('combobox', { name: 'Model' }) as HTMLButtonElement).disabled).toBe(false)
+    )
     fireEvent.click(screen.getByRole('combobox', { name: 'Model' }))
     fireEvent.click(await screen.findByRole('option', { name: /Custom model/ }))
     const input = screen.getByPlaceholderText('Model id')
@@ -263,11 +305,12 @@ describe('fallback manual models', () => {
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onChange).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
-    expect(onChange).toHaveBeenLastCalledWith([{ provider: 'nous', model: 'manual/new-id', api_key: 'synthetic-private-key' }])
+    expect(onChange).toHaveBeenLastCalledWith([
+      { provider: 'nous', model: 'manual/new-id', api_key: 'synthetic-private-key' }
+    ])
     expect(screen.queryByText('synthetic-private-key')).toBeNull()
   })
 })
-
 
 describe('chain Apply recovery', () => {
   it('retains a failed draft for retry and omits an inherited reasoning override', async () => {

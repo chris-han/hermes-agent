@@ -204,7 +204,9 @@ describe('DesktopInstallOverlay first-run setup', () => {
       await Promise.resolve()
     })
 
-    expect(screen.queryByText('Local installation could not start. Restart Semantier Agent and try again.')).toBeTruthy()
+    expect(
+      screen.queryByText('Local installation could not start. Restart Semantier Agent and try again.')
+    ).toBeTruthy()
   })
 
   it('clears a stale local-start error when a repair presents a different root', async () => {

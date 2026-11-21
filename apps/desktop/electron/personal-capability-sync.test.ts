@@ -34,14 +34,12 @@ function fixture() {
     personalPropose: vi.fn(),
     personalLearningAction: vi.fn(),
     personalPackage: vi.fn(),
-    personalUpload: vi
-      .fn()
-      .mockImplementation(async value => ({
-        ...receipt,
-        ...scopeFields,
-        transfer: { artifact_ref: value.artifact_ref, artifact_hash: value.artifact_hash },
-        status: 'SOURCE_IMPORTED'
-      }))
+    personalUpload: vi.fn().mockImplementation(async value => ({
+      ...receipt,
+      ...scopeFields,
+      transfer: { artifact_ref: value.artifact_ref, artifact_hash: value.artifact_hash },
+      status: 'SOURCE_IMPORTED'
+    }))
   }
 
   const native = vi.fn().mockImplementation(async (path, body) => {

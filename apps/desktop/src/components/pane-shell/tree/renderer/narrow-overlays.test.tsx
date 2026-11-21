@@ -174,10 +174,18 @@ describe('narrow overlay of a stacked zone', () => {
 })
 
 it('uses localized pane titles and supports keyboard activation in the narrow navigation', () => {
-  registerPane('localized-winman', 'Winman', {
-    collapsible: true, placement: 'left', width: '260px',
-    tabTitle: () => <span>僚机</span>, tabTitleText: () => '僚机'
-  }, 'localized roster')
+  registerPane(
+    'localized-winman',
+    'Winman',
+    {
+      collapsible: true,
+      placement: 'left',
+      width: '260px',
+      tabTitle: () => <span>僚机</span>,
+      tabTitleText: () => '僚机'
+    },
+    'localized roster'
+  )
   $layoutTree.set(split('row', [group(['sessions', 'localized-winman']), group(['workspace'])]))
   const view = render(<NarrowOverlays />)
   revealPane('sessions')

@@ -57,7 +57,10 @@ export function CapabilityInventory({ tab, children }: { tab: string; children: 
             <SegmentedControl
               animated
               onChange={view => atom.set(view === 'cards')}
-              options={[{ id: 'list', label: c.list }, { id: 'cards', label: c.cards }]}
+              options={[
+                { id: 'list', label: c.list },
+                { id: 'cards', label: c.cards }
+              ]}
               value={cards ? 'cards' : 'list'}
             />
           </div>

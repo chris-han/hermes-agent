@@ -13,14 +13,17 @@ import { RELAUNCH_WAITER_SCRIPT, relaunchWaiterScript } from './relaunch-waiter'
 const require: NodeJS.Require = createRequire(import.meta.url)
 const desktop: string = path.resolve(import.meta.dirname, '..', '..')
 
-test.each([RELAUNCH_WAITER_SCRIPT, 'native-package-digest.ps1', 'native-package-update.ps1'])('the Windows packaging config ships %s at the resource root', resource => {
-  const config = require('../../electron-builder.config.cjs')
-  const extra: { from: string; to: string }[] = config.win.extraResources ?? []
-  const shipped = extra.filter(item => item.to === resource)
+test.each([RELAUNCH_WAITER_SCRIPT, 'native-package-digest.ps1', 'native-package-update.ps1'])(
+  'the Windows packaging config ships %s at the resource root',
+  resource => {
+    const config = require('../../electron-builder.config.cjs')
+    const extra: { from: string; to: string }[] = config.win.extraResources ?? []
+    const shipped = extra.filter(item => item.to === resource)
 
-  assert.equal(shipped.length, 1, `win.extraResources must ship ${resource}`)
-  assert.ok(fs.existsSync(path.join(desktop, shipped[0].from)), `${shipped[0].from} must exist`)
-})
+    assert.equal(shipped.length, 1, `win.extraResources must ship ${resource}`)
+    assert.ok(fs.existsSync(path.join(desktop, shipped[0].from)), `${shipped[0].from} must exist`)
+  }
+)
 
 test('the waiter resolves at the resources root', () => {
   const resources = path.join('app', 'resources')

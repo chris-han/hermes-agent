@@ -112,11 +112,20 @@ declare global {
       // over hermes:window-control; Electron/OS chrome owns them elsewhere.
       semantierFeedback?: {
         onOpen?(callback: () => void): () => void
-        status(): Promise<{enabled:boolean;profile:string|null;queued:number;dropped:number;journeyEnabled?:boolean}>
-        journeyConsent?(enabled:boolean): Promise<{journeyEnabled:boolean}>
-        consent(enabled:boolean,profile:string): Promise<{enabled:boolean;profile:string|null;queued:number;dropped:number}>
-        drain(profile:string): Promise<Observation[]>
-        ack(profile:string,ids:string[]): Promise<unknown>
+        status(): Promise<{
+          enabled: boolean
+          profile: string | null
+          queued: number
+          dropped: number
+          journeyEnabled?: boolean
+        }>
+        journeyConsent?(enabled: boolean): Promise<{ journeyEnabled: boolean }>
+        consent(
+          enabled: boolean,
+          profile: string
+        ): Promise<{ enabled: boolean; profile: string | null; queued: number; dropped: number }>
+        drain(profile: string): Promise<Observation[]>
+        ack(profile: string, ids: string[]): Promise<unknown>
       }
       windowControls: {
         custom: boolean
@@ -253,7 +262,11 @@ declare global {
         // secondary gateways scoped to it. Optional: older Electron mains
         // don't emit it.
         onChanged?: (
-          callback: (payload: { connectionId: string; reason: 'removed' | 'saved' | 'updated' | 'account-changed'; authenticated?: boolean }) => void
+          callback: (payload: {
+            connectionId: string
+            reason: 'removed' | 'saved' | 'updated' | 'account-changed'
+            authenticated?: boolean
+          }) => void
         ) => () => void
       }
       sshConfigHosts: () => Promise<DesktopSshHostsResult>
@@ -266,7 +279,14 @@ declare global {
       oauthLogoutConnectionConfig: (remoteUrl: string) => Promise<DesktopOauthLogoutResult>
       // Hermes Cloud: one portal login powers discovery + silent per-agent
       // sign-in (cloud-auto-discovery Phase 3).
-      fileSync?: Record<'status'|'choose'|'pause'|'resume',()=>Promise<{state:'Paused'|'Syncing'|'Synced'|'Conflict'|'Error';folder?:string;message?:string}>>
+      fileSync?: Record<
+        'status' | 'choose' | 'pause' | 'resume',
+        () => Promise<{
+          state: 'Paused' | 'Syncing' | 'Synced' | 'Conflict' | 'Error'
+          folder?: string
+          message?: string
+        }>
+      >
       workspace?: DesktopWorkspaceApi
       cloud: {
         status: () => Promise<DesktopCloudStatus>
@@ -357,7 +377,14 @@ declare global {
       ) => () => void
       saveImageBuffer: (data: ArrayBuffer | Uint8Array, ext: string, name?: string) => Promise<string>
       /** Private frame routing used only by the embedded preview engine. */
-      previewFrames?: (payload: { webContentsId: number; operation: 'list' | 'run' | 'mapPoint' | 'input' | 'dispose'; token?: string; code?: string; point?: { x: number; y: number }; event?: PreviewInputEvent }) => Promise<any>
+      previewFrames?: (payload: {
+        webContentsId: number
+        operation: 'list' | 'run' | 'mapPoint' | 'input' | 'dispose'
+        token?: string
+        code?: string
+        point?: { x: number; y: number }
+        event?: PreviewInputEvent
+      }) => Promise<any>
       /** Crop the in-app browser guest. `rect` is CSS pixels in the page viewport. */
       capturePreview?: (payload: {
         rect?: { height: number; width: number; x: number; y: number }

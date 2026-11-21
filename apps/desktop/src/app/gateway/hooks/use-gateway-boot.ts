@@ -71,7 +71,14 @@ import {
 } from '@/store/gateway-switch'
 import { notify, notifyError, RECOVERY_ACTIONS } from '@/store/notifications'
 import { markOnboardingDecided } from '@/store/onboarding-presence'
-import { $activeGatewayProfile, $profiles, $profilesByConnection, invalidateProfileListFetches, normalizeProfileKey, refreshActiveProfile } from '@/store/profile'
+import {
+  $activeGatewayProfile,
+  $profiles,
+  $profilesByConnection,
+  invalidateProfileListFetches,
+  normalizeProfileKey,
+  refreshActiveProfile
+} from '@/store/profile'
 import { requestBackendRestart } from '@/store/recovery-requests'
 import {
   $activeSessionId,
@@ -510,11 +517,14 @@ export function useGatewayBoot({
         // explicit auth rejection asks for sign-in; transport failures stay in
         // this reconnect loop. For local/token gateways the URL carries a
         // long-lived token and the re-mint is a cheap no-op.
-        const wsUrl = conn.transport === 'semantier-workspace-http' ? '' : await withTimeout(
-          resolveDesktopGatewayWsUrl(desktop, conn),
-          RECONNECT_ATTEMPT_TIMEOUT_MS,
-          'Timed out re-minting the gateway WebSocket URL'
-        )
+        const wsUrl =
+          conn.transport === 'semantier-workspace-http'
+            ? ''
+            : await withTimeout(
+                resolveDesktopGatewayWsUrl(desktop, conn),
+                RECONNECT_ATTEMPT_TIMEOUT_MS,
+                'Timed out re-minting the gateway WebSocket URL'
+              )
 
         // Same fence after the mint: an apply that landed while the ticket was
         // in flight owns the socket, and its socket may already have dropped.
@@ -523,7 +533,9 @@ export function useGatewayBoot({
         }
 
         if (conn.transport === 'semantier-workspace-http') {
-          if (!conn.workspaceScope) { throw new Error('Semantier Workspace identity is missing.') }
+          if (!conn.workspaceScope) {
+            throw new Error('Semantier Workspace identity is missing.')
+          }
           await gateway.connectWorkspace(conn.baseUrl, conn.workspaceScope, conn.connectionId, conn.profile)
         } else {
           await gateway.connect(wsUrl)
@@ -846,18 +858,23 @@ export function useGatewayBoot({
 
         // Bounded for the same reason as attemptReconnect() (#93454): a wedged
         // ticket mint would otherwise hang the gateway switch forever.
-        const wsUrl = conn.transport === 'semantier-workspace-http' ? '' : await withTimeout(
-          resolveDesktopGatewayWsUrl(desktop, conn),
-          RECONNECT_ATTEMPT_TIMEOUT_MS,
-          'Timed out re-minting the gateway WebSocket URL'
-        )
+        const wsUrl =
+          conn.transport === 'semantier-workspace-http'
+            ? ''
+            : await withTimeout(
+                resolveDesktopGatewayWsUrl(desktop, conn),
+                RECONNECT_ATTEMPT_TIMEOUT_MS,
+                'Timed out re-minting the gateway WebSocket URL'
+              )
 
         if (!ownsSwitch()) {
           return
         }
 
         if (conn.transport === 'semantier-workspace-http') {
-          if (!conn.workspaceScope) { throw new Error('Semantier Workspace identity is missing.') }
+          if (!conn.workspaceScope) {
+            throw new Error('Semantier Workspace identity is missing.')
+          }
           await gateway.connectWorkspace(conn.baseUrl, conn.workspaceScope, conn.connectionId, conn.profile)
         } else {
           await gateway.connect(wsUrl)
@@ -1309,17 +1326,23 @@ export function useGatewayBoot({
 
       if (payload.reason === 'account-changed') {
         const previous = $connection.get()
-        const ownsView = previous?.connectionId === payload.connectionId || signedOutWorkspaceConnectionId === payload.connectionId
+        const ownsView =
+          previous?.connectionId === payload.connectionId || signedOutWorkspaceConnectionId === payload.connectionId
         disposeSecondariesForConnection(payload.connectionId)
         forgetWorkspaceReadScope(payload.connectionId)
 
-        const catalogScope = {predicate:(query: {queryKey: readonly unknown[]}) => {
-          const key = query.queryKey
-          const owner = key[3] === 'owner' ? key[4] : null
+        const catalogScope = {
+          predicate: (query: { queryKey: readonly unknown[] }) => {
+            const key = query.queryKey
+            const owner = key[3] === 'owner' ? key[4] : null
 
-          return key[0] === 'model-options' && typeof owner === 'string' &&
-            (owner === payload.connectionId || owner.startsWith(payload.connectionId + ':'))
-        }}
+            return (
+              key[0] === 'model-options' &&
+              typeof owner === 'string' &&
+              (owner === payload.connectionId || owner.startsWith(payload.connectionId + ':'))
+            )
+          }
+        }
 
         void queryClient.cancelQueries(catalogScope)
         queryClient.removeQueries(catalogScope)
@@ -1349,9 +1372,13 @@ export function useGatewayBoot({
             }
 
             window.location.hash = '#/'
-          } finally { endGatewaySwitch(token) }
+          } finally {
+            endGatewaySwitch(token)
+          }
 
-          if (payload.authenticated) { void softSwitch() }
+          if (payload.authenticated) {
+            void softSwitch()
+          }
         }
 
         return
@@ -1521,7 +1548,9 @@ export function useGatewayBoot({
         }
 
         if (conn.transport === 'semantier-workspace-http') {
-          if (!conn.workspaceScope) { throw new Error('Semantier Workspace identity is missing.') }
+          if (!conn.workspaceScope) {
+            throw new Error('Semantier Workspace identity is missing.')
+          }
           publish(conn)
           recordPrimaryConnection(conn)
           await gateway.connectWorkspace(conn.baseUrl, conn.workspaceScope, conn.connectionId, conn.profile)

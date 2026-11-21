@@ -1048,9 +1048,10 @@ export function normalizeConnectionInput(input: ConnectionInput, registry: Conne
 
   if (kind === 'remote' || kind === 'cloud') {
     // normalizeRemoteBaseUrl throws its own user-facing message on bad input.
-    const url = input.transport === 'semantier-workspace-http'
-      ? normalizeSemantierWorkspaceOrigin(input.url || '')
-      : normalizeRemoteBaseUrl(input.url)
+    const url =
+      input.transport === 'semantier-workspace-http'
+        ? normalizeSemantierWorkspaceOrigin(input.url || '')
+        : normalizeRemoteBaseUrl(input.url)
 
     // Duplicate prevention: remote/cloud entries collide on the normalized URL
     // (trimmed, trailing slashes stripped, lowercased) regardless of kind — a
@@ -1333,7 +1334,9 @@ export function normalizeRegistry(raw: unknown): ConnectionRegistry {
         }
 
         if (entry.transport === 'semantier-workspace-http') {
-          try { clean.url = normalizeSemantierWorkspaceOrigin(url) } catch {
+          try {
+            clean.url = normalizeSemantierWorkspaceOrigin(url)
+          } catch {
             quarantine('entry-invalid-workspace-origin', item)
 
             continue
@@ -1416,16 +1419,19 @@ export function normalizeRegistry(raw: unknown): ConnectionRegistry {
     connections
   }
 
-  if (typeof parsed.installationId === 'string' && /^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(parsed.installationId)) {
+  if (
+    typeof parsed.installationId === 'string' &&
+    /^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(parsed.installationId)
+  ) {
     normalized.installationId = parsed.installationId
   }
 
-  if (Object.prototype.hasOwnProperty.call(parsed,'personalCapabilities')) {
-    normalized.personalCapabilities=safeEntryCopy(parsed.personalCapabilities)
+  if (Object.prototype.hasOwnProperty.call(parsed, 'personalCapabilities')) {
+    normalized.personalCapabilities = safeEntryCopy(parsed.personalCapabilities)
   }
 
-  if (Object.prototype.hasOwnProperty.call(parsed,'managedWindowsDevices')) {
-    normalized.managedWindowsDevices=safeEntryCopy(parsed.managedWindowsDevices)
+  if (Object.prototype.hasOwnProperty.call(parsed, 'managedWindowsDevices')) {
+    normalized.managedWindowsDevices = safeEntryCopy(parsed.managedWindowsDevices)
   }
 
   if (quarantined.length > 0) {
