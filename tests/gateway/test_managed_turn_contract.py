@@ -181,3 +181,29 @@ def test_shared_tool_events_bound_large_content_without_losing_error_or_path():
     assert complete['is_error'] is True
     assert 'error' in json.loads(complete['result'])
     assert len(json.dumps(complete)) < 100_000
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["cron", "managed"])
+async def test_request_owned_gateway_does_not_bypass_its_execution_hook(monkeypatch, source):
+    from types import SimpleNamespace
+    from gateway.session_ingress import execute_admission
+    from gateway.session_contract import SessionRef
+    from hermes_state_runtime import RuntimeStoreError
+
+    policy = SimpleNamespace(source=source)
+    authority = SimpleNamespace(
+        runner=SimpleNamespace(_require_in_process_admission=True),
+        sessions={"chat": SimpleNamespace(source=object())},
+    )
+
+    async def unexpected(*args):
+        pytest.fail("alternate execution path was reached")
+
+    monkeypatch.setattr("gateway.session_policy.policy_for_source", lambda *_: policy)
+    monkeypatch.setattr("gateway.session_managed_worker.managed_policy", lambda *_: policy)
+    monkeypatch.setattr("gateway.session_managed_worker.execute_managed", unexpected)
+    monkeypatch.setattr("gateway.session_cron.execute", unexpected)
+
+    with pytest.raises(RuntimeStoreError, match="unsupported_execution_policy"):
+        await execute_admission(authority, SessionRef("profile", "chat"), {})
