@@ -132,6 +132,44 @@ function renderModelSettings(scopeProfile?: string) {
 }
 
 describe('ModelSettings profile scope', () => {
+  it('hides a previous account catalog on account change while preserving a local selection', async () => {
+    const original = Object.getOwnPropertyDescriptor(window, 'hermesDesktop')
+
+    const account = (userId: string) => ({ connections: [], accountContext: { origin: 'https://cloud.example',
+      scope: { userId, workspaceId: `w-${userId}`, organizationId: 'o' } } })
+
+    let notify!: () => void
+    Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: {
+      workspace: { onAccountChanged: (callback: () => void) => {notify = callback;
+
+ return () => {}} },
+      connections: { list: vi.fn().mockResolvedValueOnce(account('a')).mockResolvedValue(account('b')) }
+    } })
+    $connection.set({ mode: 'local', baseUrl: 'http://localhost:9119', connectionId: 'local' } as never)
+    getGlobalModelOptions.mockResolvedValue({ providers: [
+      { name: 'Nous', slug: 'nous', models: ['hermes-4'], eligible_models: ['hermes-4'], authenticated: true },
+      { name: 'Account A Cloud', slug: 'semantier-cloud', models: ['a-model'], eligible_models: ['a-model'], authenticated: true }
+    ] })
+
+    try {
+      renderModelSettings()
+      const provider = (await screen.findAllByRole('combobox'))[0]
+      await waitFor(() => expect(provider.textContent).toContain('Nous'))
+      fireEvent.click(provider)
+      expect(await screen.findByRole('option', { name: 'Semantier Model Provider' })).toBeTruthy()
+      fireEvent.keyDown(provider, { key: 'Escape' })
+      getGlobalModelOptions.mockImplementation(() => new Promise(() => {}))
+      act(() => notify())
+      fireEvent.click(provider)
+      await waitFor(() => expect(screen.queryByRole('option', { name: 'Semantier Model Provider' })).toBeNull())
+      expect(provider.textContent).toContain('Nous')
+    } finally {
+      cleanup()
+
+      if (original) {Object.defineProperty(window, 'hermesDesktop', original)} else {delete (window as { hermesDesktop?: unknown }).hermesDesktop}
+    }
+  })
+
   it('starts one background discovery for a newly targeted profile', async () => {
     $connection.set({ mode: 'local', baseUrl: 'http://localhost:9119' } as never)
     renderModelSettings('research')

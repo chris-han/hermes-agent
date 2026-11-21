@@ -34,6 +34,7 @@ import { modelProviderName, providerJourneyCopy } from '@/i18n/model-service'
 import { isCodeSkewRestartRequired } from '@/lib/code-skew-error'
 import { AlertTriangle, Cpu, Loader2 } from '@/lib/icons'
 import { isSubmitEnter } from '@/lib/ime'
+import { useModelAccountScope, visibleAccountModelOptions } from '@/lib/model-account-scope'
 import { modelDiscoveryOwnerKey } from '@/lib/model-discovery-scope'
 import { catalogProviderMatches, findCatalogProvider, modelOptionsQueryKey, providerManualModels, providerSelectableModels, requestDiscoveredModelOptions } from '@/lib/model-options'
 import { composerServiceTier } from '@/lib/model-status-label'
@@ -313,13 +314,15 @@ interface ModelSettingsProps {
 export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: ModelSettingsProps) {
   const { t, locale } = useI18n()
   const connection = useStore($connection)
+  const account = useModelAccountScope(connection, connection?.connectionId)
+  const accountKey = JSON.stringify(account.key)
   const currentProfile = useStore($settingsScopeProfile)
   const searchSource = modelSearchSource(connection)
   const searchProfile = scopeProfile ?? currentProfile
   const queryClient = useQueryClient()
   const ownerKey = modelDiscoveryOwnerKey(null, connection)
   const scopeBinding = JSON.stringify([searchSource, searchProfile, ownerKey])
-  const catalogKey = useMemo(() => modelOptionsQueryKey(searchProfile, null, ownerKey), [searchProfile, ownerKey])
+  const catalogKey = useMemo(() => [...modelOptionsQueryKey(searchProfile, null, ownerKey), ...JSON.parse(accountKey)], [searchProfile, ownerKey, accountKey])
 
   const requestDiscovery = useCallback((forceRefresh = false) => requestDiscoveredModelOptions({
     connection,
@@ -343,8 +346,15 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
   const [skewRestart, setSkewRestart] = useState(false)
   const [restartingBackend, setRestartingBackend] = useState(false)
   const [mainModel, setMainModel] = useState<{ model: string; provider: string } | null>(null)
-  const [catalogProviders, setCatalogProviders] = useState<ModelOptionProvider[]>([])
-  const providers = catalogProviders
+  const [catalogSnapshot, setCatalogSnapshot] = useState<{ accountKey: string; providers: ModelOptionProvider[] }>({ accountKey, providers: [] })
+
+  const setCatalogProviders = useCallback((providers: ModelOptionProvider[]) => {
+    setCatalogSnapshot({ accountKey, providers })
+  }, [accountKey])
+
+  const providers = catalogSnapshot.providers.filter(provider =>
+    provider.slug !== 'semantier-cloud' || (account.allowCloud && catalogSnapshot.accountKey === accountKey))
+
   const [selectedProvider, setSelectedProvider] = useState('')
   const [selectedModel, setSelectedModel] = useState('')
   const [auxiliary, setAuxiliary] = useState<AuxiliaryModelsResponse | null>(null)
@@ -377,10 +387,12 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
   // so a request in flight when the user switches profiles can't paint profile
   // A's models/providers into profile B (or fire onMainModelChanged for A).
   const profileEpoch = useRef(0)
+  const currentAccountKey = useRef(accountKey)
+  currentAccountKey.current = accountKey
 
   useEffect(() => {
     if (catalogQuery.data) {setCatalogProviders(catalogQuery.data.providers ?? [])}
-  }, [catalogQuery.data])
+  }, [catalogQuery.data, setCatalogProviders])
 
   const setCaughtError = useCallback(
     (err: unknown, fallback: string) => {
@@ -415,7 +427,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
           getMoaModels(scopeProfile)
         ])
 
-        if (profileEpoch.current !== epoch || modelSearchSource($connection.get()) !== searchSource) {
+        if (profileEpoch.current !== epoch || currentAccountKey.current !== accountKey || modelSearchSource($connection.get()) !== searchSource) {
           return
         }
 
@@ -431,7 +443,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
           return null
         }
 
-        const modelOptions = settledValue(modelOptionsResult)
+        const modelOptions = visibleAccountModelOptions(settledValue(modelOptionsResult) ?? undefined, account.allowCloud)
         const auxiliaryModels = settledValue(auxiliaryModelsResult)
         // MOA has always been optional-on-failure; keep it out of the banner.
         const moaModels = moaModelsResult.status === 'fulfilled' ? moaModelsResult.value : null
@@ -473,16 +485,16 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
         // change it server-side (aux slots), so nudge that cache to refetch.
         void invalidateHermesConfig(scopeProfile)
       } catch (err) {
-        if (profileEpoch.current === epoch) {
+        if (profileEpoch.current === epoch && currentAccountKey.current === accountKey) {
           setCaughtError(err, m.loadFailed)
         }
       } finally {
-        if (profileEpoch.current === epoch) {
+        if (profileEpoch.current === epoch && currentAccountKey.current === accountKey) {
           setLoading(false)
         }
       }
     },
-    [catalogKey, m.loadFailed, ownerKey, queryClient, requestDiscovery, scopeProfile, searchSource, setCaughtError]
+    [account.allowCloud, accountKey, catalogKey, m.loadFailed, ownerKey, queryClient, requestDiscovery, scopeProfile, searchSource, setCaughtError, setCatalogProviders]
   )
 
   const previousScope = useRef(scopeBinding)
@@ -502,7 +514,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
     setApiKeyDraft('')
     setSwitchStaleAux([])
     setEditingAuxTask(null)
-  }, [])
+  }, [setCatalogProviders])
 
   // Compare successive explicit prop scopes; this ref is not an atom mirror.
   // eslint-disable-next-line no-restricted-syntax -- Compare request identities and invalidate old completions; not an atom mirror.
@@ -821,7 +833,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
     } finally {
       setActivating(false)
     }
-  }, [apiKeyDraft, m.loadFailed, requestDiscovery, scopeProfile, selectedProviderRow, setCaughtError])
+  }, [apiKeyDraft, m.loadFailed, requestDiscovery, scopeProfile, selectedProviderRow, setCaughtError, setCatalogProviders])
 
   // OAuth / external providers can't be activated with a pasted key — hand off
   // to the shared onboarding flow scoped to this provider's real sign-in. The
@@ -939,7 +951,8 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
     selectedProvider,
     selectedProviderRow,
     selectedUnavailable,
-    setCaughtError
+    setCaughtError,
+    setCatalogProviders
   ])
 
   const retryEligibility = useCallback(async () => {
@@ -981,7 +994,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
         setApplying(false)
       }
     }
-  }, [catalogKey, locale, m.loadFailed, ownerKey, queryClient, requestDiscovery, scopeProfile, searchSource, selectedModel, selectedProvider, selectedProviderRow, setCaughtError])
+  }, [catalogKey, locale, m.loadFailed, ownerKey, queryClient, requestDiscovery, scopeProfile, searchSource, selectedModel, selectedProvider, selectedProviderRow, setCaughtError, setCatalogProviders])
 
   // Sibling of the applyMainModel endpoint passthrough (#65254): auxiliary
   // assignments targeting a user-defined provider must carry that provider's
