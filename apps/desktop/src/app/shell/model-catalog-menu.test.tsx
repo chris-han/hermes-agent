@@ -18,6 +18,7 @@ import { DropdownMenu, DropdownMenuContent } from '@/components/ui/dropdown-menu
 import { registry } from '@/contrib/registry'
 import { queryClient } from '@/lib/query-client'
 import { refreshModelsOnConnectionReady } from '@/lib/startup-model-discovery'
+import { $connectionsRegistry } from '@/store/connection-registry-state'
 import { $favoriteModels, favoriteModelKey, toggleFavoriteModel } from '@/store/favorite-models'
 import { setShowModelPricing } from '@/store/model-pricing'
 import {
@@ -73,7 +74,69 @@ afterEach(() => {
   // disappears so an in-flight app-level poll cannot schedule another tick.
   $defaultReasoningEffort.set('')
   $connection.set(null)
+  $connectionsRegistry.set(null)
   vi.clearAllMocks()
+})
+
+it('does not paint a prior account catalog while the selected account changes', async () => {
+  const original = Object.getOwnPropertyDescriptor(window, 'hermesDesktop')
+  let notify!: () => void
+  const accountA = { origin: 'https://cloud.example', scope: { userId: 'a', workspaceId: 'wa', organizationId: 'oa' } }
+  const accountB = { origin: 'https://cloud.example', scope: { userId: 'b', workspaceId: 'wb', organizationId: 'ob' } }
+  const registry = (accountContext: typeof accountA) => ({ connections: [], accountContext }) as never
+  let resolveNext!: (value: unknown) => void
+  Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: {
+    workspace: { onAccountChanged: (callback: () => void) => {notify = callback;
+
+ return () => {} } },
+    connections: { list: vi.fn().mockResolvedValueOnce(registry(accountA)).mockResolvedValue(registry(accountB)) }
+  } })
+
+  try {
+    $connectionsRegistry.set(registry(accountA))
+    $connection.set({ mode: 'local', baseUrl: 'http://127.0.0.1', connectionId: 'test' } as never)
+    getGlobalModelOptions.mockResolvedValueOnce({ providers: [{ name: 'Cloud', slug: 'semantier-cloud', authenticated: true,
+      models: ['dynamic-model'], eligible_models: ['dynamic-model'],
+      capabilities: { 'dynamic-model': { reasoning: false, fast: false } },
+      model_profiles: { 'dynamic-model': { label: 'Dynamic model', context_window: 256000,
+        max_output_tokens: 4096, revision: 'profile-2', deployment_revision: 'deployment-2',
+        capabilities: { stream: true, tools: false, vision: false } } } }] })
+    renderMenu({ model: 'dynamic-model', provider: 'semantier-cloud' })
+    expect(await screen.findByText(/Dynamic model.*Streaming/)).toBeTruthy()
+    getGlobalModelOptions.mockImplementation(() => new Promise(resolve => {resolveNext = resolve}))
+    act(() => notify())
+    await waitFor(() => expect(screen.queryByText(/Dynamic model.*Streaming/)).toBeNull())
+    await waitFor(() => expect(resolveNext).toBeDefined())
+    await act(async () => {resolveNext({ providers: [] })})
+  } finally {
+    cleanup()
+
+    if (original) {Object.defineProperty(window, 'hermesDesktop', original)} else {delete (window as { hermesDesktop?: unknown }).hermesDesktop}
+  }
+})
+
+it('keeps other local models visible when account scope cannot be refreshed', async () => {
+  const original = Object.getOwnPropertyDescriptor(window, 'hermesDesktop')
+  Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: {
+    workspace: { onAccountChanged: () => () => {} },
+    connections: { list: vi.fn().mockRejectedValue(new Error('registry unavailable')) }
+  } })
+
+  try {
+    $connection.set({ mode: 'local', baseUrl: 'http://127.0.0.1', connectionId: 'test' } as never)
+    getGlobalModelOptions.mockResolvedValue({ providers: [
+      { name: 'Google', slug: 'google', authenticated: true, models: ['gemini-3.1-pro'], eligible_models: ['gemini-3.1-pro'] },
+      { name: 'Cloud', slug: 'semantier-cloud', authenticated: true, models: ['dynamic-model'], eligible_models: ['dynamic-model'],
+        model_profiles: { 'dynamic-model': { label: 'Dynamic model', capabilities: { stream: true } } } }
+    ] })
+    renderMenu({ model: 'dynamic-model', provider: 'semantier-cloud' })
+    expect(await screen.findByText('Gemini 3.1 Pro')).toBeTruthy()
+    expect(screen.queryByText(/Dynamic model/)).toBeNull()
+  } finally {
+    cleanup()
+
+    if (original) {Object.defineProperty(window, 'hermesDesktop', original)} else {delete (window as { hermesDesktop?: unknown }).hermesDesktop}
+  }
 })
 
 it('refreshes local default-profile discovery when account model preparation is ready', async () => {

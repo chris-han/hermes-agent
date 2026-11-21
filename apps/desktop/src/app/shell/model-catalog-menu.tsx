@@ -46,6 +46,7 @@ import { reasoningEffortLabel } from '@/lib/reasoning-effort'
 import { refreshModelsOnConnectionReady } from '@/lib/startup-model-discovery'
 import { foldIncludes, normalize } from '@/lib/text'
 import { cn } from '@/lib/utils'
+import { $connectionsRegistry } from '@/store/connection-registry-state'
 import { $customModels, addCustomModel, customModelCandidate } from '@/store/custom-models'
 import { $favoriteModels, favoriteModelKey, toggleFavoriteModel } from '@/store/favorite-models'
 import { requestGatewayForAgent } from '@/store/gateway'
@@ -241,7 +242,41 @@ export function ModelCatalogMenu({
   const copy = t.shell.modelMenu
   const copyPicker = t.modelPicker
   const connection = useStore($connection)
+  const registry = useStore($connectionsRegistry)
+  const [accountEpoch, setAccountEpoch] = useState(0)
+  const [accountSettled, setAccountSettled] = useState(false)
   const ownerKey = modelDiscoveryOwnerKey(ownerConnectionId, connection)
+  const localAccountScope = connection?.mode === 'local' ? JSON.stringify(registry?.accountContext ?? null) : null
+  useEffect(() => {
+    if (connection?.mode !== 'local') {return}
+    let live = true
+    let revision = 0
+
+    const refreshAccount = () => {
+      const current = ++revision
+      setAccountSettled(false)
+      const list = window.hermesDesktop?.connections?.list
+
+      if (list) {
+        void list().then(value => {
+          if (live && current === revision) {$connectionsRegistry.set(value); setAccountSettled(true)}
+        }).catch(() => {})
+      } else if (!window.hermesDesktop?.workspace?.onAccountChanged) {
+        // Legacy standalone Desktop has no account registry or account events.
+        setAccountSettled(true)
+      }
+    }
+
+    const unsubscribe = window.hermesDesktop?.workspace?.onAccountChanged?.(() => {
+      // Retire the currently painted query before asynchronous registry refresh.
+      setAccountEpoch(value => value + 1)
+      refreshAccount()
+    })
+
+    refreshAccount()
+
+    return () => {live = false; revision++; unsubscribe?.()}
+  }, [connection?.mode])
   useEffect(() => {
     if (ownerKey) {void refreshModelsOnConnectionReady(ownerConnectionId ?? connection?.connectionId ?? null, profile, connection)}
   }, [connection, ownerConnectionId, ownerKey, profile])
@@ -284,7 +319,8 @@ export function ModelCatalogMenu({
   const favoriteKeys = useStore($favoriteModels)
 
   const modelOptions = useQuery({
-    queryKey: modelOptionsQueryKey(profile, sessionId, ownerKey),
+    queryKey: [...modelOptionsQueryKey(profile, sessionId, ownerKey),
+      ...(localAccountScope === null ? [] : ['account', localAccountScope, accountEpoch])],
     // Gateway-first even with no session: a connected (possibly remote)
     // gateway owns the model catalog, including virtual providers the local
     // REST fallback can't know about (#53817).
@@ -301,8 +337,9 @@ export function ModelCatalogMenu({
   const error = queryErrorMessage(modelOptions.error)
 
   const providers = useMemo(
-    () => modelOptions.data?.providers.map(omitUnavailable),
-    [modelOptions.data?.providers]
+    () => modelOptions.data?.providers.map(omitUnavailable).filter(provider =>
+      connection?.mode !== 'local' || accountSettled || provider.slug !== 'semantier-cloud'),
+    [modelOptions.data?.providers, connection?.mode, accountSettled]
   )
 
   // The catalog carries MoA presets as a virtual `moa` provider row. Keep it
