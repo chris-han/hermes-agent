@@ -80,7 +80,7 @@ def test_retained_cloud_connection_is_recognized_after_custom_default(monkeypatc
     from types import SimpleNamespace
     from agent import semantier_gateway as cloud
     from hermes_cli import config
-    monkeypatch.setattr(cloud,'cloud_connection_config',lambda:None)
+    monkeypatch.setattr(cloud,'cloud_connection_config',lambda **_:None)
     monkeypatch.setattr(config,'load_config_readonly',lambda:{'model':{'provider':'explicit-custom'},'providers':{'semantier-cloud':{'base_url':'http://127.0.0.1:8899/v1'}}})
     agent=SimpleNamespace(base_url='http://127.0.0.1:8899/v1',api_key='retained-scoped-secret')
     cloud.capture_agent_route(agent)

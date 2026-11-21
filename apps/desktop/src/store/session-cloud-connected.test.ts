@@ -63,6 +63,9 @@ it.skipIf(!origin)('passes the connected account default to the standalone local
     expect(turn.history).toEqual(expect.arrayContaining([expect.objectContaining({
       role: 'assistant', content: 'fixture response'
     })]))
+    expect(turn.after_switch_completed).toBe(true)
+    expect(turn.after_switch_history.filter((item: { role: string; content: string }) =>
+      item.role === 'assistant' && item.content === 'fixture response')).toHaveLength(1)
   } finally {
     await owner.suspend()
     $connection.set(null); $connectionsRegistry.set(null)

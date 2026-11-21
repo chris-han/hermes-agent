@@ -90,7 +90,9 @@ def capture_agent_route(agent):
             raise ValueError('Cloud scoped credential required.')
         agent._semantier_cloud_settings = GatewaySettings(str(agent.base_url).rstrip('/'),agent.api_key)
         if not hosted:
-            config = cloud_connection_config()
+            # Account-first drafts can explicitly use the named Cloud provider while the
+            # saved Main model remains local or unset. Capture that protected reference too.
+            config = cloud_connection_config() or cloud_connection_config(allow_unselected=True)
             if config and config.get('credential_ref'):
                 from hermes_cli.cloud_device_client import credential, CloudCredentialError
                 import hmac

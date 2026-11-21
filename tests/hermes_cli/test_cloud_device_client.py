@@ -357,7 +357,12 @@ def test_account_switch_during_readiness_does_not_publish_old_account(native, mo
     assert result['account_id'] is None and result['readiness'] is None
 
 
-def test_captured_agent_route_rechecks_account_fence_before_later_requests(native, monkeypatch):
+@pytest.mark.parametrize('model', [
+    {'provider': 'custom', 'base_url': 'http://127.0.0.1:8765/v1'},
+    {},
+    {'provider': 'local', 'default': 'local-model'},
+])
+def test_captured_agent_route_rechecks_account_fence_before_later_requests(native, monkeypatch, model):
     import hermes_constants
     from types import SimpleNamespace
     from agent import semantier_gateway
@@ -367,6 +372,10 @@ def test_captured_agent_route_rechecks_account_fence_before_later_requests(nativ
     started = device.start(prepare_only=True, expected_actor=ACTOR, expected_origin=ACCOUNT_ORIGIN)
     device.poll(started['session_id'])
     device.set_account_fence({'origin': 'http://127.0.0.1:8765', **ACTOR})
+    from hermes_cli.config import atomic_config_replace
+    config = device._config()
+    config['model'] = model
+    atomic_config_replace(home / 'config.yaml', config)
     agent = SimpleNamespace(base_url='http://127.0.0.1:8765/v1', api_key='private-account-token')
     semantier_gateway.capture_agent_route(agent)
     assert semantier_gateway.agent_cloud_settings(agent).api_key == agent.api_key
