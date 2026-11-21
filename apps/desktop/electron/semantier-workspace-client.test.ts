@@ -20,7 +20,8 @@ it('reads and changes only the server-owned Winman preference and preserves unav
   await expect(client.winmanCapability()).resolves.toEqual(reply)
   await expect(client.setWinmanCapability({ userId: 'a', workspaceId: 'wa', organizationId: 'oa' }, true)).resolves.toEqual(reply)
   expect(transport.mock.calls[1]).toMatchObject(['https://cloud.example/api/winman/capability',
-    { method: 'PUT', body: '{"enabled":true,"expected_scope":{"user_id":"a","workspace_id":"wa","organization_id":"oa"}}', credentials: 'include' }])
+    { method: 'PUT', body: '{"enabled":true,"expected_scope":{"user_id":"a","workspace_id":"wa","organization_id":"oa"}}',
+      credentials: 'include', headers: { Origin: 'https://cloud.example', 'X-Semantier-CSRF': '1' } }])
 })
 
 it('approves only a bounded device intent through the account-owned browser session', async () => {
