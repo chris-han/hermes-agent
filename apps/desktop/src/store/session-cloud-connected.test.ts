@@ -57,10 +57,16 @@ it.skipIf(!origin)('passes the connected account default to the standalone local
     })
     expect(session.session_id).toBeTruthy()
     expect(override).toMatchObject({ provider: 'semantier-cloud', model })
+    const turn = await native('fixture-local-turn', 'POST', { session_id: session.session_id })
+    expect(turn.completed).toBe(true)
+    expect(turn.agent_error).toBeNull()
+    expect(turn.history).toEqual(expect.arrayContaining([expect.objectContaining({
+      role: 'assistant', content: 'fixture response'
+    })]))
   } finally {
     await owner.suspend()
     $connection.set(null); $connectionsRegistry.set(null)
     setCurrentModel(''); setCurrentProvider(''); setCurrentModelSource('')
     if (original) {Object.defineProperty(window, 'hermesDesktop', original)} else {delete (window as { hermesDesktop?: unknown }).hermesDesktop}
   }
-}, 30000)
+}, 75000)
