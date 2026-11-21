@@ -408,6 +408,33 @@ def test_queued_cloud_title_revalidates_account_fence(native, monkeypatch):
     assert validators[0]() is False
 
 
+@pytest.mark.parametrize('legacy_base', ['http://127.0.0.1:9999/v1', ACCOUNT_ORIGIN + '/v1'])
+def test_account_agent_is_fenced_when_legacy_gateway_coexists(native, monkeypatch, legacy_base):
+    import hermes_constants
+    from types import SimpleNamespace
+    from agent import semantier_gateway
+    from hermes_cli.config import atomic_config_replace
+    device, home = native
+    monkeypatch.setattr(hermes_constants, 'get_default_hermes_root', lambda **_: home)
+    install_wire(device, monkeypatch)
+    started = device.start(prepare_only=True, expected_actor=ACTOR, expected_origin=ACCOUNT_ORIGIN)
+    device.poll(started['session_id'])
+    device.set_account_fence({'origin': ACCOUNT_ORIGIN, **ACTOR})
+    config = device._config()
+    config['model'] = {'provider': 'local', 'default': 'local-model'}
+    config['semantier_gateway'] = {'enabled': True, 'base_url': legacy_base, 'api_key': 'legacy-secret'}
+    atomic_config_replace(home / 'config.yaml', config)
+    account_agent = SimpleNamespace(base_url=ACCOUNT_ORIGIN + '/v1', api_key='private-account-token')
+    semantier_gateway.capture_agent_route(account_agent)
+    assert semantier_gateway.agent_cloud_settings(account_agent) is not None
+    legacy_agent = SimpleNamespace(base_url=legacy_base, api_key='legacy-secret')
+    semantier_gateway.capture_agent_route(legacy_agent)
+    device.set_account_fence(None)
+    with pytest.raises(device.CloudConnectionError, match='account'):
+        semantier_gateway.agent_cloud_settings(account_agent)
+    assert semantier_gateway.agent_cloud_settings(legacy_agent).api_key == 'legacy-secret'
+
+
 def test_cancel_persists_terminal_before_lost_remote_reply(native, monkeypatch):
     device, _ = native
     monkeypatch.setattr(device, '_wire', lambda origin, operation, body=None, bearer=None: {

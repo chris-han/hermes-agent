@@ -72,11 +72,11 @@ def gateway_settings(*, allow_unselected=False) -> GatewaySettings | None:
 
 def is_gateway_route(base_url: str) -> bool:
     config = cloud_connection_config()
-    if config is None:
-        from hermes_cli.config import load_config_readonly
-        named = (load_config_readonly().get('providers') or {}).get('semantier-cloud')
-        config = named if isinstance(named,dict) else None
-    return bool(config and config.get('base_url') and str(base_url).rstrip('/') == str(config['base_url']).rstrip('/'))
+    from hermes_cli.config import load_config_readonly
+    named = (load_config_readonly().get('providers') or {}).get('semantier-cloud')
+    return any(isinstance(route, dict) and route.get('base_url') and
+               str(base_url).rstrip('/') == str(route['base_url']).rstrip('/')
+               for route in (config, named))
 
 
 def capture_agent_route(agent):
@@ -92,7 +92,17 @@ def capture_agent_route(agent):
         if not hosted:
             # Account-first drafts can explicitly use the named Cloud provider while the
             # saved Main model remains local or unset. Capture that protected reference too.
-            config = cloud_connection_config() or cloud_connection_config(allow_unselected=True)
+            config = cloud_connection_config()
+            named = cloud_connection_config(allow_unselected=True)
+            base = str(agent.base_url).rstrip('/')
+            if named and named.get('credential_ref') and str(named.get('base_url') or '').rstrip('/') == base:
+                # If both routes share an endpoint, retain a selected legacy credential
+                # only when it is actually the credential used by this agent.
+                legacy = None
+                if config and not config.get('credential_ref') and str(config.get('base_url') or '').rstrip('/') == base:
+                    legacy = gateway_settings()
+                if not legacy or legacy.api_key != agent.api_key:
+                    config = named
             if config and config.get('credential_ref'):
                 from hermes_cli.cloud_device_client import credential, CloudCredentialError
                 import hmac
