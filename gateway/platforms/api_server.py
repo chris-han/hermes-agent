@@ -4345,7 +4345,9 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                         # row instead of appending a second copy of the same text (#115325).
                         from agent.session_persistence import adopt_unanswered_turn
 
-                        adopt_unanswered_turn(conversation_history, user_message, agent)
+                        adopted = adopt_unanswered_turn(conversation_history, user_message, agent)
+                        if internal_continuation_id is not None and not adopted:
+                            raise PermissionError("Internal continuation acceptance is missing from the transcript")
                     if active_run_id:
                         self._active_run_agents[active_run_id] = agent
                     effective_task_id = session_id or str(uuid.uuid4())
@@ -4403,6 +4405,8 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                     # run.py's response shape (text, no HTTP error).
                     logger.warning("Provider resolution failed for session=%s: %s",
                                    session_id or "", exc)
+                    if internal_continuation_id is not None:
+                        raise
                     return (
                         {"final_response": exc.user_text(), "messages": [],
                          "api_calls": 0, "tools": [],
