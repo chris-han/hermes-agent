@@ -21,6 +21,8 @@ PLATFORM_NAMES = (
     'LITELLM_DATABASE_URL', 'LITELLM_MIGRATION_DATABASE_URL',
     'SEMANTIER_SESSIONDB_DEV_DSN_WORKSPACE_A',
     'SEMANTIER_SESSIONDB_DEV_EXECUTION_DSN_WORKSPACE_B',
+    'SEMANTIER_SESSIONDB_DEV_MEETING_DSN_WORKSPACE_B',
+    'SEMANTIER_SESSIONDB_DEV_CREDENTIAL_FD',
     'SEMANTIER_SESSIONDB_DEV_CREDENTIAL_MAP',
     'SEMANTIER_SESSIONDB_DEV_EXECUTION_CREDENTIAL_MAP',
 )
@@ -188,3 +190,13 @@ def test_common_popen_child_excludes_custody_even_with_explicit_env(child_env, p
     observed = json.loads(output)
     assert {name: observed[name] for name in platform_names} == dict.fromkeys(platform_names)
     assert observed['MY_APP_KEY'] == 'workspace-byok'
+
+
+def test_scoped_native_worker_cannot_inherit_launch_credentials(child_env, platform_names, monkeypatch):
+    from types import SimpleNamespace
+    from gateway.session_managed_worker import _worker_env
+
+    monkeypatch.setattr("agent.secret_scope.is_multiplex_active", lambda: False)
+    monkeypatch.setattr("tools.environments.local._is_routed_home", lambda home: False)
+    observed = observe_child(_worker_env(SimpleNamespace(profile_id=str(child_env))), platform_names)
+    assert observed == dict.fromkeys(platform_names)

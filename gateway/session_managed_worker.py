@@ -392,19 +392,23 @@ def _worker_env(authority):
     """Child env for the OWNING profile under multiplex: its HERMES_HOME plus its ``.env``
     secrets over a scrubbed base, never the launch profile's process environment (the same
     rule MCP stdio children and shell hooks follow) — except for the launch profile's own
-    worker, whose scope legitimately includes its frozen launch env. Single-profile gateways
-    inherit the process env byte-for-byte, exactly as before."""
+    worker, whose scope legitimately includes its frozen launch env. Scoped DEVELOPMENT
+    workers always strip platform authority, including on the single-profile path."""
     from pathlib import Path
     from agent.secret_scope import is_multiplex_active
     from tools.environments.local import _is_routed_home
+    from tools.environments.local_env_policy import strip_platform_secrets
+
+    scoped = "SEMANTIER_SESSIONDB_DEV_CREDENTIAL_MAP" in os.environ
+    fallback = strip_platform_secrets(os.environ) if scoped else None
     home = Path(str(authority.profile_id))
     if not home.is_absolute():
-        return None
+        return fallback
     # Keyed on the worker's OWNING profile, not only the process-wide multiplex flag: a worker for
     # another profile must never inherit the launch environ even when that flag reads False.
     routed = _is_routed_home(home)
     if not routed and not is_multiplex_active():
-        return None
+        return fallback
     from agent.secret_scope import build_profile_secret_scope
     from tools.environments.local import _scrub_credentials, build_subprocess_env, strip_launch_profile_env
     # The scrub removes credentials, not settings: the launch profile's TERMINAL_* policy and
@@ -423,7 +427,7 @@ def _worker_env(authority):
     env['HERMES_HOME'] = str(home)
     from hermes_constants import apply_subprocess_home_env
     apply_subprocess_home_env(env)
-    return env
+    return strip_platform_secrets(env) if scoped else env
 
 
 def _launch_env_only_credentials(home, env):
