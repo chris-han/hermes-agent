@@ -185,7 +185,8 @@ class PostgreSQLSearchMixin:
                 extra_params=[list(FTS_TRIGRAM_EXCLUDED_SOURCES)]
             if like_order:
                 direction='ASC' if tool and order=='oldest' else 'DESC'
-                statement=select+sql.SQL(' WHERE {} AND {}{} ORDER BY m.timestamp {},m.id {} LIMIT %s OFFSET %s').format(base_where,match,extra,sql.SQL(direction),sql.SQL(direction))
+                tie_direction=direction if tool else 'ASC'
+                statement=select+sql.SQL(' WHERE {} AND {}{} ORDER BY m.timestamp {},m.id {} LIMIT %s OFFSET %s').format(base_where,match,extra,sql.SQL(direction),sql.SQL(tie_direction))
                 return self._all(statement,[*params,*match_params,*extra_params,limit,offset])
             ranks,rank_params=self._search_ranks(current,trigram=trigram)
             ordering=sql.SQL('m.timestamp ASC,ranked.rank,m.id') if order=='oldest' else sql.SQL('m.timestamp DESC,ranked.rank,m.id') if order=='newest' else sql.SQL('ranked.rank,m.id')

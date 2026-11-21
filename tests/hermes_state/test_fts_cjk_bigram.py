@@ -322,3 +322,16 @@ def test_integrity_after_lifecycle(db):
             "INSERT INTO messages_fts_cjk(messages_fts_cjk) "
             "VALUES('integrity-check')"
         )
+
+
+def test_cjk_index_equal_rank_and_timestamp_paginates_stably(db):
+    db.append_messages_batch('s1', [
+        {'role': 'user', 'content': '桂林桂林', 'timestamp': 7},
+        {'role': 'user', 'content': '桂林桂林', 'timestamp': 7},
+    ])
+    for sort in (None, 'oldest', 'newest'):
+        full = db.search_messages('桂林', sort=sort, fields=['id'], limit=10)
+        assert len(full) == 2 and full[0]['id'] < full[1]['id']
+        assert [db.search_messages('桂林', sort=sort, fields=['id'], limit=1, offset=i)[0]
+                for i in range(len(full))] == full
+        assert db.search_messages('桂林', sort=sort, fields=['id'], limit=1, offset=2) == []

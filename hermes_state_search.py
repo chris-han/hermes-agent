@@ -56,7 +56,7 @@ _LIKE_COALESCED_COLUMN_SQL = (
     "COALESCE(m.tool_calls, '') LIKE ? ESCAPE '\\')"
 )
 # ``sort`` -> ORDER BY for the FTS routes; unknown values are rank-only (user input passes through).
-_FTS_ORDER_BY = {"newest": "ORDER BY m.timestamp DESC, rank", "oldest": "ORDER BY m.timestamp ASC, rank"}
+_FTS_ORDER_BY = {"newest": "ORDER BY m.timestamp DESC, rank, m.id ASC", "oldest": "ORDER BY m.timestamp ASC, rank, m.id ASC"}
 # Indexed neighbor seeks avoid scanning whole sessions for a sparse set of hits.
 _CONTEXT_WINDOW_SQL = """WITH target AS (
     SELECT session_id, timestamp, id FROM messages WHERE id IN ({ids})
@@ -1115,7 +1115,7 @@ class SessionSearchMixin:
         if not self._fts_enabled:
             return []
 
-        order_by_sql = _FTS_ORDER_BY.get(sort.strip().lower() if isinstance(sort, str) else None, "ORDER BY rank")
+        order_by_sql = _FTS_ORDER_BY.get(sort.strip().lower() if isinstance(sort, str) else None, "ORDER BY rank, m.id ASC")
         route = dict(order_by_sql=order_by_sql, limit=limit, offset=offset, **filters)
         # Tool rows and FTS_TRIGRAM_EXCLUDED_SOURCES sessions are excluded from the trigram/cjk
         # indexes (see FTS_TRIGRAM_SQL); an explicit filter for them must scan the base table.
@@ -1214,7 +1214,7 @@ class SessionSearchMixin:
         _search_filter_clauses(like_where, like_params, **filters)
         # instr() for the snippet uses the first search token.
         return self._like_rows(like_where, [non_op_tokens[0], *like_params, route["limit"], route["offset"]],
-                               order_by="ORDER BY m.timestamp DESC", limit_sql="LIMIT ? OFFSET ?")
+                               order_by="ORDER BY m.timestamp DESC, m.id ASC", limit_sql="LIMIT ? OFFSET ?")
 
     def _search_unindexed_gap(self, fts_query: str, limit: int, **filters) -> list[dict[str, Any]]:
         """LIKE-scan ids in (fts_rebuild_progress, fts_rebuild_high_water] — rows the deferred
