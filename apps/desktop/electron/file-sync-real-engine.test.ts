@@ -153,6 +153,19 @@ it.skipIf(!fixture)(
         const response = await request('/api/file-sync/files?download=true&path=' + afterOutage)
         return response.status === 206 ? response.text() : ''
       }, { timeout: 20000 }).toBe('Explicit reconnect required\n')
+      const afterPartialFailure = 'partial-' + randomUUID() + '.md'
+      await gate('upload-offline')
+      await fs.writeFile(path.join(folder, afterPartialFailure), 'Explicit partial recovery\n')
+      await expect.poll(async () => (await supervisor.owners())[0].enabled, { timeout: 30000 }).toBe(false)
+      expect(supervisor.status().state).toBe('Error')
+      await gate('upload-online')
+      await new Promise(resolve => setTimeout(resolve, 6500))
+      expect((await request('/api/file-sync/files?download=true&path=' + afterPartialFailure)).status).not.toBe(206)
+      await supervisor.enable(origin, folder)
+      await expect.poll(async () => {
+        const response = await request('/api/file-sync/files?download=true&path=' + afterPartialFailure)
+        return response.status === 206 ? response.text() : ''
+      }, { timeout: 20000 }).toBe('Explicit partial recovery\n')
       expect(await setWinman(false)).toMatchObject({ desired: { enabled: false }, execution: 'unavailable' })
       expect((await supervisor.owners())[0].enabled).toBe(true)
       expect(await admitWinman('files-on-winman-off')).toEqual({ status: 'denied', admissions: 2 })

@@ -352,13 +352,9 @@ export class FileSyncSupervisor {
         event => this.watchEvent(event, generation, canonical),
         controller.signal
       ).then(() => {
-        if (this.generation === generation) {
-          this.view = {
-            state: 'Error',
-            folder: canonical,
-            message: 'The sync service stopped. Resume to reconnect; files are preserved.'
-          }
-        }
+        this.stopFailedWatch(generation, canonical)
+      }, () => {
+        this.stopFailedWatch(generation, canonical)
       })
 
       return this.status()
@@ -548,7 +544,8 @@ export class FileSyncSupervisor {
       return
     }
 
-    if (event.event === 'error' && event.code === 'pass.failed') {
+    if ((event.event === 'error' && event.code === 'pass.failed') ||
+        (event.event === 'pass' && event.code === 'pass.done_failed' && event.params?.failed)) {
       this.stopFailedWatch(generation, canonical)
     } else if (event.event === 'pass') {
       this.view = {

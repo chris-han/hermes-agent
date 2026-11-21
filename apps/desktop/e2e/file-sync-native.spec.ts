@@ -95,6 +95,21 @@ test('explicit File Sync in Windows Electron uses the selected account and local
         const response = await offlineRead()
         return response.status === 206 ? response.text() : ''
       }, { timeout: 40_000 }).toBe('Explicit Windows resume\n')
+      const partialName = `native-partial-${randomUUID()}.md`
+      await gate('upload-offline')
+      fs.writeFileSync(path.join(folder, partialName), 'Explicit partial resume\n')
+      await expect.poll(() => page.evaluate(() => (window as any).hermesDesktop.fileSync.status()),
+        { timeout: 40_000 }).toMatchObject({ state: 'Error' })
+      await gate('upload-online')
+      await new Promise(resolve => setTimeout(resolve, 6500))
+      const partialRead = () => fetch(origin + '/api/file-sync/files?download=true&path=' + partialName, { headers: { cookie,
+        'X-Semantier-User-Id': account.user_id, 'X-Semantier-Workspace-Id': account.workspace_id } })
+      expect((await partialRead()).status).not.toBe(206)
+      await page.getByRole('button', { name: 'Resume', exact: true }).click()
+      await expect.poll(async () => {
+        const response = await partialRead()
+        return response.status === 206 ? response.text() : ''
+      }, { timeout: 40_000 }).toBe('Explicit partial resume\n')
     }
     await page.getByRole('button', { name: 'Model service', exact: true }).click()
     await page.getByRole('button', { name: 'Accounts', exact: true }).click()

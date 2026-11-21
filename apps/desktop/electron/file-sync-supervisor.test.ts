@@ -33,10 +33,14 @@ async function setup() {
     }),
     seal: () => 'encrypted',
     verifyBinary: async () => {},
-    run: async args => {
+    run: async (args, _env, _event, signal) => {
       if (args[1] === 'list') {return { code: 0, stdout: JSON.stringify(pairs) }}
 
       if (args[1] === 'add') {pairs = [{ local: args[2], remote: args[3], account: args[5] }]}
+
+      if (args[1] === 'run' && !signal.aborted) {
+        await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
+      }
 
       return { code: 0, events: [] }
     }

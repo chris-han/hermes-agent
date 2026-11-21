@@ -41,6 +41,7 @@ async function setup() {
   const pairs = new Map<string, unknown[]>()
 
   let emitEvent: (event: any) => void = () => {}
+  let finishWatch: () => void = () => {}
 
   s.options.run = async (args, env, emit, signal) => {
     const key = env.FILEX_SYNC_DIR!
@@ -53,7 +54,10 @@ async function setup() {
 
     emitEvent = emit
     emit({ event: 'pass', params: { failed: 0 } })
-    await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
+    await new Promise<void>(resolve => {
+      finishWatch = resolve
+      signal.addEventListener('abort', () => resolve(), { once: true })
+    })
 
     return { code: 0 }
   }
@@ -69,7 +73,7 @@ async function setup() {
   await fs.writeFile(path.join(current, 'retained.md'), 'current bytes')
   const invoke = (action: string) => mock.handlers.get('hermes:file-sync:' + action)!({ sender: { id: 1 } })
 
-  return { s, old, current, invoke, emit: (event: any) => emitEvent(event) }
+  return { s, old, current, invoke, emit: (event: any) => emitEvent(event), exit: () => finishWatch() }
 }
 
 it('reports and resumes the running current folder with a paused historical binding retained', async () => {
@@ -304,9 +308,12 @@ it('reports real Error, Conflict, Syncing and Paused states for the selected fol
   expect(await invoke('status')).toEqual({ state: 'Paused', folder: current })
 })
 
-it('stops and persists a paused binding after a whole sync pass fails', async () => {
+it.each([
+  { event: 'error', code: 'pass.failed' },
+  { event: 'pass', code: 'pass.done_failed', params: { failed: 1 } }
+])('stops and persists a paused binding after sync failure $code', async event => {
   const { s, current, invoke, emit } = await setup()
-  emit({ event: 'error', code: 'pass.failed' })
+  emit(event)
   await expect.poll(async () => (await s.owners()).find(owner => owner.canonicalLocalFolder === current)?.enabled).toBe(false)
   expect(await invoke('status')).toMatchObject({ state: 'Error', folder: current })
   const restarted = createFileSyncIpc(currentAccount)
@@ -314,6 +321,13 @@ it('stops and persists a paused binding after a whole sync pass fails', async ()
   Object.assign(restarted.options, s.options)
   await restarted.restore()
   expect((await restarted.owners()).find(owner => owner.canonicalLocalFolder === current)?.enabled).toBe(false)
+})
+
+it('persists a paused binding if the watcher exits unexpectedly', async () => {
+  const { s, current, invoke, exit } = await setup()
+  exit()
+  await expect.poll(async () => (await s.owners()).find(owner => owner.canonicalLocalFolder === current)?.enabled).toBe(false)
+  expect(await invoke('status')).toMatchObject({ state: 'Error', folder: current })
 })
 
 it('adopts a legacy unique enabled binding without using historical array order', async () => {
