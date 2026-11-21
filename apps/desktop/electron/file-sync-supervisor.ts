@@ -704,7 +704,7 @@ export class FileSyncSupervisor {
       if (this.generation === failedGeneration && recordId) {
         await this.write(owners.map(owner => owner.id === recordId ? { ...owner, enabled: false } : owner))
       }
-      if (this.generation === failedGeneration) {
+      if (this.generation === failedGeneration && !this.view.stopState) {
         this.view = { state: 'Error', folder: canonical, message: 'File Sync needs reconnection. Your files are preserved.' }
       }
     }).catch(() => {

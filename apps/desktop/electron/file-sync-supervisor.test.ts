@@ -331,7 +331,7 @@ it('retires the active device grant before replacing a running binding', async (
   expect((await supervisor.owners())[0]).toMatchObject({ enabled: false, deviceStop: 'PENDING' })
 })
 
-it('retires the device grant when the watcher exits unexpectedly', async () => {
+it.each(['PENDING', 'UNKNOWN'] as const)('retains %s when the watcher exits unexpectedly', async stopState => {
   const { folder, supervisor } = await setup()
   const token = 'fxd_' + 'f'.repeat(43)
   const original = supervisor.options.run!
@@ -339,7 +339,7 @@ it('retires the device grant when the watcher exits unexpectedly', async () => {
   supervisor.options.binding = async () => ({ userId: 'a', workspaceId: 'wa', remoteRoot: 'private://', token, enginePath: '/api/file-sync/engine', version: '0.61.1' })
   supervisor.options.seal = value => 'sealed:' + value
   supervisor.options.unseal = value => value.slice(7)
-  supervisor.options.stopDevice = async () => 'PENDING'
+  supervisor.options.stopDevice = async () => stopState
   supervisor.options.run = async (...args) => {
     if (args[0][1] !== 'run') {return original(...args)}
     await new Promise<void>(resolve => { exit = resolve })
@@ -347,8 +347,8 @@ it('retires the device grant when the watcher exits unexpectedly', async () => {
   }
   await supervisor.enable('https://cloud.example', folder)
   exit()
-  await vi.waitFor(async () => expect((await supervisor.owners())[0]).toMatchObject({ enabled: false, deviceStop: 'PENDING' }))
-  expect(supervisor.status().state).toBe('Error')
+  await vi.waitFor(async () => expect((await supervisor.owners())[0]).toMatchObject({ enabled: false, deviceStop: stopState }))
+  await vi.waitFor(() => expect(supervisor.status()).toMatchObject({ state: 'Error', stopState }))
 })
 
 it('shares an in-flight device stop across pause and account change', async () => {
