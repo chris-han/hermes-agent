@@ -98,7 +98,13 @@ try{
   if((Get-NativeLegacyRelaunchHome $data $build 555 $fixture) -ine $fixture){throw 'Legacy registry home lost for default Windows launch'}
   $defaultRoot=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'hermes'
   if(Test-Path -LiteralPath $defaultRoot){
-   if((Get-NativeLegacyRelaunchHome $data $build 555 $null) -ine $defaultRoot){throw 'Default Windows home lost'}
+   # An unrelated host default home may legitimately have unsafe ACLs. Preserve
+   # the production refusal rather than requiring or repairing that host state.
+   $safeDefault=$true
+   try{$null=Assert-NativeContinuityDirectory $defaultRoot $sid}catch{$safeDefault=$false}
+   if($safeDefault){
+    if((Get-NativeLegacyRelaunchHome $data $build 555 $null) -ine $defaultRoot){throw 'Default Windows home lost'}
+   }else{Refuse {Get-NativeLegacyRelaunchHome $data $build 555 $null}}
   }
  }finally{
   $data=$savedData;$journal=$savedJournal;$request.userDataDirectory=$data;$request.journalDirectory=$journal

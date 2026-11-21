@@ -65,19 +65,22 @@ internal static class Program {
       if(args.Length!=0)return 2;
 #endif
       Application.EnableVisualStyles();
-      using(var form=new InstallerWindow(report=>{
+      using(var form=new InstallerWindow((report,cancellation,beginInstall)=>{
 #if LOCAL_SETUP
+        cancellation.ThrowIfCancellationRequested();
         report("Verifying package and publisher…");
         string package=ResolveLocalPackage(AppDomain.CurrentDomain.BaseDirectory);
         VerifyIdentity(package);
-        report("Installing for the current Windows user…");Install(package,report);
+        cancellation.ThrowIfCancellationRequested();
+        Install(package,report,cancellation,beginInstall);
         report("Semantier Agent "+AppVersionString+" installed.");
 #else
         string directory=TemporaryDirectory();
         try{
           report("Downloading signed release…");
-          string package=DownloadPackage(directory,(done,total)=>report("Downloading "+(100*done/total).ToString(CultureInfo.InvariantCulture)+"%"),null,report);
-          report("Installing for the current Windows user…");Install(package,report);
+          string package=DownloadPackage(directory,(done,total)=>report("Downloading "+(100*done/total).ToString(CultureInfo.InvariantCulture)+"%"),null,report,null,null,0,cancellation);
+          cancellation.ThrowIfCancellationRequested();
+          Install(package,report,cancellation,beginInstall);
           report("Semantier Agent "+AppVersionString+" installed.");
         }finally{try{Directory.Delete(directory,true);}catch(IOException){report("Temporary files may remain.");}catch(UnauthorizedAccessException){report("Temporary files may remain.");}}
 #endif
@@ -95,35 +98,39 @@ internal static class Program {
     return files[0];
   }
   static string TemporaryDirectory(){string path=Path.Combine(Path.GetTempPath(),"semantier-install-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(path);return path;}
-  static IWinHttpResponse Open(NativeWinHttpRequests client,Uri uri,bool head){
+  static IWinHttpResponse Open(NativeWinHttpRequests client,Uri uri,bool head,CancellationToken cancellation=default(CancellationToken)){
+    cancellation.ThrowIfCancellationRequested();
     try{return head?client.OpenHead(uri,true):client.Open(uri,0,true);}
-    catch(IOException){return head?client.OpenHead(uri,false):client.Open(uri,0,false);}
+    catch(IOException){cancellation.ThrowIfCancellationRequested();return head?client.OpenHead(uri,false):client.Open(uri,0,false);}
   }
-  internal static byte[] ReadMetadata(NativeWinHttpRequests client,string url){
+  internal static byte[] ReadMetadata(NativeWinHttpRequests client,string url,CancellationToken cancellation=default(CancellationToken)){
     if(!url.StartsWith(ReleaseSelection.MetadataBase+"/releases/",StringComparison.Ordinal))throw new InvalidDataException("Untrusted metadata origin.");
-    using(var response=Open(client,new Uri(url),false))using(var output=new MemoryStream()){
+    using(var response=Open(client,new Uri(url),false,cancellation))using(var output=new MemoryStream()){
       if(response.StatusCode!=200 || response.ContentLength<=0 || response.ContentLength>4194304)throw new InvalidDataException("Invalid metadata response.");
       var buffer=new byte[65536];int n;
-      while((n=response.Body.Read(buffer,0,buffer.Length))>0){if(output.Length+n>response.ContentLength)throw new InvalidDataException("Metadata size mismatch.");output.Write(buffer,0,n);}
+      while(true){cancellation.ThrowIfCancellationRequested();n=response.Body.Read(buffer,0,buffer.Length);cancellation.ThrowIfCancellationRequested();if(n<=0)break;if(output.Length+n>response.ContentLength)throw new InvalidDataException("Metadata size mismatch.");output.Write(buffer,0,n);}
       if(output.Length!=response.ContentLength)throw new InvalidDataException("Incomplete metadata.");return output.ToArray();
     }
   }
-  internal static string DownloadPackage(string directory,Action<long,long> progress,string expected,Action<string> report=null,string candidateBuild=null,string candidateManifestHash=null,long candidateSequence=0){
+  internal static string DownloadPackage(string directory,Action<long,long> progress,string expected,Action<string> report=null,string candidateBuild=null,string candidateManifestHash=null,long candidateSequence=0,CancellationToken cancellation=default(CancellationToken)){
     using(var metadata=new NativeWinHttpRequests())using(var client=new NativeWinHttpRequests()){
-      var release=ReleaseSelection.Resolve(url=>ReadMetadata(metadata,url),candidateBuild,candidateManifestHash,candidateSequence);
+      var release=ReleaseSelection.Resolve(url=>ReadMetadata(metadata,url,cancellation),candidateBuild,candidateManifestHash,candidateSequence);
       if(expected!=null && !string.Equals(release.Sha256,expected,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Selected release differs from expected SHA256.");
-      using(var head=Open(client,release.Uri,true))if(head.StatusCode!=200 || head.ContentLength!=release.Size)throw new InvalidDataException("OSS package size mismatch.");
+      using(var head=Open(client,release.Uri,true,cancellation))if(head.StatusCode!=200 || head.ContentLength!=release.Size)throw new InvalidDataException("OSS package size mismatch.");
       string file=Path.Combine(directory,"SemantierAgent.msix");
       // CreateNew prevents an accidental second full download over retained evidence.
       using(var output=new FileStream(file,FileMode.CreateNew,FileAccess.Write,FileShare.None)){
         var clock=Stopwatch.StartNew();long last=0;
-        BootstrapperWinHttp.Download(client,release.Uri,output,release.Size,done=>{if(progress!=null && (done==release.Size || clock.ElapsedMilliseconds-last>=200)){progress(done,release.Size);last=clock.ElapsedMilliseconds;}});
+        BootstrapperWinHttp.Download(client,release.Uri,output,release.Size,done=>{if(progress!=null && (done==release.Size || clock.ElapsedMilliseconds-last>=200)){progress(done,release.Size);last=clock.ElapsedMilliseconds;}},cancellation);
       }
+      cancellation.ThrowIfCancellationRequested();
       if(report!=null)report("Verifying package and publisher…");
       string observed;using(var stream=File.OpenRead(file))using(var sha=SHA256.Create()){observed=BitConverter.ToString(sha.ComputeHash(stream)).Replace("-","").ToLowerInvariant();}
+      cancellation.ThrowIfCancellationRequested();
       if(observed!=release.Sha256)throw new InvalidDataException("MSIX SHA256 mismatch; no full-file retry.");
-      VerifyIdentity(file,release);VerifySignature(file);
-      var current=ReleaseSelection.Resolve(url=>ReadMetadata(metadata,url),candidateBuild,candidateManifestHash,candidateSequence);
+      VerifyIdentity(file,release);cancellation.ThrowIfCancellationRequested();VerifySignature(file);cancellation.ThrowIfCancellationRequested();
+      var current=ReleaseSelection.Resolve(url=>ReadMetadata(metadata,url,cancellation),candidateBuild,candidateManifestHash,candidateSequence);
+      cancellation.ThrowIfCancellationRequested();
       if(current.ManifestSha256!=release.ManifestSha256 || current.ChannelSha256!=release.ChannelSha256)throw new InvalidDataException("Selected release changed during download.");
       File.WriteAllText(Path.Combine(directory,"download-receipt.json"),"{\"status\":\"DOWNLOADED_VERIFIED_NOT_INSTALLED\",\"selection\":\""+(candidateBuild==null?"ACTIVE_CHANNEL_HEAD":"PINNED_STAGED_CANDIDATE")+"\",\"producedAt\":\""+DateTime.UtcNow.ToString("o")+"\",\"manifestSha256\":\""+release.ManifestSha256+"\",\"channelSha256\":\""+release.ChannelSha256+"\",\"buildId\":\""+release.BuildId+"\",\"version\":\""+release.Version+"\",\"sha256\":\""+observed+"\",\"uri\":\""+release.Uri.AbsoluteUri+"\",\"sourceCommit\":\""+release.Commit+"\",\"nativeDigest\":\""+release.NativeDigest+"\",\"signature\":\"PINNED_SIGNER_VALID\",\"origin\":\""+ReleaseSelection.PackageBase+"\",\"ossResponseBytes\":"+client.ReceivedBytes+",\"responses\":"+client.OpenedResponses+",\"protocol\":"+client.LastProtocol+"}",new UTF8Encoding(false));
       return file;
@@ -185,14 +192,20 @@ internal static class Program {
         if(store.Certificates.Find(X509FindType.FindByThumbprint,cert.Thumbprint,false).Count==0)throw new IOException("Certificate trust was not applied.");
       }
       Log("Pinned publisher certificate trusted in LocalMachine/TrustedPeople.");
-      if(report!=null)report("Installing for the current Windows user…");
     }
   }
-  internal static void Install(string file,Action<string> report=null){
+  internal static void Install(string file,Action<string> report=null,CancellationToken cancellation=default(CancellationToken),Action beginInstall=null){
+    cancellation.ThrowIfCancellationRequested();
     EnsurePublisherTrust(report);
+    cancellation.ThrowIfCancellationRequested();
+    cancellation.ThrowIfCancellationRequested();
     Log("Installing "+file+" for "+Environment.UserDomainName+"\\"+Environment.UserName);
     string command="$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=New-Object Text.UTF8Encoding($false); try { Add-AppxPackage -Path '"+file.Replace("'","''")+"' -ForceApplicationShutdown } catch { [Console]::Error.WriteLine(($_ | Format-List * -Force | Out-String)); exit 1 }";
     var info=new ProcessStartInfo("powershell.exe","-NoProfile -NonInteractive -OutputFormat Text -EncodedCommand "+Convert.ToBase64String(Encoding.Unicode.GetBytes(command))){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8};
+    // Commit under the same gate as the Cancel button: never report cancelled
+    // after starting the non-interruptible Windows package transaction.
+    if(beginInstall!=null)beginInstall();else cancellation.ThrowIfCancellationRequested();
+    if(report!=null)report("Installing for the current Windows user…");
     using(var process=Process.Start(info)){
       if(process==null)throw new IOException("Cannot start Windows installer.");
       var output=process.StandardOutput.ReadToEndAsync();var errors=process.StandardError.ReadToEndAsync();

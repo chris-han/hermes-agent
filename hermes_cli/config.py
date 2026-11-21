@@ -598,6 +598,7 @@ if _runtime_distribution_extras() is not None:
         sensevoice={"model": "sensevoice-small-int8"})
     # Initial connection only. Credentials are supplied by the user/service, never shipped.
     DEFAULT_CONFIG["model"] = {"provider": "semantier-cloud", "default": ""}
+    DEFAULT_CONFIG["billing"] = {"backend": "semantier"}
     DEFAULT_CONFIG["providers"]["semantier-cloud"] = {
         "name": "Semantier Model Provider", "base_url": "", "api_mode": "chat_completions",
         "models": [],

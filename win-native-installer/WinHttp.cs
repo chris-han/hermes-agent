@@ -8,8 +8,8 @@ interface IWinHttpResponse : IDisposable {
 interface IWinHttpRequests { IWinHttpResponse Open(Uri uri,long offset,bool http3); }
 
 static class BootstrapperWinHttp {
-    internal static void Download(IWinHttpRequests requests,Uri origin,Stream output,long size,Action<long> progress) {
-        DownloadCore(requests,origin,output,size,progress,null);
+    internal static void Download(IWinHttpRequests requests,Uri origin,Stream output,long size,Action<long> progress,System.Threading.CancellationToken cancellation=default(System.Threading.CancellationToken)) {
+        DownloadCore(requests,origin,output,size,progress,null,cancellation);
     }
     // Renewal returns an authorization grant for the exact pinned bytes only.
     internal static void DownloadAuthorized(IWinHttpRequests requests,StagingDownloadGrant grant,Stream output,Action<long> progress,Func<StagingDownloadGrant> renew) {
@@ -21,33 +21,38 @@ static class BootstrapperWinHttp {
             if(next.Key!=pinnedKey || next.Version!=pinnedVersion || next.Sha256!=pinnedSha || next.Size!=pinnedSize)
                 throw new InvalidDataException("Renewal changed artifact identity.");
             return next.Uri;
-        });
+        },default(System.Threading.CancellationToken));
         output.Position=0;
         using(var hash=System.Security.Cryptography.SHA256.Create()){
             string actual=BitConverter.ToString(hash.ComputeHash(output)).Replace("-","").ToLowerInvariant();
             if(actual!=pinnedSha)throw new InvalidDataException("Staging package SHA256 mismatch.");
         }
     }
-    static void DownloadCore(IWinHttpRequests requests,Uri origin,Stream output,long size,Action<long> progress,Func<Uri> renew) {
+    static void DownloadCore(IWinHttpRequests requests,Uri origin,Stream output,long size,Action<long> progress,Func<Uri> renew,System.Threading.CancellationToken cancellation) {
         if(origin.Scheme!=Uri.UriSchemeHttps || origin.Port!=443 || origin.UserInfo.Length!=0 || origin.Fragment.Length!=0)
             throw new InvalidOperationException("HTTPS port 443 required.");
         if(size<=0 || !output.CanWrite || output.Position!=0)throw new InvalidOperationException("Invalid download target.");
         long total=0;var buffer=new byte[1024*1024];
         for(int attempt=0;attempt<5 && total<size;attempt++) {
+            cancellation.ThrowIfCancellationRequested();
             IWinHttpResponse response;
             try { response=requests.Open(origin,total,true); }
-            catch(IOException) { try {response=requests.Open(origin,total,false);} catch(IOException) {continue;} }
+            catch(IOException) { cancellation.ThrowIfCancellationRequested();try {response=requests.Open(origin,total,false);} catch(IOException) {cancellation.ThrowIfCancellationRequested();continue;} }
             using(response) {
+                cancellation.ThrowIfCancellationRequested();
                 if(response.StatusCode==403 && renew!=null){origin=renew();continue;}
                 string expected="bytes "+total.ToString(CultureInfo.InvariantCulture)+"-"+(size-1).ToString(CultureInfo.InvariantCulture)+"/"+size.ToString(CultureInfo.InvariantCulture);
                 if(response.ContentLength!=size-total || (total==0?response.StatusCode!=200:response.StatusCode!=206 || response.ContentRange!=expected))
                     throw new InvalidDataException("Unexpected download response.");
                 while(total<size) {
-                    int n;try {n=response.Body.Read(buffer,0,(int)Math.Min(buffer.Length,size-total));}catch(IOException){break;}
+                    cancellation.ThrowIfCancellationRequested();
+                    int n;try {n=response.Body.Read(buffer,0,(int)Math.Min(buffer.Length,size-total));}catch(IOException){cancellation.ThrowIfCancellationRequested();break;}
+                    cancellation.ThrowIfCancellationRequested();
                     if(n==0)break;output.Write(buffer,0,n);total+=n;progress(total);
                 }
             }
         }
+        cancellation.ThrowIfCancellationRequested();
         if(total!=size)throw new IOException("Download incomplete after retries.");
         output.Flush();
     }

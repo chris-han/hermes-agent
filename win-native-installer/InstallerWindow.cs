@@ -34,7 +34,9 @@ sealed class InstallerWindow : Form {
     static readonly Color Ink = ColorTranslator.FromHtml("#1a1b1e");
     static readonly Color Muted = ColorTranslator.FromHtml("#43474e");
     static readonly Color ActionYellow = ColorTranslator.FromHtml("#e8c92d");
-    readonly Action<Action<string>> execute;
+    readonly Action<Action<string>,CancellationToken,Action> execute;
+    readonly object installGate=new object();
+    readonly bool autoStart;
     readonly Label headline, status, stages, note;
     readonly ProgressBar progress;
     readonly Button primary;
@@ -45,7 +47,8 @@ sealed class InstallerWindow : Form {
     readonly TableLayoutPanel root;
     readonly Label edition, wordmark;
     bool arranging;
-    bool busy, complete;
+    bool busy, complete, installing;
+    CancellationTokenSource cancellation;
     string cleanupMessage = "";
 
     static Label TextLabel(string text, float size, FontStyle style, Color color) {
@@ -53,8 +56,9 @@ sealed class InstallerWindow : Form {
             Font=new Font("Segoe UI",size,style), ForeColor=color, Text=text,
             Margin=new Padding(0,0,0,12), UseMnemonic=false };
     }
-    public InstallerWindow(Action<Action<string>> operation,Action<string> logViewer=null) {
+    public InstallerWindow(Action<Action<string>,CancellationToken,Action> operation,Action<string> logViewer=null,bool autoStart=true) {
         execute=operation;
+        this.autoStart=autoStart;
         openLog=logViewer ?? (path=>Process.Start(new ProcessStartInfo("notepad.exe","\""+path+"\""){UseShellExecute=false}));
         Text=InstallerText.Choose("Semantier setup","Semantier 安装程序");
         Font=new Font("Segoe UI",10F); ForeColor=Ink; BackColor=Surface;
@@ -115,11 +119,11 @@ sealed class InstallerWindow : Form {
         note=TextLabel(InstallerText.Choose("Downloads the latest signed release. Your existing sessions and settings are preserved.","下载最新签名版本，保留已有会话与设置。"),9F,FontStyle.Regular,Muted);
         note.Margin=new Padding(0,16,0,20);root.Controls.Add(note,0,5);
         var footer=new FlowLayoutPanel { Dock=DockStyle.Fill,AutoSize=true,FlowDirection=FlowDirection.RightToLeft,WrapContents=false,Margin=Padding.Empty };
-        primary=new Button { Text=InstallerText.Choose("Download and install","下载并安装"),AutoSize=true,
+        primary=new Button { Text=InstallerText.Choose("Cancel","取消"),AutoSize=true,
             MinimumSize=new Size(164,42),FlatStyle=FlatStyle.Flat,BackColor=ActionYellow,ForeColor=Ink,
             Padding=new Padding(18,6,18,6),Margin=Padding.Empty,UseVisualStyleBackColor=false };
-        primary.FlatAppearance.BorderSize=0; primary.Click+=Run;
-        footer.Controls.Add(primary);footer.Controls.Add(details);root.Controls.Add(footer,0,6);AcceptButton=primary;
+        primary.FlatAppearance.BorderSize=0; primary.Click+=(sender,eventArgs)=>{if(busy)Cancel();else Close();};
+        footer.Controls.Add(primary);footer.Controls.Add(details);root.Controls.Add(footer,0,6);
         foreach(var label in new[]{headline,status,note}) {
             label.AutoSize=false;label.AutoEllipsis=true;label.MaximumSize=Size.Empty;label.Dock=DockStyle.Fill;
         }
@@ -130,9 +134,10 @@ sealed class InstallerWindow : Form {
             Size=new Size(Math.Min(Width,area.Width),Math.Min(Height,area.Height));
             Location=new Point(area.Left+Math.Max(0,(area.Width-Width)/2),area.Top+Math.Max(0,(area.Height-Height)/2));
             ArrangeContent();
+            if(autoStart)BeginInvoke((Action)(()=>Run()));
         };
         FormClosing+=(sender,eventArgs)=> {
-            if(busy) { eventArgs.Cancel=true; note.Text=InstallerText.Choose("Installation is running. Please wait for the result before closing.","安装正在进行，请等待结果后再关闭。"); }
+            if(busy) { eventArgs.Cancel=true;Cancel(); }
         };
     }
     void ArrangeContent() {
@@ -168,6 +173,7 @@ sealed class InstallerWindow : Form {
     void OpenDetails(){openLog(Program.LogPath);}
     void Report(string message) {
         Program.Log(message);
+        if(cancellation!=null && cancellation.IsCancellationRequested && message!="Installing for the current Windows user…")return;
         int percent;
         if(message.StartsWith("Downloading ") && message.EndsWith("%") &&
             int.TryParse(message.Substring(12,message.Length-13),out percent)) {
@@ -185,6 +191,7 @@ sealed class InstallerWindow : Form {
             headline.Text=InstallerText.Choose("Waiting for Windows permission","正在等待 Windows 授权");
             status.Text=InstallerText.Choose("Respond to the Windows administrator prompt to continue.","请在 Windows 管理员权限提示中确认，以继续安装。");
         } else if(message=="Installing for the current Windows user…") {
+            installing=true;primary.Enabled=false;
             headline.Text=InstallerText.Choose("Installing Semantier Agent","正在安装 Semantier Agent");
             status.Text=InstallerText.Choose("Registering the application for your Windows account…","正在为您当前的 Windows 账户注册应用…");
             progress.Style=ProgressBarStyle.Marquee;stages.Text=InstallerText.Choose("Download complete → Verified → Install","下载完成 → 校验完成 → 安装");
@@ -192,9 +199,28 @@ sealed class InstallerWindow : Form {
             cleanupMessage=message;
         }
     }
-    async void Run(object sender,EventArgs eventArgs) {
-        if(complete) { Close();return; }
-        busy=true;primary.Enabled=false;details.Visible=false;
+    void Cancel() {
+        if(!busy || cancellation==null || cancellation.IsCancellationRequested)return;
+        lock(installGate) {
+            if(installing) {
+                status.Text=InstallerText.Choose("Windows is completing installation; it cannot be safely interrupted.","Windows 正在完成安装，无法安全中断。");
+                return;
+            }
+            cancellation.Cancel();
+        }
+        primary.Enabled=false;
+        status.Text=InstallerText.Choose("Stopping setup safely…","正在安全停止安装程序…");
+    }
+    void BeginInstallation() {
+        lock(installGate) {
+            cancellation.Token.ThrowIfCancellationRequested();
+            installing=true;
+        }
+    }
+    async void Run() {
+        if(IsDisposed || Disposing || busy || complete)return;
+        busy=true;installing=false;cancellation=new CancellationTokenSource();
+        primary.Enabled=true;primary.Text=InstallerText.Choose("Cancel","取消");details.Visible=false;
         cleanupMessage="";progress.Value=0;progress.Style=ProgressBarStyle.Continuous;
         stages.Text=InstallerText.Choose("Download → Verify → Install","下载 → 校验 → 安装");
         status.Text=InstallerText.Choose("Checking your installation…","正在检查当前安装状态…");
@@ -202,10 +228,18 @@ sealed class InstallerWindow : Form {
         // preserving final/error ordering without racing queued BeginInvoke calls.
         var updates=new Progress<string>(Report);
         try {
-            await Task.Run(()=>execute(message=>((IProgress<string>)updates).Report(message)));
+            await Task.Run(()=>execute(message=>((IProgress<string>)updates).Report(message),cancellation.Token,BeginInstallation));
             Finish();
-        } catch(Exception error) { Failed(error); }
-        finally { busy=false;primary.Enabled=true; }
+        } catch(OperationCanceledException) { Cancelled(); }
+        catch(Exception error) { Failed(error); }
+        finally { busy=false;primary.Enabled=true;cancellation.Dispose();cancellation=null; }
+    }
+    void Cancelled() {
+        complete=true;headline.Text=InstallerText.Choose("Installation cancelled","安装已取消");
+        status.Text=InstallerText.Choose("Stopped before installing. No further installation steps were performed.","已在安装前停止，没有执行后续安装步骤。");
+        progress.Style=ProgressBarStyle.Continuous;
+        primary.Text=InstallerText.Choose("Close","关闭");
+        Program.Log("User cancelled Setup before installation.");
     }
     void Finish() {
         complete=true;headline.Text=InstallerText.Choose("Installation complete","安装完成");
@@ -224,7 +258,7 @@ sealed class InstallerWindow : Form {
         headline.Text=InstallerText.Choose("Installation stopped","安装已停止");
         status.Text=InstallerText.Error(error);
         Program.Log(error.ToString()+"\r\n"+cleanupMessage);details.Visible=true;
-        primary.Text=InstallerText.Choose("Try again","重试");
+        primary.Text=InstallerText.Choose("Close","关闭");
         note.Text=InstallerText.Choose("Windows validates the package when installation starts.","开始安装时，Windows 将验证安装包。");
     }
     protected override void Dispose(bool disposing) {
@@ -234,9 +268,9 @@ sealed class InstallerWindow : Form {
 #if TESTING
     public static void Preview(string language,string state,string output) {
         InstallerText.SetLanguage(language);
-        using(var window=new InstallerWindow(report=>{throw new InvalidOperationException("Preview cannot install.");})) {
+        using(var window=new InstallerWindow((report,token,beginInstall)=>{throw new InvalidOperationException("Preview cannot install.");},autoStart:false)) {
             window.Show();Application.DoEvents();
-            window.primary.Enabled=(state=="ready" || state=="error" || state=="success");
+            window.primary.Enabled=(state=="ready" || state=="download" || state=="verify" || state=="error" || state=="success");
             if(state=="download")window.Report("Downloading 42%");
             else if(state=="verify")window.Report("Verifying package and publisher…");
             else if(state=="trust")window.Report("Waiting for Windows administrator consent…");
@@ -257,10 +291,10 @@ sealed class InstallerWindow : Form {
     static void TestExecution(bool fail) {
         bool executed=false;
         Exception assertion=null;
-        using(var window=new InstallerWindow(report=>{
+        using(var window=new InstallerWindow((report,token,beginInstall)=>{
             executed=true;report("Downloading 42%");report("Verifying package and publisher…");
             if(fail)throw new WebException("Fixture");
-            report("Installing for the current Windows user…");
+            beginInstall();report("Installing for the current Windows user…");
         }))
         using(var timer=new System.Windows.Forms.Timer { Interval=50 }) {
             DateTime deadline=DateTime.UtcNow.AddSeconds(10);
@@ -269,7 +303,7 @@ sealed class InstallerWindow : Form {
                 try {
                     if(window.busy || !executed)throw new InvalidOperationException("Fixture producer did not settle.");
                     if(fail) {
-                        if(window.complete || !window.details.Visible || window.primary.Text!=InstallerText.Choose("Try again","重试") ||
+                        if(window.complete || !window.details.Visible || window.primary.Text!=InstallerText.Choose("Close","关闭") ||
                             window.status.Text!=InstallerText.Error(new WebException("Fixture")))
                             throw new InvalidOperationException("Queued producer failure/recovery was not preserved.");
                     } else if(!window.complete || window.progress.Value!=100 || window.primary.Text!=InstallerText.Choose("Close","关闭"))
@@ -277,7 +311,34 @@ sealed class InstallerWindow : Form {
                 } catch(Exception error) { assertion=error; }
                 timer.Stop();window.Close();
             };
-            window.Shown+=(sender,eventArgs)=>window.BeginInvoke((Action)(()=>{window.primary.PerformClick();timer.Start();}));
+            window.Shown+=(sender,eventArgs)=>timer.Start();
+            Application.Run(window);
+        }
+        if(assertion!=null)throw assertion;
+    }
+    static void TestCancellation() {
+        int entered=0;bool reachedInstall=false;Exception assertion=null;bool clicked=false;
+        using(var window=new InstallerWindow((report,token,beginInstall)=>{
+            System.Threading.Interlocked.Increment(ref entered);
+            report("Downloading signed release…");
+            token.WaitHandle.WaitOne(5000);
+            token.ThrowIfCancellationRequested();
+            reachedInstall=true;
+        }))
+        using(var timer=new System.Windows.Forms.Timer { Interval=50 }) {
+            DateTime deadline=DateTime.UtcNow.AddSeconds(10);
+            timer.Tick+=(sender,eventArgs)=> {
+                if(window.busy && !clicked) {window.primary.PerformClick();clicked=true;return;}
+                if((!clicked || window.busy) && DateTime.UtcNow<deadline)return;
+                try {
+                    if(!clicked || window.busy || entered!=1 || reachedInstall || !window.complete ||
+                        window.primary.Text!=InstallerText.Choose("Close","关闭") ||
+                        window.headline.Text!=InstallerText.Choose("Installation cancelled","安装已取消"))
+                        throw new InvalidOperationException("Automatic start/cancellation contract failed.");
+                } catch(Exception error) {assertion=error;}
+                timer.Stop();window.Close();
+            };
+            window.Shown+=(sender,eventArgs)=>timer.Start();
             Application.Run(window);
         }
         if(assertion!=null)throw assertion;
@@ -292,7 +353,7 @@ sealed class InstallerWindow : Form {
             throw new InvalidOperationException("System UI language resolution failed.");
         foreach(string language in new[]{"zh-CN","en"}) {
             InstallerText.SetLanguage(language);
-            using(var window=new InstallerWindow(report=>{throw new InvalidOperationException("Rendering cannot install.");})) {
+            using(var window=new InstallerWindow((report,token,beginInstall)=>{throw new InvalidOperationException("Rendering cannot install.");},autoStart:false)) {
                 if(window.BackColor.ToArgb()!=ColorTranslator.FromHtml("#f3f4f5").ToArgb() ||
                     window.primary.BackColor.ToArgb()!=ColorTranslator.FromHtml("#e8c92d").ToArgb() ||
                     window.ClientSize!=new Size(640,470))throw new InvalidOperationException("Asimov visual contract changed.");
@@ -303,7 +364,7 @@ sealed class InstallerWindow : Form {
                 if(window.progress.Style!=ProgressBarStyle.Marquee)throw new InvalidOperationException("Verification progress failed.");
             }
             string openedLog=null;
-            using(var window=new InstallerWindow(report=>{},path=>openedLog=path)) {
+            using(var window=new InstallerWindow((report,token,beginInstall)=>{},path=>openedLog=path,autoStart:false)) {
                 window.Show();Application.DoEvents();
                 window.Scale(new SizeF(2.25F,2.25F));ScaleTestFonts(window,2.25F);
                 window.MinimumSize=Size.Empty;window.ClientSize=new Size(1300,850);
@@ -327,7 +388,7 @@ sealed class InstallerWindow : Form {
                 }
                 window.Close();
             }
-            TestExecution(true);TestExecution(false);
+            TestExecution(true);TestExecution(false);TestCancellation();
         }
         InstallerText.SetLanguage(InstallerText.Resolve(CultureInfo.CurrentUICulture.Name));
     }

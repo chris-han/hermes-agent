@@ -21,7 +21,7 @@ const { $desktopOnboarding } = await import('@/store/onboarding')
 const { $desktopBoot } = await import('@/store/boot')
 const { ModelServiceNotice } = await import('./model-service-notice')
 
-function show(state: 'plan' | 'unavailable' | 'reauth', profile = 'work') {
+function show(state: 'plan' | 'unavailable' | 'reauth' | 'setup', profile = 'work') {
   $desktopOnboarding.set({ ...$desktopOnboarding.get(), readiness: {
     ready: false, source: 'runtime', modelService: { state }
   } as never, readinessScope: { connectionId: null, profile } })
@@ -54,4 +54,13 @@ test('late readiness for a different profile cannot present a recovery action', 
   show('plan', 'previous-work')
   expect(screen.queryByRole('status')).toBeNull()
   expect(signIn).not.toHaveBeenCalled()
+})
+
+
+test('a fresh unconfigured Cloud account offers explicit sign-in without automatically opening it', () => {
+  show('setup')
+  expect(screen.getByRole('status').textContent).toBe('Connect a model service to start')
+  expect(signIn).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: /Sign in to Semantier/ }))
+  expect(signIn).toHaveBeenCalledWith('semantier-cloud', { connectionId: null, profile: 'work' })
 })

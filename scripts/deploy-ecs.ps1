@@ -2067,13 +2067,14 @@ const fd=fs.openSync(path,'r');fs.closeSync(fd);console.log('Prebuilt cache read
 }
 function Install-LocalPilotPackage([string]$SignedPackage,$Volume) {
   $current=@(Get-AppxPackage -Name $identity)
-  if($current.Count -ne 1 -or $current[0].Publisher -cne $publisher){
-    throw 'Local pilot requires one existing package with the verified publisher.'
+  if($current.Count -gt 1 -or ($current.Count -eq 1 -and $current[0].Publisher -cne $publisher)){
+    throw 'Local installation requires zero packages or one existing package with the verified publisher.'
   }
-  if([Version]$Version -le [Version]$current[0].Version){
-    throw 'Local pilot requires a newer version; downgrade and same-version replacement are forbidden.'
+  if($current.Count -eq 1 -and [Version]$Version -le [Version]$current[0].Version){
+    throw 'Local upgrade requires a newer version; downgrade and same-version replacement are forbidden.'
   }
-  # In-place Windows deployment preserves registration and package data on failure.
+  # Zero existing packages is the clean local-install case. Existing installs
+  # retain the same in-place deployment and downgrade guards.
   Add-AppxPackage -Path $SignedPackage -Volume $Volume -ForceTargetApplicationShutdown
 }
 function Remove-ExistingAcceptancePackage {
@@ -2597,7 +2598,9 @@ if($saved -and $saved.binding -cne $script:runBinding){
   $saved=$null;$rebound=$true
 }
 if($saved) {
-  if(!$ResumeSigned -and $saved.completed.PSObject.Properties['signed'] -and $saved.receipt.tooling.toolingCommit -cne $script:SourceBinding.toolingHermesHead){Assert-SignedResumeContract $saved}
+  # Generic local-only checkpoints predate native publication tooling receipts.
+  # Their artifact/source/signature/installed-byte checks below still apply.
+  if(!$ResumeSigned -and $saved.completed.PSObject.Properties['signed'] -and !($LocalOnly -and !$NativeUpdateFrom) -and $saved.receipt.tooling.toolingCommit -cne $script:SourceBinding.toolingHermesHead){Assert-SignedResumeContract $saved}
   foreach($property in $saved.completed.PSObject.Properties){$script:checkpoints[$property.Name]=$property.Value}
   $previous=$saved.receipt
   foreach($property in $previous.PSObject.Properties){$receipt[$property.Name]=$property.Value}
@@ -2727,13 +2730,21 @@ try {
   $receipt.installedSignature=$expectedSignature
   Complete-Checkpoint 'installed'
   $binding=Join-Path $Output 'installed-binding.json';$uiOutput=Join-Path $Output ('acceptance-'+[Guid]::NewGuid().ToString('N'))
+  # Isolated credential/profile state needs the same private NTFS DACL as native
+  # continuity state. Inherited workspace writers are not valid test inputs.
+  $privateOwner=Join-Path $Repository 'apps\desktop\scripts\native-package-update.ps1'
+  $privateState=". '"+$privateOwner.Replace("'","''")+"'; `$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; "
+  foreach($directory in @($uiOutput,(Join-Path $uiOutput 'hermes-home'),(Join-Path $uiOutput 'userdata'))){
+    $privateState+="New-NativeUpdateJournalDirectory '"+$directory.Replace("'","''")+"' `$sid; "
+  }
+  Run (Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe') @('-NoProfile','-NonInteractive','-EncodedCommand',[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($privateState)))
   Save-Json @{version=([Version]$Version).ToString(3);sourceCommit=$SourceCommit;artifactSha256=$hash;
     executable=(Join-Path $registered[0].InstallLocation 'app\Semantier Agent.exe');output=$uiOutput;
     playwright=(Join-Path $AcceptanceNodeModules '@playwright\test')} $binding
   $harness=@'
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 const b=JSON.parse(fs.readFileSync(process.argv[2],'utf8').replace(/^\uFEFF/,''));
-const {_electron}=require(b.playwright);fs.mkdirSync(b.output);let app;const errors=[];
+const {_electron}=require(b.playwright);fs.mkdirSync(b.output,{recursive:true});let app;const errors=[];
 (async()=>{try{
  const env=Object.fromEntries(Object.entries(process.env).filter(([k])=>/^(PATH|SYSTEMROOT|WINDIR|COMSPEC|PATHEXT|USERPROFILE|SYSTEMDRIVE|PROCESSOR_ARCHITECTURE|NUMBER_OF_PROCESSORS|APPDATA|LOCALAPPDATA|TEMP|TMP|PROGRAMFILES|PROGRAMFILES\(X86\))$/i.test(k)));
  app=await _electron.launch({executablePath:b.executable,cwd:path.dirname(b.executable),timeout:120000,
