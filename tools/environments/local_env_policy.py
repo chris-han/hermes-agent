@@ -18,7 +18,11 @@ _PLATFORM_SECRET_NAMES = _PLATFORM_SECRET_REFS | frozenset({
     "HERMES_DATABASE_URL", "SEMANTIER_MODEL_GATEWAY_DATABASE_URL",
     "SEMANTIER_MODEL_GATEWAY_PROXY_KEY", "SEMANTIER_BILLING_DATABASE_URL",
     "SEMANTIER_MIGRATION_DATABASE_URL", "LITELLM_DATABASE_URL", "LITELLM_MIGRATION_DATABASE_URL",
+    "SEMANTIER_SESSIONDB_DEV_CREDENTIAL_MAP", "SEMANTIER_SESSIONDB_DEV_EXECUTION_CREDENTIAL_MAP",
 })
+_PLATFORM_SECRET_PREFIXES = (
+    "SEMANTIER_SESSIONDB_DEV_DSN_", "SEMANTIER_SESSIONDB_DEV_EXECUTION_DSN_",
+)
 
 
 def protect_platform_secret_names(platform_env) -> None:
@@ -37,7 +41,8 @@ protect_platform_secret_names(os.environ)
 
 
 def _is_platform_secret(key: str) -> bool:
-    return key.upper().removeprefix("_HERMES_FORCE_") in _PLATFORM_SECRET_NAMES
+    name = key.upper().removeprefix("_HERMES_FORCE_")
+    return name in _PLATFORM_SECRET_NAMES or name.startswith(_PLATFORM_SECRET_PREFIXES)
 
 
 def strip_platform_secrets(env: dict) -> dict:
