@@ -11,7 +11,7 @@ import { buildAppEnv, createSandbox } from './fixtures'
 
 // eslint-disable-next-line no-empty-pattern -- Electron supplies its own page.
 test('one account login preserves the local gateway and leaves capabilities off', async ({}, info) => {
-  test.skip(process.platform !== 'linux' || !process.env.HERMES_DESKTOP_DEV_SERVER, 'Requires the WSL source-Electron fixture')
+  test.skip(!['linux', 'win32'].includes(process.platform) || !process.env.HERMES_DESKTOP_DEV_SERVER, 'Requires the source-Electron fixture')
   test.setTimeout(180_000)
   const requests: string[] = []
   const server = http.createServer((req, res) => {
@@ -49,9 +49,10 @@ test('one account login preserves the local gateway and leaves capabilities off'
   const root = path.resolve(import.meta.dirname, '../../..')
   const support = path.join(sandbox.root, 'python-fixture')
   fs.mkdirSync(support)
-  const wrapper = path.join(support, 'python')
-  const key = randomBytes(32).toString('base64url') + '='
-  fs.writeFileSync(path.join(support, 'sitecustomize.py'), `
+  const wrapper = process.platform === 'win32' ? process.env.HERMES_PYTHON! : path.join(support, 'python')
+  if (process.platform === 'linux') {
+    const key = randomBytes(32).toString('base64url') + '='
+    fs.writeFileSync(path.join(support, 'sitecustomize.py'), `
 import os, sys
 from pathlib import Path
 if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.stringify(sandbox.hermesHome)}):
@@ -62,8 +63,9 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
     device._unprotect = cipher.decrypt
     sys.executable = ${JSON.stringify(wrapper)}
 `)
-  const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'"
-  fs.writeFileSync(wrapper, `#!/bin/sh\nexport PYTHONPATH=${quote(support + ':' + root)}\nexec ${quote(process.env.HERMES_PYTHON!)} "$@"\n`, { mode: 0o700 })
+    const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'"
+    fs.writeFileSync(wrapper, `#!/bin/sh\nexport PYTHONPATH=${quote(support + ':' + root)}\nexec ${quote(process.env.HERMES_PYTHON!)} "$@"\n`, { mode: 0o700 })
+  }
   const fixture = new DesktopFixtureSession(sandbox, buildAppEnv(sandbox, {
     HERMES_PYTHON: wrapper, HERMES_DESKTOP_PYTHON: wrapper, HERMES_DESKTOP_DEV_SERVER: process.env.HERMES_DESKTOP_DEV_SERVER!,
     HERMES_DESKTOP_CDP_PORT: 'off'
