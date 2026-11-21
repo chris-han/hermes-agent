@@ -43,8 +43,16 @@ test('turning Winman off interrupts the owned fixture turn', async ({}, info) =>
     await expect(page.getByText('Preference off.', { exact: false })).toBeVisible({ timeout: 20_000 })
     const response = await fetch(origin + '/__fixture/status', { headers })
     expect(response.status).toBe(200)
-    expect(await response.json()).toMatchObject({ interrupted: true, released: true,
-      rows: { running: { status: 'terminal', outcome: 'interrupted' }, follower: { status: 'queued' } } })
+    const status = await response.json()
+    if (account.noncooperative) {
+      expect(status).toMatchObject({ interrupted: false, stop_requested: true, released: false,
+        rows: { follower: { status: 'queued' } } })
+      expect(status.rows.running.status).not.toBe('terminal')
+      await expect(page.getByText('existing work status is unknown', { exact: false })).toBeVisible()
+    } else {
+      expect(status).toMatchObject({ interrupted: true, stop_requested: true, released: true,
+        rows: { running: { status: 'terminal', outcome: 'interrupted' }, follower: { status: 'queued' } } })
+    }
   } finally {
     await fixture.close()
   }
