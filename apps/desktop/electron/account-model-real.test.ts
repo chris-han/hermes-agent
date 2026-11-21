@@ -29,11 +29,11 @@ it.skipIf(!origin)('prepares the native device using one authenticated account s
   }
   const owner = new AccountModelCoordinator({ current: () => account, client: () => client,
     native, fence: account => native('fence', 'POST', account) })
-  // No model provider is configured in this fixture, so installation must not fabricate readiness.
-  expect(await owner.prepare(account)).toBe('unavailable')
+  const eligible = process.env.ACCOUNT_MODEL_FIXTURE_ELIGIBLE === '1'
+  expect(await owner.prepare(account)).toBe(eligible ? 'ready' : 'unavailable')
   expect(approvals).toBe(1)
   expect((await native('/api/providers/oauth')).providers[0].status.logged_in).toBe(true)
-  expect(await owner.preferredModel(account)).toBeNull()
+  expect(await owner.preferredModel(account)).toBe(eligible ? 'deepseek-v4.1-flash-1017' : null)
   await owner.suspend()
   expect((await native('/api/providers/oauth')).providers[0].status.logged_in).toBe(false)
 }, 30000)
