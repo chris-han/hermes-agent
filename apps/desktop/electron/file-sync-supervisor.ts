@@ -23,6 +23,8 @@ type Binding = Identity & {
   sealedToken: string
   enabled: boolean
   paired: boolean
+  deviceGrant?: boolean
+  deviceStop?: 'PENDING' | 'UNKNOWN' | 'STOPPED'
 }
 type EngineEvent = { event?: string; code?: string; params?: { conflicts?: number; failed?: number; held?: number } }
 type Run = (
@@ -38,6 +40,8 @@ type Options = {
   identity: (origin: string) => Promise<Identity>
   binding: (origin: string) => Promise<Credential>
   seal: (value: string) => string
+  unseal?: (value: string) => string
+  stopDevice?: (origin: string, token: string) => Promise<'PENDING' | 'UNKNOWN' | 'STOPPED'>
   verifyBinary?: () => Promise<void>
   run?: Run
   forbiddenRoots?: string[]
@@ -61,6 +65,8 @@ export class FileSyncSupervisor {
   private controller: AbortController | null = null
   private running: Promise<unknown> | null = null
   private failureStop: Promise<void> | null = null
+  private stopping: Promise<void> | null = null
+  private ownershipCommit: Promise<void> | null = null
   private current: Binding | null = null
   private stopChild: (() => void) | null = null
   private view: FileSyncStatus = { state: 'Paused' }
@@ -81,7 +87,10 @@ export class FileSyncSupervisor {
         !record || ['id', 'serverOrigin', 'userId', 'workspaceId', 'canonicalLocalFolder', 'remoteRoot', 'sealedToken'].some(
           key => typeof record[key as keyof Binding] !== 'string' || !record[key as keyof Binding]
         ) || (record.organizationId !== undefined && (typeof record.organizationId !== 'string' || !record.organizationId)) ||
-        typeof record.enabled !== 'boolean' || typeof record.paired !== 'boolean' || !path.isAbsolute(record.canonicalLocalFolder)
+        typeof record.enabled !== 'boolean' || typeof record.paired !== 'boolean' || !path.isAbsolute(record.canonicalLocalFolder) ||
+        (record.deviceGrant !== undefined && typeof record.deviceGrant !== 'boolean') ||
+        (record.deviceStop !== undefined && (!record.deviceGrant || !['PENDING', 'UNKNOWN', 'STOPPED'].includes(record.deviceStop))) ||
+        (record.enabled && record.deviceStop !== undefined && record.deviceStop !== 'STOPPED')
       )) {
         throw new Error('Invalid File Sync ownership registry. Preserve it for recovery.')
       }
@@ -170,15 +179,61 @@ export class FileSyncSupervisor {
   async shutdown() {
     if (this.failureStop) {await this.failureStop}
     this.closing = true
-    this.generation++
-    await this.stop()
+    if (this.current?.deviceGrant) {
+      const id = this.current.id
+      const wasEnabled = this.current.enabled
+      const generation = this.generation
+      await this.pause()
+      const owners = await this.owners()
+      if (wasEnabled && this.generation === generation + 1 && !this.accountTransitions && owners.some(owner => owner.id === id && owner.deviceStop === 'STOPPED')) {
+        const pending = this.write(owners.map(owner => owner.id === id ? { ...owner, enabled: true } : owner))
+        this.ownershipCommit = pending
+        try {await pending} finally {if (this.ownershipCommit === pending) {this.ownershipCommit = null}}
+      }
+    } else {
+      this.generation++
+      await this.stop()
+    }
   }
   async pause() {
     if (this.failureStop) {await this.failureStop}
     this.generation++
-    await this.stop()
+    if (this.ownershipCommit) {await this.ownershipCommit.catch(() => {})}
+    await this.stopAndPersist()
+  }
+  private async stopAndPersist() {
+    if (this.stopping) {return this.stopping}
+    this.stopping = this.stopAndPersistOnce()
+    try {
+      await this.stopping
+    } finally {
+      this.stopping = null
+    }
+  }
+  private async stopAndPersistOnce() {
+    const current = this.current
+    if (current?.deviceGrant) {
+      const owners = await this.owners()
+      await this.write(owners.map(x => x.id === current.id ? { ...x, enabled: false, deviceStop: 'UNKNOWN' as const } : x))
+      let result: 'PENDING' | 'UNKNOWN' | 'STOPPED' = 'UNKNOWN'
+      try {
+        if (this.options.unseal && this.options.stopDevice) {
+          result = await this.options.stopDevice(current.serverOrigin, this.options.unseal(current.sealedToken))
+          if (!['PENDING', 'UNKNOWN', 'STOPPED'].includes(result)) {result = 'UNKNOWN'}
+        }
+      } catch { /* Keep the durable unknown fence on transport or decryption failure. */ }
+      await this.stop()
+      const updated = await this.owners()
+      await this.write(updated.map(x => x.id === current.id ? { ...x, enabled: false, deviceStop: result } : x))
+      this.current = { ...current, enabled: false, deviceStop: result }
+      if (result !== 'STOPPED') {
+        this.view = { state: 'Error', folder: current.canonicalLocalFolder, message: `File Sync stop ${result.toLowerCase()}. Your files are preserved.` }
+      }
+    } else {
+      await this.stop()
+    }
 
-    if (this.current) {
+    if (current && !current.deviceGrant) {
       const owners = await this.owners()
       await this.write(owners.map(x => (x.id === this.current?.id ? { ...x, enabled: false } : x)))
     }
@@ -230,6 +285,9 @@ export class FileSyncSupervisor {
     const record = await this.selectedBinding(origin, identity)
 
     if (!record) {return { state: 'Paused' } as FileSyncStatus}
+    if (record.deviceStop === 'PENDING' || record.deviceStop === 'UNKNOWN') {
+      return { state: 'Error', folder: record.canonicalLocalFolder, message: `File Sync stop ${record.deviceStop.toLowerCase()}. Your files are preserved.` } as FileSyncStatus
+    }
     const status = this.status()
 
     if (this.current?.id === record.id && (status.folder !== record.canonicalLocalFolder || (!record.enabled && ['Synced', 'Syncing', 'Conflict'].includes(status.state)))) {
@@ -256,6 +314,15 @@ export class FileSyncSupervisor {
 
     if (record) {await this.selectedBinding(record.serverOrigin, record)}
 
+    if (record?.deviceGrant && record.deviceStop !== 'STOPPED') {
+      // A previous process may have died with work in flight. Retire its grant
+      // before issuing another one, even when no local child survived.
+      this.current = record
+      await this.pause()
+      const stopped = (await this.owners()).find(owner => owner.id === record.id)
+      if (stopped?.deviceStop !== 'STOPPED') {return}
+    }
+
     if (record) {
       await this.enable(record.serverOrigin, record.canonicalLocalFolder, record, false, record.id)
     }
@@ -271,6 +338,7 @@ export class FileSyncSupervisor {
 
     this.busy = true
     const generation = ++this.generation
+    let startedRecord: Binding | undefined
 
     const check = () => {
       if (this.generation !== generation) {
@@ -279,7 +347,11 @@ export class FileSyncSupervisor {
     }
 
     try {
-      await this.stop()
+      if (this.current?.deviceGrant) {
+        await this.stopAndPersist()
+      } else {
+        await this.stop()
+      }
       check()
       const origin = normalizeSemantierWorkspaceOrigin(rawOrigin)
       const canonical = await this.localFolder(folder)
@@ -295,6 +367,28 @@ export class FileSyncSupervisor {
       const owners = await this.owners()
       check()
       const match = this.matchOwner(owners, origin, identity, canonical, revalidateLegacy)
+      const unresolved = owners.find(owner => owner.id !== match?.id && this.sameOwner(owner, origin, identity) &&
+        (owner.deviceStop === 'PENDING' || owner.deviceStop === 'UNKNOWN'))
+      if (unresolved) {
+        throw new Error(`File Sync stop ${unresolved.deviceStop!.toLowerCase()}. Reconnect the previous folder first; your files are preserved.`)
+      }
+
+      if (match?.deviceStop === 'PENDING' || match?.deviceStop === 'UNKNOWN') {
+        let result: 'PENDING' | 'UNKNOWN' | 'STOPPED' = 'UNKNOWN'
+        try {
+          if (this.options.unseal && this.options.stopDevice) {
+            result = await this.options.stopDevice(match.serverOrigin, this.options.unseal(match.sealedToken))
+            if (!['PENDING', 'UNKNOWN', 'STOPPED'].includes(result)) {result = 'UNKNOWN'}
+          }
+        } catch { /* An unavailable or unrecognized response is not confirmation. */ }
+        check()
+        match.deviceStop = result
+        await this.write(owners)
+        check()
+        if (result !== 'STOPPED') {
+          throw new Error(`File Sync stop ${result.toLowerCase()}. Your files are preserved.`)
+        }
+      }
 
       if (!match && (await fs.readdir(canonical)).length) {
         throw new Error('Choose an empty folder for a new File Sync binding. Existing files are preserved.')
@@ -314,7 +408,8 @@ export class FileSyncSupervisor {
         remoteRoot: credential.remoteRoot,
         sealedToken: this.options.seal(credential.token),
         enabled: true,
-        paired: match?.paired || false
+        paired: match?.paired || false,
+        ...(credential.token.startsWith('fxd_') ? { deviceGrant: true } : {})
       }
 
       check()
@@ -322,13 +417,17 @@ export class FileSyncSupervisor {
       await this.verifyDependency()
       check()
 
-      const store = () =>
-        this.write([...owners.filter(x => x.id !== record.id).map(x => ({ ...x, enabled: false })), record], record)
+      const store = async () => {
+        const pending = this.write([...owners.filter(x => x.id !== record.id).map(x => ({ ...x, enabled: false })), record], record)
+        this.ownershipCommit = pending
+        try {await pending} finally {if (this.ownershipCommit === pending) {this.ownershipCommit = null}}
+      }
 
       // Commit ownership before the first engine invocation, even if pairing fails.
+      startedRecord = record
+      this.current = record
       await store()
       check()
-      this.current = record
       const state = path.join(this.options.stateDir, record.id)
       await fs.mkdir(state, { recursive: true, mode: 0o700 })
       check()
@@ -360,6 +459,9 @@ export class FileSyncSupervisor {
       return this.status()
     } catch (error) {
       if (this.generation === generation) {
+        if (startedRecord?.deviceGrant && this.current?.id === startedRecord.id) {
+          await this.stopAndPersist()
+        }
         if (restoringId) {
           const owners = await this.owners()
           if (this.generation === generation) {
@@ -569,7 +671,11 @@ export class FileSyncSupervisor {
     const recordId = this.current?.id
     this.view = { state: 'Error', folder: canonical, message: 'File Sync needs reconnection. Your files are preserved.' }
     this.failureStop = Promise.resolve().then(async () => {
-      await this.stop()
+      if (this.current?.deviceGrant) {
+        await this.stopAndPersist()
+      } else {
+        await this.stop()
+      }
       const owners = await this.owners()
       if (this.generation === failedGeneration && recordId) {
         await this.write(owners.map(owner => owner.id === recordId ? { ...owner, enabled: false } : owner))

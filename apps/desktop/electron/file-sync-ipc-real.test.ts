@@ -1,4 +1,4 @@
-import { createCipheriv, randomBytes, randomUUID } from 'node:crypto'
+import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -61,6 +61,16 @@ it.skipIf(!fixture)('uses Desktop File Sync IPC with real account and FileX owne
   let account = { origin, scope: { userId: identity.user.user_id, workspaceId: identity.workspace.id,
     organizationId: identity.organization_id } }
   const supervisor = createFileSyncIpc(() => account)
+  if (process.env.FILEX_DEVICE_SUPERVISOR === '1') {
+    supervisor.options.binding = () => mock.client.fileSyncDeviceBinding()
+    supervisor.options.stopDevice = (_origin, token) => mock.client.fileSyncDeviceStop(token)
+    supervisor.options.unseal = value => {
+      const bytes = Buffer.from(value, 'base64')
+      const decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12))
+      decipher.setAuthTag(bytes.subarray(-16))
+      return Buffer.concat([decipher.update(bytes.subarray(12, -16)), decipher.final()]).toString()
+    }
+  }
   supervisor.options.binary = process.env.FILEX_TEST_BINARY!
   supervisor.options.helper = fileURLToPath(new URL('./filex-child.mjs', import.meta.url))
   const invoke = (name: string) => mock.handlers.get('hermes:file-sync:' + name)!({ sender: { id: 1 } })
@@ -91,6 +101,9 @@ it.skipIf(!fixture)('uses Desktop File Sync IPC with real account and FileX owne
     supervisor.accountChanged()
     mock.picker = async () => ({ canceled: false, filePaths: [mock.folder] })
     expect(await invoke('choose')).toMatchObject({ folder: await fs.realpath(mock.folder) })
+    if (process.env.FILEX_DEVICE_SUPERVISOR === '1') {
+      expect((await supervisor.owners())[0]).toMatchObject({ enabled: true, deviceGrant: true })
+    }
     const filename = 'ipc-upload-' + randomUUID() + '.md'
     await fs.writeFile(path.join(mock.folder, filename), 'IPC fixture bytes\n')
     await expect.poll(async () => {
@@ -101,6 +114,9 @@ it.skipIf(!fixture)('uses Desktop File Sync IPC with real account and FileX owne
     }, { timeout: 20000 }).toBe('IPC fixture bytes\n')
     await invoke('pause')
     expect((await invoke('status')).state).toBe('Paused')
+    if (process.env.FILEX_DEVICE_SUPERVISOR === '1') {
+      expect((await supervisor.owners())[0]).toMatchObject({ enabled: false, deviceStop: 'STOPPED' })
+    }
     await invoke('resume')
     await supervisor.accountChanging(origin)
     await login(f.other_login)
