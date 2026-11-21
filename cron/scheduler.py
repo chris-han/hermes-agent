@@ -3892,6 +3892,8 @@ def _run_external_worker_payload(payload_path: Path, ack_path: Path) -> bool:
     home_token = secret_token = None
     try:
         home_token = set_hermes_home_override(profile_home)
+        from cron.scheduler_host_guard import require_cron_profile
+        require_cron_profile()
         multiplex_active = bool(payload.get("multiplex_active", False))
         set_multiplex_active(multiplex_active)
         # Plugin secret sources (``ctx.register_secret_source()``) only exist after plugin
