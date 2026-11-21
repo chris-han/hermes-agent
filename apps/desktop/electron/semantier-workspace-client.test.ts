@@ -2,6 +2,31 @@ import { expect, it, vi } from 'vitest'
 
 import { createSemantierWorkspaceClient, requireWorkspaceCompletion, workspaceDesktopRead, workspaceTranscript } from './semantier-workspace-client'
 
+it('uses the account session to issue a device bearer and only that bearer to stop it', async () => {
+  const secret = 'fxd_' + 'a'.repeat(43)
+  const binding = { userId: 'a', workspaceId: 'wa', remoteRoot: 'private://', token: secret,
+    enginePath: '/api/file-sync/engine', version: '0.61.1' }
+  const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(binding))
+    .mockResolvedValueOnce(Response.json({ state: 'PENDING' }))
+  const client = createSemantierWorkspaceClient('https://cloud.example', transport)
+  await expect(client.fileSyncDeviceBinding()).resolves.toEqual(binding)
+  await expect(client.fileSyncDeviceStop(secret)).resolves.toBe('PENDING')
+  expect(transport.mock.calls[0]).toMatchObject(['https://cloud.example/api/file-sync/device-binding',
+    { method: 'POST', credentials: 'include', redirect: 'error', headers: { Origin: 'https://cloud.example', 'X-Semantier-CSRF': '1' } }])
+  expect(transport.mock.calls[1]).toMatchObject(['https://cloud.example/api/file-sync/device-stop',
+    { method: 'POST', credentials: 'omit', redirect: 'error', headers: { Authorization: 'Bearer ' + secret } }])
+})
+
+it('refuses malformed device credentials and unrecognized stop states', async () => {
+  const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ state: 'ACTIVE' }))
+    .mockResolvedValueOnce(Response.json({ token: 'legacy-provider-token' }))
+  const client = createSemantierWorkspaceClient('https://cloud.example', transport)
+  await expect(client.fileSyncDeviceStop('legacy-provider-token')).rejects.toThrow(/credential/i)
+  expect(transport).not.toHaveBeenCalled()
+  await expect(client.fileSyncDeviceStop('fxd_' + 'a'.repeat(43))).rejects.toThrow(/stop/i)
+  await expect(client.fileSyncDeviceBinding()).rejects.toThrow(/device/i)
+})
+
 it('reads the account preference and public recommendation from their server owners', async () => {
   const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ account_id: 'acct-a', model: 'platform_recommended' }))
     .mockResolvedValueOnce(Response.json({ recommended_model: 'model-a' }))

@@ -264,6 +264,31 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
     async fileSyncBinding(): Promise<{userId:string;workspaceId:string;remoteRoot:string;token:string;enginePath:string;version:string}> {
       return (await request('/api/file-sync/binding', {})).json()
     },
+    async fileSyncDeviceBinding(): Promise<{userId:string;workspaceId:string;remoteRoot:string;token:string;enginePath:string;version:string}> {
+      const value = await (await request('/api/file-sync/device-binding', {})).json()
+      if (!value || typeof value.userId !== 'string' || !value.userId ||
+          typeof value.workspaceId !== 'string' || !value.workspaceId ||
+          typeof value.remoteRoot !== 'string' || !value.remoteRoot ||
+          typeof value.token !== 'string' || !/^fxd_[A-Za-z0-9_-]{43}$/.test(value.token) ||
+          value.enginePath !== '/api/file-sync/engine' || value.version !== '0.61.1') {
+        throw new Error('File Sync device binding is unavailable.')
+      }
+      return { userId:value.userId, workspaceId:value.workspaceId, remoteRoot:value.remoteRoot,
+        token:value.token, enginePath:value.enginePath, version:value.version }
+    },
+    async fileSyncDeviceStop(secret: string): Promise<'STOPPED' | 'PENDING' | 'UNKNOWN'> {
+      if (!/^fxd_[A-Za-z0-9_-]{43}$/.test(secret)) {throw new Error('Invalid File Sync device credential.')}
+      const response = await fetchSession(new URL('/api/file-sync/device-stop', base.origin).href, {
+        method: 'POST', credentials: 'omit', cache: 'no-store', redirect: 'error',
+        headers: { Authorization: 'Bearer ' + secret }, signal: AbortSignal.timeout(15_000)
+      })
+      if (!response.ok) {throw new Error('File Sync device stop is unavailable.')}
+      const value = await response.json()
+      if (!value || !['STOPPED', 'PENDING', 'UNKNOWN'].includes(value.state)) {
+        throw new Error('File Sync device stop state is unavailable.')
+      }
+      return value.state
+    },
     async createSession(label: string, requestIdentity: string): Promise<{ sessionKey: string }> {
       if (!/^[A-Za-z0-9_-]{1,96}$/.test(requestIdentity)) { throw new Error('Invalid Main creation request identity.') }
       const result = await (await request('/api/sessions', { label, requestIdentity })).json()

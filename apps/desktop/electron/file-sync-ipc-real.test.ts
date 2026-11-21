@@ -47,8 +47,17 @@ it.skipIf(!fixture)('uses Desktop File Sync IPC with real account and FileX owne
   }
   await login(f.login)
   mock.client = createSemantierWorkspaceClient(origin, (url, init) =>
-    fetch(url, { ...init, headers: { ...init?.headers, cookie } }))
+    fetch(url, { ...init, headers: { ...init?.headers, ...(init?.credentials === 'omit' ? {} : { cookie }) } }))
   const identity = await mock.client.identity()
+  const firstDevice = await mock.client.fileSyncDeviceBinding()
+  const secondDevice = await mock.client.fileSyncDeviceBinding()
+  expect(firstDevice.userId).toBe(identity.user.user_id)
+  expect(firstDevice.token).not.toBe(secondDevice.token)
+  expect(await mock.client.fileSyncDeviceStop(firstDevice.token)).toBe('STOPPED')
+  const secondList = await fetch(origin + secondDevice.enginePath + '/api/files/manager?action=index&path=' +
+    encodeURIComponent(secondDevice.remoteRoot), { headers: { Authorization: 'Bearer ' + secondDevice.token } })
+  expect(secondList.status).toBe(200)
+  expect(await mock.client.fileSyncDeviceStop(secondDevice.token)).toBe('STOPPED')
   let account = { origin, scope: { userId: identity.user.user_id, workspaceId: identity.workspace.id,
     organizationId: identity.organization_id } }
   const supervisor = createFileSyncIpc(() => account)
