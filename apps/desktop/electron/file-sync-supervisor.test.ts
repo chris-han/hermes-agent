@@ -193,6 +193,24 @@ it('can pause and retry after an unavailable helper without poisoning the lifecy
   await expect(supervisor.enable('https://cloud.example', folder)).rejects.toThrow(/pairing state/)
 })
 
+it('does not silently resume an enabled folder after offline restoration fails', async () => {
+  const { folder, supervisor } = await setup()
+  await supervisor.enable('https://cloud.example', folder)
+  await supervisor.shutdown()
+  let identityCalls = 0
+  const options = { ...supervisor.options, identity: async () => {
+    identityCalls++
+    throw new Error('Account unavailable offline')
+  } }
+  const offline = new FileSyncSupervisor(options)
+  await expect(offline.restore()).rejects.toThrow(/offline/)
+  expect((await offline.owners())[0].enabled).toBe(false)
+  const recovered = new FileSyncSupervisor(options)
+  await expect(recovered.restore()).resolves.toBeUndefined()
+  expect(identityCalls).toBe(1)
+  expect(recovered.status().state).toBe('Paused')
+})
+
 
 it('rejects residual files with no local owner before obtaining credentials or running the engine', async () => {
   const { folder, supervisor, switchTo } = await setup()

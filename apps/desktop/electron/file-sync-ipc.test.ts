@@ -109,7 +109,7 @@ it('refuses restoration when the authenticated account no longer owns the retain
   supervisors.push(restarted)
   Object.assign(restarted.options, s.options)
   await expect(restarted.restore()).rejects.toThrow('The account changed')
-  expect(await restarted.owners()).toEqual(before)
+  expect(await restarted.owners()).toEqual(before.map(owner => ({ ...owner, enabled: false })))
 })
 
 it('refuses File Sync when current organization differs from the selected account scope', async () => {

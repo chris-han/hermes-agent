@@ -254,10 +254,10 @@ export class FileSyncSupervisor {
     if (record) {await this.selectedBinding(record.serverOrigin, record)}
 
     if (record) {
-      await this.enable(record.serverOrigin, record.canonicalLocalFolder, record)
+      await this.enable(record.serverOrigin, record.canonicalLocalFolder, record, false, record.id)
     }
   }
-  async enable(rawOrigin: string, folder: string, expectedIdentity?: Identity, revalidateLegacy = false) {
+  async enable(rawOrigin: string, folder: string, expectedIdentity?: Identity, revalidateLegacy = false, restoringId?: string) {
     if(this.closing){throw new Error('File Sync is closing with the application.')}
     if(this.accountTransitions){throw new Error('Account change in progress. Reconnect File Sync afterwards.')}
 
@@ -360,7 +360,15 @@ export class FileSyncSupervisor {
       return this.status()
     } catch (error) {
       if (this.generation === generation) {
-        this.view = { state: 'Error', folder: path.resolve(folder), message: error instanceof Error ? error.message : 'File Sync unavailable' }
+        if (restoringId) {
+          const owners = await this.owners()
+          if (this.generation === generation) {
+            await this.write(owners.map(owner => owner.id === restoringId ? { ...owner, enabled: false } : owner))
+          }
+        }
+        if (this.generation === generation) {
+          this.view = { state: 'Error', folder: path.resolve(folder), message: error instanceof Error ? error.message : 'File Sync unavailable' }
+        }
       }
 
       throw error
