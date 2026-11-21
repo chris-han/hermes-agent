@@ -3068,6 +3068,12 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         db = await self._ensure_session_db_async()
         if db is None:
             return None, self._session_db_unavailable()
+        if getattr(self, "_explicit_session_db", None) is not None:
+            pending = getattr(db, "development_session_creation_pending", None)
+            if not callable(pending):
+                return None, self._session_db_unavailable()
+            if await asyncio.to_thread(pending, session_id):
+                return None, _error_response("Session not found", 404, code="session_not_found")
         session = await asyncio.to_thread(db.get_session, session_id)
         if not session:
             return None, _error_response(f"Session not found: {session_id}", 404, code="session_not_found")
@@ -3287,7 +3293,8 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         if err:
             return err
         db = await self._ensure_session_db_async()
-        resolved_id = await asyncio.to_thread(db.resolve_resume_session_id, session_id)
+        scoped = getattr(self, "_explicit_session_db", None) is not None
+        resolved_id = session_id if scoped else await asyncio.to_thread(db.resolve_resume_session_id, session_id)
         raw_limit, raw_offset = request.query.get("limit"), request.query.get("offset", "0")
         order = request.query.get("order")
         if order not in (None, "oldest", "latest"):
@@ -3306,7 +3313,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         # Compression lineage: return root→tip messages, matching the REST router (#51058).
         messages = await asyncio.to_thread(
             db.get_messages, resolved_id, limit=limit, offset=offset, latest=latest_page,
-            include_compacted=include_compacted, include_ancestors=True)
+            include_compacted=include_compacted, include_ancestors=not scoped)
         return web.json_response({
             "object": "list", "session_id": resolved_id,
             "data": [self._message_response(m) for m in messages],
