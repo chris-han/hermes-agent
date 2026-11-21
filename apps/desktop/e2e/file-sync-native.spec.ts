@@ -193,7 +193,8 @@ test('explicit File Sync in Windows Electron uses the selected account and local
       const composer = restarted.locator('[data-slot="composer-root"] [contenteditable="true"]').filter({ visible: true }).first()
       await composer.fill('Reply with the fixture response.')
       await composer.press('Enter')
-      await expect(restarted.getByText('fixture response', { exact: true })).toBeVisible({ timeout: 90_000 })
+      await expect(restarted.locator('[data-slot="aui_assistant-message-content"]').getByText('fixture response', { exact: true }).last())
+        .toBeVisible({ timeout: 90_000 })
     }
   } finally {
     await fixture.close()
