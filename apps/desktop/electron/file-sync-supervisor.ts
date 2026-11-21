@@ -213,8 +213,16 @@ export class FileSyncSupervisor {
   private async stopAndPersistOnce() {
     const current = this.current
     if (current?.deviceGrant) {
-      const owners = await this.owners()
-      await this.write(owners.map(x => x.id === current.id ? { ...x, enabled: false, deviceStop: 'UNKNOWN' as const } : x))
+      try {
+        const owners = await this.owners()
+        await this.write(owners.map(x => x.id === current.id ? { ...x, enabled: false, deviceStop: 'UNKNOWN' as const } : x))
+      } catch (error) {
+        // A failed registry cannot prove a server-side fence, but it must not
+        // leave the local process sending more work while reporting failure.
+        await this.stop()
+        this.view = { state: 'Error', folder: current.canonicalLocalFolder, message: 'File Sync could not save its stop state. Your files are preserved.' }
+        throw error
+      }
       let result: 'PENDING' | 'UNKNOWN' | 'STOPPED' = 'UNKNOWN'
       try {
         if (this.options.unseal && this.options.stopDevice) {

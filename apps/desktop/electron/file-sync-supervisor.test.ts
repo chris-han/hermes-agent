@@ -519,3 +519,30 @@ it('keeps an unresolved stop scoped to its account when another account selects 
   expect((await supervisor.owners()).find(owner => owner.userId === 'a')).toMatchObject({ enabled: false, deviceStop: 'UNKNOWN' })
   await supervisor.pause()
 })
+
+it('stops the local watcher even if the device stop fence cannot be written', async () => {
+  const { folder, supervisor } = await setup()
+  const token = 'fxd_' + 'o'.repeat(43)
+  let watchSignal: AbortSignal | undefined
+  const run = supervisor.options.run!
+  supervisor.options.run = (...args) => {
+    if (args[0][1] === 'run') {watchSignal = args[3]}
+    return run(...args)
+  }
+  supervisor.options.binding = async () => ({ userId: 'a', workspaceId: 'wa', remoteRoot: 'private://', token, enginePath: '/api/file-sync/engine', version: '0.61.1' })
+  supervisor.options.seal = value => 'sealed:' + value
+  supervisor.options.unseal = value => value.slice(7)
+  supervisor.options.stopDevice = async () => 'STOPPED'
+  await supervisor.enable('https://cloud.example', folder)
+  const internals = supervisor as unknown as { write: (...args: any[]) => Promise<void> }
+  const write = internals.write.bind(supervisor)
+  internals.write = async () => { throw new Error('fixture disk failure') }
+  try {
+    await expect(supervisor.pause()).rejects.toThrow('fixture disk failure')
+    expect(watchSignal?.aborted).toBe(true)
+    expect(supervisor.status().state).toBe('Error')
+  } finally {
+    internals.write = write
+    await supervisor.pause()
+  }
+})
