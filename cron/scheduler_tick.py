@@ -97,6 +97,8 @@ def _tick_admitted(
     next allowed tick. ``headless``: the tick runs outside any gateway (system crontab, ``hermes
     cron tick``) and must refuse agent jobs rather than spawn one. Returns the number of jobs
     executed (0 if another tick holds the lock)."""
+    from cron.scheduler_host_guard import require_cron_profile
+    require_cron_profile()
     from cron import scheduler as _sched
 
     # Stale-code yield gate — BEFORE the lock race. A process whose checkout was updated under it

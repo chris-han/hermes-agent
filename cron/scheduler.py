@@ -2580,6 +2580,8 @@ def run_job(
     ``extra_prompt``: optional per-run context from ``cronjob(action='run', prompt=...)`` (#57331). Appended
     to the stored prompt for this fire only — never persisted to the job definition.
     """
+    from cron.scheduler_host_guard import require_cron_profile
+    require_cron_profile()
     from gateway.session_cron import current_execution
     owner_execution = current_execution()
     if owner_execution is not None and owner_execution[2:] != (job['id'], execution_id):
