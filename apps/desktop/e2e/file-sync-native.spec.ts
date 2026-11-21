@@ -49,6 +49,20 @@ test('explicit File Sync in Windows Electron uses the selected account and local
     } else {
       await expect(page.getByText('Fixture', { exact: true })).toBeVisible({ timeout: 60_000 })
     }
+    const partition = 'persist:semantier-workspace-' + createHash('sha256').update(origin).digest('hex')
+    const cookies = await app.evaluate(async ({ session }, partitionName) => session.fromPartition(partitionName).cookies.get({}), partition)
+    const cookie = cookies.map((value: { name: string; value: string }) => `${value.name}=${value.value}`).join('; ')
+    const fixtureWinman = process.env.FILEX_DEVICE_SUPERVISOR === '1'
+    const request = (endpoint: string, init: RequestInit = {}) => fetch(origin + endpoint, { ...init,
+      headers: { cookie, Origin: origin, 'X-Semantier-CSRF': '1', 'Content-Type': 'application/json', ...init.headers } })
+    let target: { session_id: string; binding_id: string }
+    const admit = (requestId: string) => request('/api/winman/messages/' + target.session_id, { method: 'POST',
+      body: JSON.stringify({ text: 'fixture', request_id: requestId, binding_id: target.binding_id }) })
+    if (fixtureWinman) {
+      target = await (await request('/__fixture/winman-target')).json()
+      expect((await admit('native-off-off')).status).toBe(403)
+      expect((await request('/__fixture/winman-execute', { method: 'POST' })).status).toBe(403)
+    }
     await expect(page.getByText('Preference off.', { exact: false })).toBeVisible({ timeout: 20_000 })
     await page.getByRole('button', { name: 'File Sync', exact: true }).click()
     await expect(page.getByText('No folder selected', { exact: true })).toBeVisible()
@@ -57,6 +71,12 @@ test('explicit File Sync in Windows Electron uses the selected account and local
     await page.getByRole('button', { name: 'Request enablement', exact: true }).click()
     await page.getByRole('button', { name: 'Confirm request', exact: true }).click()
     await expect(page.getByText('Enablement requested.', { exact: false })).toBeVisible({ timeout: 20_000 })
+    if (fixtureWinman) {
+      expect((await admit('native-files-off')).status).toBe(202)
+      const execution = await request('/__fixture/winman-execute', { method: 'POST' })
+      expect(execution.status).toBe(200)
+      expect(await execution.json()).toEqual({ requests: ['native-files-off'], completed: 1 })
+    }
     await page.getByRole('button', { name: 'File Sync', exact: true }).click()
     await expect(page.getByText('No folder selected', { exact: true })).toBeVisible()
     await app.evaluate(({ dialog }, selected) => {
@@ -67,9 +87,12 @@ test('explicit File Sync in Windows Electron uses the selected account and local
     await expect(page.getByText(await fs.promises.realpath(folder), { exact: true })).toBeVisible({ timeout: 60_000 })
     const name = `native-${randomUUID()}.md`
     fs.writeFileSync(path.join(folder, name), 'Windows fixture upload\n')
-    const partition = 'persist:semantier-workspace-' + createHash('sha256').update(origin).digest('hex')
-    const cookies = await app.evaluate(async ({ session }, partitionName) => session.fromPartition(partitionName).cookies.get({}), partition)
-    const cookie = cookies.map((value: { name: string; value: string }) => `${value.name}=${value.value}`).join('; ')
+    if (fixtureWinman) {
+      expect((await admit('native-files-on')).status).toBe(202)
+      const execution = await request('/__fixture/winman-execute', { method: 'POST' })
+      expect(execution.status).toBe(200)
+      expect(await execution.json()).toEqual({ requests: ['native-files-off', 'native-files-on'], completed: 2 })
+    }
     await expect.poll(async () => {
       const response = await fetch(origin + '/api/file-sync/files?download=true&path=' + name, { headers: { cookie,
         'X-Semantier-User-Id': account.user_id, 'X-Semantier-Workspace-Id': account.workspace_id } })
@@ -116,6 +139,10 @@ test('explicit File Sync in Windows Electron uses the selected account and local
     await page.getByRole('button', { name: 'Accounts', exact: true }).click()
     await page.getByRole('button', { name: 'Turn preference off', exact: true }).click()
     await expect(page.getByText('Preference off.', { exact: false })).toBeVisible({ timeout: 20_000 })
+    if (fixtureWinman) {
+      expect((await admit('native-on-off')).status).toBe(403)
+      expect((await request('/__fixture/winman-execute', { method: 'POST' })).status).toBe(403)
+    }
     await page.getByRole('button', { name: 'File Sync', exact: true }).click()
     await expect(page.getByText(await fs.promises.realpath(folder), { exact: true })).toBeVisible()
     const afterOff = `native-off-${randomUUID()}.md`
