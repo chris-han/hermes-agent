@@ -94,11 +94,15 @@ it.skipIf(!fixture)(
         expect(response.status).toBe(200)
         return response.json()
       }
+      const target = await (await request('/__fixture/winman-target')).json()
       const admitWinman = async (requestId: string) => {
-        const response = await request('/__fixture/winman-admission', { method: 'POST',
-          headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request_id: requestId }) })
-        expect(response.status).toBe(200)
-        return response.json()
+        const response = await request('/api/winman/messages/' + target.session_id, { method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ text: 'fixture', request_id: requestId, binding_id: target.binding_id }) })
+        const receipt = response.status === 202 ? await response.json() : null
+        const state = await (await request('/__fixture/winman-target')).json()
+        return { status: receipt?.receipt?.status || (response.status === 403 ? 'denied' : response.status),
+          admissions: state.admissions }
       }
       expect(await supervisor.owners()).toEqual([])
       expect(await readWinman()).toMatchObject({ desired: { enabled: false }, execution: 'unavailable' })
@@ -210,9 +214,6 @@ it.skipIf(!fixture)(
         supervisor.accountChanged()
         const otherIdentity = await options.identity()
         expect(otherIdentity.userId).not.toBe(activeOwner.userId)
-        const foreignAdmission = await request('/__fixture/winman-admission', { method: 'POST',
-          headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request_id: 'foreign' }) })
-        expect(foreignAdmission.status).toBe(403)
         expect(await readWinman()).toMatchObject({ desired: { enabled: false }, execution: 'unavailable' })
         const foreignToggle = await request('/api/winman/capability', { method: 'PUT',
           headers: { Origin: origin, 'x-semantier-csrf': '1', 'content-type': 'application/json' },
@@ -225,6 +226,10 @@ it.skipIf(!fixture)(
           body: JSON.stringify({ enabled: true, expected_scope: otherScope }) })
         expect(otherToggle.status).toBe(200)
         expect(await otherToggle.json()).toMatchObject({ desired: { enabled: true }, execution: 'unavailable' })
+        const foreignAdmission = await request('/api/winman/messages/' + target.session_id, { method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ text: 'fixture', request_id: 'foreign', binding_id: target.binding_id }) })
+        expect(foreignAdmission.status).toBe(403)
         const ownerWinman = await fetch(origin + '/api/winman/capability', { headers: { cookie: secondCookie } })
         expect(await ownerWinman.json()).toMatchObject({ desired: { enabled: false }, execution: 'unavailable' })
         expect(await supervisor.statusFor(origin, otherIdentity)).toEqual({ state: 'Paused' })
