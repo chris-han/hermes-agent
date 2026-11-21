@@ -124,6 +124,11 @@ export function FileSyncSettings() {
               ? '状态基于文件大小、修改时间及变更事件，并非完整内容校验。冲突版本会保留。'
               : 'Status uses size, modification time and change detection, rather than a full content audit. Conflict copies are preserved.'}
           </p>
+          <p className="text-xs text-muted-foreground">
+            {zh
+              ? '暂停或切换账户后，已发送的上传仍可能完成。'
+              : 'Uploads already sent may still finish after pausing or switching accounts.'}
+          </p>
         </>
       )}
       {(error || status.message) && (

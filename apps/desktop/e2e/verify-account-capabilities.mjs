@@ -22,9 +22,11 @@ try {
   const port = server.httpServer.address().port
   for (const [locale, labels] of Object.entries({
     en: { choose: 'Choose and enable', pause: 'Pause', enable: 'Request enablement', confirm: 'Confirm request',
-      disable: 'Turn preference off', noFolder: 'No folder selected', requested: 'Enablement requested.' },
+      disable: 'Turn preference off', noFolder: 'No folder selected', requested: 'Enablement requested.',
+      inFlight: 'Uploads already sent may still finish after pausing or switching accounts.' },
     zh: { choose: '选择并启用', pause: '暂停', enable: '请求启用', confirm: '确认请求',
-      disable: '关闭设置', noFolder: '尚未选择文件夹', requested: '已请求启用。' }
+      disable: '关闭设置', noFolder: '尚未选择文件夹', requested: '已请求启用。',
+      inFlight: '暂停或切换账户后，已发送的上传仍可能完成。' }
   })) {
     for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
       const context = await browser.newContext({ viewport, reducedMotion: 'reduce' })
@@ -34,6 +36,7 @@ try {
         page.on('pageerror', error => errors.push(error.message))
         await page.goto(`http://127.0.0.1:${port}/__account-capabilities?locale=${locale}`)
         await page.getByText(labels.noFolder, { exact: true }).waitFor()
+        await page.getByText(labels.inFlight, { exact: true }).waitFor({ state: 'visible' })
         const enable = page.getByRole('button', { name: labels.enable, exact: true })
         await enable.focus()
         await enable.press('Enter')
