@@ -66,6 +66,25 @@ test('explicit File Sync in Windows Electron uses the selected account and local
     await expect(page.getByText('Preference off.', { exact: false })).toBeVisible({ timeout: 20_000 })
     await page.getByRole('button', { name: 'File Sync', exact: true }).click()
     await expect(page.getByText('No folder selected', { exact: true })).toBeVisible()
+    if (process.env.FILEX_OUTAGE_FIXTURE === '1') {
+      const fixtureGate = async (action: string) => {
+        const response = await request('/__fixture/filex-gate', { method: 'POST', body: JSON.stringify({ action }) })
+        expect(response.status).toBe(200)
+      }
+      await fixtureGate('identity-offline')
+      await page.getByRole('button', { name: 'Model service', exact: true }).click()
+      await page.getByRole('button', { name: 'Accounts', exact: true }).click()
+      await expect(page.getByRole('alert')).toContainText('Workspace identity is unavailable. Try again.')
+      await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toHaveCount(0)
+      const heldCookies = await app.evaluate(async ({ session }, name) => session.fromPartition(name).cookies.get({}), partition)
+      expect(heldCookies).toEqual(cookies)
+      await fixtureGate('identity-online')
+      await page.getByRole('button', { name: 'Retry', exact: true }).click()
+      await expect(page.getByText('Fixture', { exact: true })).toBeVisible({ timeout: 30_000 })
+      await page.getByRole('button', { name: 'File Sync', exact: true }).click()
+      await expect(page.getByText('No folder selected', { exact: true })).toBeVisible()
+    }
     await page.getByRole('button', { name: 'Model service', exact: true }).click()
     await page.getByRole('button', { name: 'Accounts', exact: true }).click()
     await page.getByRole('button', { name: 'Request enablement', exact: true }).click()
