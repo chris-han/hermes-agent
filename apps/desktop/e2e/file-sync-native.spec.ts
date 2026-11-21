@@ -85,6 +85,22 @@ test('explicit File Sync in Windows Electron uses the selected account and local
     await page.getByRole('button', { name: 'Pause', exact: true }).click()
     await expect(page.getByText('Paused', { exact: true })).toBeVisible()
     expect((await page.evaluate(() => (window as any).hermesDesktop.connections.list())).primary).toBe(before.primary)
+    const { page: restarted } = await fixture.restart()
+    await expect(restarted.getByRole('button', { name: 'default', exact: true })).toHaveAttribute('aria-pressed', 'true', { timeout: 180_000 })
+    expect((await restarted.evaluate(() => (window as any).hermesDesktop.connections.list())).primary).toBe('local')
+    await restarted.getByRole('button', { name: 'Open settings', exact: true }).click()
+    await restarted.getByRole('button', { name: 'File Sync', exact: true }).click()
+    await expect(restarted.getByText(await fs.promises.realpath(folder), { exact: true })).toBeVisible({ timeout: 30_000 })
+    await expect(restarted.getByText('Paused', { exact: true })).toBeVisible()
+    await restarted.getByRole('button', { name: 'Resume', exact: true }).click()
+    const afterRestart = `native-restart-${randomUUID()}.md`
+    fs.writeFileSync(path.join(folder, afterRestart), 'Explicit resume after restart\n')
+    await expect.poll(async () => {
+      const response = await fetch(origin + '/api/file-sync/files?download=true&path=' + afterRestart, { headers: { cookie,
+        'X-Semantier-User-Id': account.user_id, 'X-Semantier-Workspace-Id': account.workspace_id } })
+      return response.status === 206 ? response.text() : ''
+    }, { timeout: 40_000 }).toBe('Explicit resume after restart\n')
+    await restarted.getByRole('button', { name: 'Pause', exact: true }).click()
   } finally {
     await fixture.close()
   }
