@@ -94,6 +94,13 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
     })
     const localBefore = await page.evaluate(() => (window as any).hermesDesktop.connections.list())
     expect(localBefore.primary).toBe('local')
+    // A retained legacy Cloud gateway is independent of the account session.
+    // Its reserved .invalid endpoint never addresses a real service.
+    const legacy = await page.evaluate(() => (window as any).hermesDesktop.connections.save({
+      kind: 'cloud', label: 'Retained fixture Cloud', url: 'https://legacy.invalid'
+    }))
+    expect(legacy.ok).toBe(true)
+    expect(legacy.registry.primary).toBe('local')
     const partition = 'persist:semantier-workspace-' + createHash('sha256').update('https://cloud.semantier.cn').digest('hex')
     await app.evaluate(({ session }, partitionName) => {
       session.fromPartition(partitionName).webRequest.onBeforeRequest({ urls: ['https://cloud.semantier.cn/*'] },
@@ -156,7 +163,9 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
     await expect(page.getByText('No folder selected', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Close settings', exact: true }).click()
     await expect(page.getByRole('button', { name: 'default', exact: true })).toHaveAttribute('aria-pressed', 'true')
-    expect((await page.evaluate(() => (window as any).hermesDesktop.connections.list())).primary).toBe(localBefore.primary)
+    const afterAccount = await page.evaluate(() => (window as any).hermesDesktop.connections.list())
+    expect(afterAccount.primary).toBe(localBefore.primary)
+    expect(afterAccount.connections.find((entry: { id: string }) => entry.id === legacy.connection.id)).toEqual(legacy.connection)
     if (connected && process.env.ACCOUNT_MODEL_E2E_PROMPT === '1') {
       const composer = page.locator('[data-slot="composer-root"] [contenteditable="true"]').filter({ visible: true }).first()
       await composer.fill('Reply with the fixture response.')
