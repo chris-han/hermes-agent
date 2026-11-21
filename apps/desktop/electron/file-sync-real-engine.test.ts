@@ -38,6 +38,10 @@ it.skipIf(!fixture)(
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'semantier-filex-real-'))
     const folder = path.join(root, 'documents')
     await fs.mkdir(folder)
+    const secondFolder = path.join(root, 'second-device')
+    await fs.mkdir(secondFolder)
+    const secondOnly = 'second-device-off-' + randomUUID() + '.md'
+    await fs.writeFile(path.join(secondFolder, secondOnly), 'Must stay on second device\n')
     const key = randomBytes(32)
     const name = 'portable-supervisor-' + randomUUID() + '.md'
 
@@ -50,7 +54,7 @@ it.skipIf(!fixture)(
         expect(response.status).toBe(200)
         const value = await response.json()
 
-        return { userId: value.user.user_id, workspaceId: value.workspace.id }
+        return { userId: value.user.user_id, workspaceId: value.workspace.id, organizationId: value.organization_id }
       },
       binding: async () => {
         const response = await request('/api/file-sync/binding', {
@@ -72,14 +76,22 @@ it.skipIf(!fixture)(
     }
 
     let supervisor = new FileSyncSupervisor(options)
+    const secondDevice = new FileSyncSupervisor({ ...options, stateDir: path.join(root, 'second-private') })
 
     try {
+      await secondDevice.restore()
+      expect(await secondDevice.owners()).toEqual([])
+      expect((await secondDevice.statusFor(origin, await options.identity())).state).toBe('Paused')
       await supervisor.enable(origin, folder)
       await fs.writeFile(path.join(folder, name), 'Portable supervisor upload\n')
       await expect.poll(() => supervisor.status().state, { timeout: 20000 }).toBe('Synced')
       const bytes = await request('/api/file-sync/files?download=true&path=' + name)
       expect(bytes.status).toBe(206)
       expect(await bytes.text()).toBe('Portable supervisor upload\n')
+      const listing = await request('/api/file-sync/files')
+      expect(listing.status).toBe(200)
+      expect((await listing.json()).files.map((file: { name: string }) => file.name)).not.toContain(secondOnly)
+      expect(await fs.readFile(path.join(secondFolder, secondOnly), 'utf8')).toBe('Must stay on second device\n')
       const activeOwner = (await supervisor.owners())[0]
       const credential = await options.binding()
       let lockCode = 0
@@ -124,6 +136,7 @@ it.skipIf(!fixture)(
         .toBe('Web returned portable supervisor bytes\n')
     } finally {
       await supervisor.shutdown()
+      await secondDevice.shutdown()
       await fs.rm(root, { recursive: true, force: true })
     }
   },
