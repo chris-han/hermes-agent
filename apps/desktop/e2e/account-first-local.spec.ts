@@ -73,8 +73,22 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
   try {
     const { app, page } = await fixture.launch()
     page.on('pageerror', error => console.log('FIXTURE_RENDERER_ERROR', error.message))
+    let failures = 0
+    page.on('requestfailed', request => {
+      if (failures++ < 5) {
+        const target = new URL(request.url())
+        console.log('FIXTURE_RESOURCE_FAILURE', target.origin === process.env.HERMES_DESKTOP_DEV_SERVER,
+          target.pathname.slice(0, 120), request.failure()?.errorText)
+      }
+    })
     await fixture.stage('desktop.ready', async () => {
-      await expect(page.getByRole('button', { name: 'default', exact: true })).toHaveAttribute('aria-pressed', 'true', { timeout: 90_000 })
+      try {
+        await expect(page.getByRole('button', { name: 'default', exact: true })).toHaveAttribute('aria-pressed', 'true', { timeout: 90_000 })
+      } catch (error) {
+        const state = await page.evaluate(() => ({ ready: document.readyState, rootChildren: document.getElementById('root')?.childElementCount ?? -1 }))
+        console.log('FIXTURE_RENDERER_STATE', JSON.stringify(state), 'failedRequests', failures)
+        throw error
+      }
     })
     const localBefore = await page.evaluate(() => (window as any).hermesDesktop.connections.list())
     expect(localBefore.primary).toBe('local')
