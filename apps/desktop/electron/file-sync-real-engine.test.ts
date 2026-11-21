@@ -193,9 +193,17 @@ it.skipIf(!fixture)(
       await supervisor.pause()
       const oldOwners = await supervisor.owners()
       const baseline = await fs.readFile(path.join(options.stateDir, oldOwners[0].id, 'baseline', 'pair-1.json'))
+      // The disposable account token is deliberately revoked; reconnect must
+      // preserve the exact local pair and baseline when the server reissues it.
+      const revoked = await request('/api/file-sync/binding', { method: 'DELETE',
+        headers: { Origin: origin, 'x-semantier-csrf': '1' } })
+      expect(revoked.status).toBe(204)
       supervisor = new FileSyncSupervisor(options)
       await supervisor.enable(origin, folder)
       await expect.poll(() => supervisor.status().state, { timeout: 20000 }).toBe('Synced')
+      const replacement = await options.binding()
+      expect(replacement.token).not.toBe(credential.token)
+      expect(replacement.remoteRoot).toBe(credential.remoteRoot)
       expect((await supervisor.owners())[0].id).toBe(oldOwners[0].id)
       expect(await fs.readFile(path.join(options.stateDir, oldOwners[0].id, 'baseline', 'pair-1.json'))).toEqual(
         baseline

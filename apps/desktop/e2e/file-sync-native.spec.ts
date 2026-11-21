@@ -126,6 +126,11 @@ test('explicit File Sync in Windows Electron uses the selected account and local
     }, { timeout: 40_000 }).toBe('File Sync remains active\n')
     await page.getByRole('button', { name: 'Pause', exact: true }).click()
     await expect(page.getByText('Paused', { exact: true })).toBeVisible()
+    const bindingHeaders = { cookie, Origin: origin, 'X-Semantier-CSRF': '1' }
+    const originalBinding = await fetch(origin + '/api/file-sync/binding', { method: 'POST', headers: bindingHeaders })
+    expect(originalBinding.status).toBe(200)
+    const originalCredential = await originalBinding.json()
+    expect((await fetch(origin + '/api/file-sync/binding', { method: 'DELETE', headers: bindingHeaders })).status).toBe(204)
     expect((await page.evaluate(() => (window as any).hermesDesktop.connections.list())).primary).toBe(before.primary)
     const { page: restarted } = await fixture.restart()
     await expect(restarted.getByRole('button', { name: 'default', exact: true })).toHaveAttribute('aria-pressed', 'true', { timeout: 180_000 })
@@ -135,6 +140,11 @@ test('explicit File Sync in Windows Electron uses the selected account and local
     await expect(restarted.getByText(await fs.promises.realpath(folder), { exact: true })).toBeVisible({ timeout: 30_000 })
     await expect(restarted.getByText('Paused', { exact: true })).toBeVisible()
     await restarted.getByRole('button', { name: 'Resume', exact: true }).click()
+    const reissuedBinding = await fetch(origin + '/api/file-sync/binding', { method: 'POST', headers: bindingHeaders })
+    expect(reissuedBinding.status).toBe(200)
+    const replacementCredential = await reissuedBinding.json()
+    expect(replacementCredential.token).not.toBe(originalCredential.token)
+    expect(replacementCredential.remoteRoot).toBe(originalCredential.remoteRoot)
     const afterRestart = `native-restart-${randomUUID()}.md`
     fs.writeFileSync(path.join(folder, afterRestart), 'Explicit resume after restart\n')
     await expect.poll(async () => {
