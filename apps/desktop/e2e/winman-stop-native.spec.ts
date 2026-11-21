@@ -39,6 +39,19 @@ test('turning Winman off interrupts the owned fixture turn', async ({}, info) =>
     const cookie = cookies.map((item: { name: string; value: string }) => `${item.name}=${item.value}`).join('; ')
     const headers = { cookie, Origin: origin, 'X-Semantier-CSRF': '1' }
     expect((await fetch(origin + '/__fixture/start', { method: 'POST', headers })).status).toBe(200)
+    const otherLogin = await fetch(origin + '/auth/password/login', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login: account.other_login, password: account.password }) })
+    expect(otherLogin.status).toBe(200)
+    const otherCookie = otherLogin.headers.getSetCookie().map(value => value.split(';')[0]).join('; ')
+    expect(otherCookie).toBeTruthy()
+    const otherHeaders = { cookie: otherCookie!, Origin: origin, 'X-Semantier-CSRF': '1', 'Content-Type': 'application/json' }
+    const otherOff = (scope: unknown) => fetch(origin + '/api/winman/capability', { method: 'PUT',
+      headers: otherHeaders, body: JSON.stringify({ enabled: false, expected_scope: scope }) })
+    expect((await otherOff(account.owner_scope)).status).toBe(403)
+    expect((await otherOff(account.other_scope)).status).toBe(200)
+    const beforeOwnerOff = await fetch(origin + '/__fixture/status', { headers })
+    expect(await beforeOwnerOff.json()).toMatchObject({ interrupted: false, stop_requested: false, released: false })
     await page.getByRole('button', { name: 'Turn preference off', exact: true }).click()
     await expect(page.getByText('Preference off.', { exact: false })).toBeVisible({ timeout: 20_000 })
     const response = await fetch(origin + '/__fixture/status', { headers })
