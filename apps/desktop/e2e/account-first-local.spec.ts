@@ -130,6 +130,9 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
         const cookie = cookies.map((value: { name: string; value: string }) => `${value.name}=${value.value}`).join('; ')
         const expired = await fetch(origin + '/__fixture/expire-device', { method: 'POST', headers: { cookie, Origin: origin } })
         expect(expired.status).toBe(200)
+        // Device readiness is cached for 30 seconds; retry after that bounded
+        // interval so this verifies a new server-authoritative readiness read.
+        await new Promise(resolve => setTimeout(resolve, 31_000))
         await page.evaluate(() => (window as any).hermesDesktop.workspace.prepareModel())
         await expect.poll(async () => {
           const state = await fetch(origin + '/__fixture/expiry-state', { headers: { cookie } })
