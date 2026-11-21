@@ -7,14 +7,23 @@ from psycopg import sql
 
 
 class PostgreSQLAPIStore:
-    def __init__(self,db_path=None):
+    def __init__(self, db_path=None, *, session_db=None):
+        if session_db is not None:
+            if db_path is not None:
+                raise ValueError('Explicit API store cannot also select a database path')
+            self.store = session_db
+            self._owns_session_db = False
+            return
         from hermes_constants import get_hermes_home
         from hermes_state_backend import open_session_db
-        if db_path==':memory:': raise ValueError('Hosted API requires durable PostgreSQL storage')
-        self.store=open_session_db(home=Path(db_path).parent if db_path else get_hermes_home())
+        if db_path == ':memory:':
+            raise ValueError('Hosted API requires durable PostgreSQL storage')
+        self.store = open_session_db(home=Path(db_path).parent if db_path else get_hermes_home())
+        self._owns_session_db = True
 
     def close(self):
-        self.store.close()
+        if self._owns_session_db:
+            self.store.close()
 
 
 class PostgreSQLRunIdempotencyStore(PostgreSQLAPIStore):
@@ -78,8 +87,8 @@ class PostgreSQLRunIdempotencyStore(PostgreSQLAPIStore):
 
 
 class PostgreSQLResponseStore(PostgreSQLAPIStore):
-    def __init__(self,max_size=100,db_path=None,max_identities=None):
-        super().__init__(db_path)
+    def __init__(self,max_size=100,db_path=None,max_identities=None,*,session_db=None):
+        super().__init__(db_path, session_db=session_db)
         self._max_size,self._max_identities=max_size,max_identities
         with self.store._transaction() as conn:self._evict(conn)
 
