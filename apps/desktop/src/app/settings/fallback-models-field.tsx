@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useI18n } from '@/i18n'
 import { modelProviderName } from '@/i18n/model-service'
 import { Plus } from '@/lib/icons'
+import { useModelAccountScope, visibleAccountModelOptions } from '@/lib/model-account-scope'
 import { modelDiscoveryOwnerKey } from '@/lib/model-discovery-scope'
 import { findCatalogProvider, modelOptionsQueryKey, providerManualModels, providerSelectableModels, requestDiscoveredModelOptions } from '@/lib/model-options'
 import { $customModels } from '@/store/custom-models'
@@ -72,12 +73,13 @@ function ScopedFallbackModelsField({ value, onChange }: { value: unknown; onChan
   const { t, locale } = useI18n()
   const m = t.settings.model
   const connection = useStore($connection)
+  const account = useModelAccountScope(connection, connection?.connectionId)
   const profile = useStore($settingsScopeProfile)
   const ownerKey = modelDiscoveryOwnerKey(null, connection)
   const manualScope = `${ownerKey}:${profile}`
 
   const modelOptions = useQuery({
-    queryKey: modelOptionsQueryKey(profile, null, ownerKey),
+    queryKey: [...modelOptionsQueryKey(profile, null, ownerKey), ...account.key],
     enabled: !!ownerKey,
     queryFn: () => requestDiscoveredModelOptions({
       connection,
@@ -90,7 +92,7 @@ function ScopedFallbackModelsField({ value, onChange }: { value: unknown; onChan
 
   const customModels = useStore($customModels)
 
-  const providers = (modelOptions.data?.providers ?? []).filter(provider => provider.slug)
+  const providers = (visibleAccountModelOptions(modelOptions.data, account.allowCloud)?.providers ?? []).filter(provider => provider.slug)
 
   const [rows, setRows] = useState<FallbackEntry[]>(() => normalizeEntries(value))
   const [savedRows, setSavedRows] = useState(() => normalizeEntries(value))

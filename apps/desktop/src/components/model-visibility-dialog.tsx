@@ -15,6 +15,7 @@ import type { HermesGateway } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { modelProviderName } from '@/i18n/model-service'
 import { Search } from '@/lib/icons'
+import { useModelAccountScope, visibleAccountModelOptions } from '@/lib/model-account-scope'
 import { modelDiscoveryOwnerKey } from '@/lib/model-discovery-scope'
 import { modelOptionsQueryKey, requestDiscoveredModelOptions, withManualModelChoices } from '@/lib/model-options'
 import { displayModelName, modelDisplayParts } from '@/lib/model-status-label'
@@ -59,6 +60,7 @@ export function ModelVisibilityDialog({
   const copy = t.modelVisibility
   const [search, setSearch] = useState('')
   const connection = useStore($connection)
+  const account = useModelAccountScope(connection, ownerConnectionId)
   const ownerKey = modelDiscoveryOwnerKey(ownerConnectionId, connection)
   const customs = useStore($customModels)
   const manualScope = `${ownerKey}:${profile}`
@@ -66,7 +68,7 @@ export function ModelVisibilityDialog({
   const collapsedProviders = useStore($collapsedProviders)
 
   const modelOptions = useQuery({
-    queryKey: modelOptionsQueryKey(profile, sessionId, ownerKey),
+    queryKey: [...modelOptionsQueryKey(profile, sessionId, ownerKey), ...account.key],
     queryFn: (): Promise<ModelOptionsResult> => requestDiscoveredModelOptions({
       connection, gateway: gw, ownerConnectionId, profile, sessionId,
       request: <T,>(method: string, params?: Record<string, unknown>) =>
@@ -77,11 +79,11 @@ export function ModelVisibilityDialog({
 
   const providers = useMemo(
     () =>
-      (modelOptions.data?.providers ?? [])
+      (visibleAccountModelOptions(modelOptions.data, account.allowCloud)?.providers ?? [])
         .map(provider => provider.discovery_state == null ? provider : withManualModelChoices(provider,
           customs.filter(entry => entry.scope === manualScope && entry.provider === provider.slug).map(entry => entry.model)))
         .filter(provider => (provider.models ?? []).length > 0),
-    [modelOptions.data, customs, manualScope]
+    [modelOptions.data, customs, manualScope, account.allowCloud]
   )
 
   useEffect(() => seedKnownModels(providers), [providers])

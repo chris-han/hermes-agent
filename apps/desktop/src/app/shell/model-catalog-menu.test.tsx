@@ -95,7 +95,7 @@ it('does not paint a prior account catalog while the selected account changes', 
   try {
     $connectionsRegistry.set(registry(accountA))
     $connection.set({ mode: 'local', baseUrl: 'http://127.0.0.1', connectionId: 'test' } as never)
-    getGlobalModelOptions.mockResolvedValueOnce({ providers: [{ name: 'Cloud', slug: 'semantier-cloud', authenticated: true,
+    getGlobalModelOptions.mockResolvedValue({ providers: [{ name: 'Cloud', slug: 'semantier-cloud', authenticated: true,
       models: ['dynamic-model'], eligible_models: ['dynamic-model'],
       capabilities: { 'dynamic-model': { reasoning: false, fast: false } },
       model_profiles: { 'dynamic-model': { label: 'Dynamic model', context_window: 256000,

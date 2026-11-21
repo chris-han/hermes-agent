@@ -6,6 +6,7 @@ import { type ReactElement, useRef, useState } from 'react'
 
 import { useI18n } from '@/i18n'
 import { modelProviderName } from '@/i18n/model-service'
+import { useModelAccountScope, visibleAccountModelOptions } from '@/lib/model-account-scope'
 import { modelDiscoveryOwnerKey } from '@/lib/model-discovery-scope'
 import { catalogProviderMatches, modelOptionsQueryKey, providerSelectableModels, requestDiscoveredModelOptions } from '@/lib/model-options'
 import { currentPickerSelection } from '@/lib/model-status-label'
@@ -68,6 +69,7 @@ export function ModelPickerDialog({
   const { t } = useI18n()
   const copy = t.modelPicker
   const connection = useStore($connection)
+  const account = useModelAccountScope(connection, ownerConnectionId)
   const ownerKey = modelDiscoveryOwnerKey(ownerConnectionId, connection)
   // Own the search term so we can filter manually. cmdk's built-in
   // shouldFilter reorders items by its fuzzy-match score (≈alphabetical with
@@ -81,20 +83,22 @@ export function ModelPickerDialog({
   const searchRef = useRef<HTMLInputElement>(null)
 
   const modelOptions = useQuery({
-    queryKey: modelOptionsQueryKey(profile, sessionId, ownerKey),
+    queryKey: [...modelOptionsQueryKey(profile, sessionId, ownerKey), ...account.key],
     queryFn: () => requestDiscoveredModelOptions({ connection, gateway: gw, ownerConnectionId, profile, sessionId,
       request: request ?? (<T,>(method: string, params?: Record<string, unknown>) =>
         requestGatewayForAgent<T>(ownerConnectionId ?? connection?.connectionId ?? null, profile, method, params)) }),
     enabled: open && !!ownerKey
   })
 
-  const providers = (modelOptions.data?.providers ?? []).map(provider => ({
+  const options = visibleAccountModelOptions(modelOptions.data, account.allowCloud)
+
+  const providers = (options?.providers ?? []).map(provider => ({
     ...provider, models: providerSelectableModels(provider)
   }))
 
   const { model: optionsModel, provider: optionsProvider } = currentPickerSelection(
     { model: currentModel, provider: currentProvider },
-    modelOptions.data
+    options
   )
 
   const loading = modelOptions.isPending && !modelOptions.data

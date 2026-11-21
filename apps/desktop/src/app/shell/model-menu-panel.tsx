@@ -9,6 +9,7 @@ import { Codicon } from '@/components/ui/codicon'
 import { DropdownMenuItem, dropdownMenuRow } from '@/components/ui/dropdown-menu'
 import { useI18n } from '@/i18n'
 import { providerJourneyCopy, providerTestStatus } from '@/i18n/model-service'
+import { useModelAccountScope } from '@/lib/model-account-scope'
 import { modelDiscoveryOwnerKey } from '@/lib/model-discovery-scope'
 import { modelOptionsQueryKey, requestDiscoveredModelOptions } from '@/lib/model-options'
 import { cn } from '@/lib/utils'
@@ -40,6 +41,7 @@ export function ModelMenuPanel({ onFollowDefaultModel, ...props }: ModelMenuPane
   const view = useSessionView()
   const modelSource = useStore($currentModelSource)
   const connection = useStore($connection)
+  const account = useModelAccountScope(connection, ownerConnectionId)
   const ownerKey = modelDiscoveryOwnerKey(ownerConnectionId, connection)
   const { activeSessionId, controller } = useModelMenuController(props)
   const [testingOwner, setTestingOwner] = useState<string | null>(null)
@@ -98,7 +100,7 @@ export function ModelMenuPanel({ onFollowDefaultModel, ...props }: ModelMenuPane
     setRefreshing(true)
 
     try {
-      const queryKey = modelOptionsQueryKey(profile, activeSessionId, ownerKey)
+      const queryKey = [...modelOptionsQueryKey(profile, activeSessionId, ownerKey), ...account.key]
 
       const next = await requestDiscoveredModelOptions({
         connection,

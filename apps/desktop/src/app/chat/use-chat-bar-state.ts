@@ -6,6 +6,7 @@ import { useMemo } from 'react'
 
 import type { HermesGateway } from '@/hermes'
 import { quickModelOptions } from '@/lib/chat-runtime'
+import { useModelAccountScope, visibleAccountModelOptions } from '@/lib/model-account-scope'
 import { modelDiscoveryOwnerKey } from '@/lib/model-discovery-scope'
 import { currentModelCapabilities, modelOptionsQueryKey, requestDiscoveredModelOptions } from '@/lib/model-options'
 import { requestGatewayForAgent } from '@/store/gateway'
@@ -45,11 +46,12 @@ export function useChatBarState({
   requestModelOptionsForOwner
 }: ChatBarStateOptions): ChatBarState {
   const connection = useStore($connection)
+  const account = useModelAccountScope(connection, modelOptionsOwnerConnectionId)
   const ownerKey = modelDiscoveryOwnerKey(modelOptionsOwnerConnectionId, connection)
   const profile = modelOptionsProfile || activeGatewayProfile
 
   const modelOptionsQuery = useQuery<ModelOptionsResult>({
-    queryKey: modelOptionsQueryKey(profile, activeSessionId, ownerKey),
+    queryKey: [...modelOptionsQueryKey(profile, activeSessionId, ownerKey), ...account.key],
     queryFn: () =>
       requestDiscoveredModelOptions({
         connection,
@@ -63,12 +65,10 @@ export function useChatBarState({
     enabled: gatewayOpen && !!ownerKey
   })
 
-  const quickModels = useMemo(
-    () => quickModelOptions(modelOptionsQuery.data, currentProvider, currentModel),
-    [currentModel, currentProvider, modelOptionsQuery.data]
-  )
+  const options = useMemo(() => visibleAccountModelOptions(modelOptionsQuery.data, account.allowCloud), [modelOptionsQuery.data, account.allowCloud])
+  const quickModels = useMemo(() => quickModelOptions(options, currentProvider, currentModel), [currentModel, currentProvider, options])
 
-  const supportsReasoning = currentModelCapabilities(modelOptionsQuery.data, currentProvider, currentModel)?.reasoning
+  const supportsReasoning = currentModelCapabilities(options, currentProvider, currentModel)?.reasoning
 
   return useMemo<ChatBarState>(
     () => ({

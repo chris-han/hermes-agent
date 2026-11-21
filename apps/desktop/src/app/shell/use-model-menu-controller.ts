@@ -7,6 +7,7 @@ import { useRef } from 'react'
 import { useSessionView } from '@/app/chat/session-view'
 import type { HermesGateway } from '@/hermes'
 import { useI18n } from '@/i18n'
+import { useModelAccountScope, visibleAccountModelOptions } from '@/lib/model-account-scope'
 import { modelDiscoveryOwnerKey } from '@/lib/model-discovery-scope'
 import { modelOptionsQueryKey, requestDiscoveredModelOptions } from '@/lib/model-options'
 import { currentPickerSelection } from '@/lib/model-status-label'
@@ -65,6 +66,7 @@ export function useModelMenuController({
 }: ModelMenuHostProps) {
   const { t } = useI18n()
   const connection = useStore($connection)
+  const account = useModelAccountScope(connection, ownerConnectionId)
   const ownerKey = modelDiscoveryOwnerKey(ownerConnectionId, connection)
   // Bind to THIS surface's SessionView (primary or tile) so each pane's menu
   // shows/switches its own model — not the primary-only globals.
@@ -88,7 +90,7 @@ export function useModelMenuController({
   // back to the catalog's reported current, and a non-reactive read would
   // never repaint that fallback once the catalog resolved.
   const modelOptions = useQuery({
-    queryKey: modelOptionsQueryKey(profile, activeSessionId, ownerKey),
+    queryKey: [...modelOptionsQueryKey(profile, activeSessionId, ownerKey), ...account.key],
     queryFn: (): Promise<ModelOptionsResult> =>
       requestDiscoveredModelOptions({ connection, gateway, ownerConnectionId, profile,
         request: requestGateway, sessionId: activeSessionId }),
@@ -97,7 +99,7 @@ export function useModelMenuController({
 
   const { model: optionsModel, provider: optionsProvider } = currentPickerSelection(
     { model: currentModel, provider: currentProvider },
-    modelOptions.data
+    visibleAccountModelOptions(modelOptions.data, account.allowCloud)
   )
 
   const hostScope = `${ownerConnectionId ?? ''}::${profile}`
