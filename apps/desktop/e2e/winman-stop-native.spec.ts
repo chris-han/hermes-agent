@@ -32,6 +32,7 @@ test('turning Winman off interrupts the owned fixture turn', async ({}, info) =>
     await popup.getByRole('button', { name: 'Sign in fixture', exact: true }).click()
     await expect(page.getByText('Preference off.', { exact: false })).toBeVisible({ timeout: 60_000 })
     await page.getByRole('button', { name: 'Request enablement', exact: true }).click()
+    await page.getByRole('button', { name: 'Confirm request', exact: true }).click()
     await expect(page.getByText('Enablement requested.', { exact: false })).toBeVisible({ timeout: 20_000 })
     const partition = 'persist:semantier-workspace-' + createHash('sha256').update(origin).digest('hex')
     const cookies = await app.evaluate(async ({ session }, name) => session.fromPartition(name).cookies.get({}), partition)
