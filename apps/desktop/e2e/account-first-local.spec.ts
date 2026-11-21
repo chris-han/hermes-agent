@@ -124,6 +124,19 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
     } else if (connected) {
       await expect.poll(() => page.evaluate(() => (window as any).hermesDesktop.workspace.modelDefault()),
         { timeout: 90_000 }).toMatchObject({ model: 'deepseek-v4.1-flash-1017' })
+      if (connected.expire_device) {
+        const ownedPartition = 'persist:semantier-workspace-' + createHash('sha256').update(origin).digest('hex')
+        const cookies = await app.evaluate(async ({ session }, name) => session.fromPartition(name).cookies.get({}), ownedPartition)
+        const cookie = cookies.map((value: { name: string; value: string }) => `${value.name}=${value.value}`).join('; ')
+        const expired = await fetch(origin + '/__fixture/expire-device', { method: 'POST', headers: { cookie, Origin: origin } })
+        expect(expired.status).toBe(200)
+        await page.evaluate(() => (window as any).hermesDesktop.workspace.prepareModel())
+        await expect.poll(() => page.evaluate(() => (window as any).hermesDesktop.workspace.modelDefault()),
+          { timeout: 90_000 }).toMatchObject({ model: 'deepseek-v4.1-flash-1017' })
+        expect(await app.evaluate(async ({ session }, name) => session.fromPartition(name).cookies.get({}), ownedPartition)).toEqual(cookies)
+        await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toHaveCount(0)
+        expect((await page.evaluate(() => (window as any).hermesDesktop.connections.list())).primary).toBe('local')
+      }
     } else {
       await expect(page.getByText('Fixture', { exact: true })).toBeVisible({ timeout: 20_000 })
     }
