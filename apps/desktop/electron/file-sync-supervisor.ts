@@ -50,6 +50,7 @@ export type FileSyncStatus = {
   state: 'Paused' | 'Syncing' | 'Synced' | 'Conflict' | 'Error'
   folder?: string
   message?: string
+  stopState?: 'PENDING' | 'UNKNOWN'
 }
 const overlaps = (a: string, b: string) => a === b || a.startsWith(b + path.sep) || b.startsWith(a + path.sep)
 const canonicalKey = (p: string) => (process.platform === 'win32' ? p.toLowerCase() : p)
@@ -250,7 +251,7 @@ export class FileSyncSupervisor {
       await this.write(updated.map(x => x.id === current.id ? { ...x, enabled: false, deviceStop: result } : x))
       this.current = { ...current, enabled: false, deviceStop: result }
       if (result !== 'STOPPED') {
-        this.view = { state: 'Error', folder: current.canonicalLocalFolder, message: `File Sync stop ${result.toLowerCase()}. Your files are preserved.` }
+        this.view = { state: 'Error', folder: current.canonicalLocalFolder, stopState: result, message: `File Sync stop ${result.toLowerCase()}. Your files are preserved.` }
       }
     } else {
       await this.stop(preserveView)
@@ -309,7 +310,7 @@ export class FileSyncSupervisor {
 
     if (!record) {return { state: 'Paused' } as FileSyncStatus}
     if (record.deviceStop === 'PENDING' || record.deviceStop === 'UNKNOWN') {
-      return { state: 'Error', folder: record.canonicalLocalFolder, message: `File Sync stop ${record.deviceStop.toLowerCase()}. Your files are preserved.` } as FileSyncStatus
+      return { state: 'Error', folder: record.canonicalLocalFolder, stopState: record.deviceStop, message: `File Sync stop ${record.deviceStop.toLowerCase()}. Your files are preserved.` } as FileSyncStatus
     }
     const status = this.status()
 

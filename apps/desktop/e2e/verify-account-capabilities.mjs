@@ -23,10 +23,11 @@ try {
   for (const [locale, labels] of Object.entries({
     en: { choose: 'Choose and enable', pause: 'Pause', enable: 'Request enablement', confirm: 'Confirm request',
       disable: 'Turn preference off', noFolder: 'No folder selected', requested: 'Enablement requested.',
-      inFlight: 'Uploads already sent may still finish after pausing or switching accounts.' },
+      inFlight: 'Uploads already sent may still finish after pausing or switching accounts.',
+      unconfirmed: 'File Sync could not confirm that previously sent work has stopped' },
     zh: { choose: '选择并启用', pause: '暂停', enable: '请求启用', confirm: '确认请求',
       disable: '关闭设置', noFolder: '尚未选择文件夹', requested: '已请求启用。',
-      inFlight: '暂停或切换账户后，已发送的上传仍可能完成。' }
+      inFlight: '暂停或切换账户后，已发送的上传仍可能完成。', unconfirmed: '无法确认先前发送的任务已停止' }
   })) {
     for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
       const context = await browser.newContext({ viewport, reducedMotion: 'reduce' })
@@ -53,6 +54,9 @@ try {
         await page.getByText('Paused', { exact: true }).waitFor()
         assert.deepEqual(await page.evaluate(() => window.capabilityFixtureEvents),
           ['winman:true', 'file:choose', 'winman:false', 'file:pause'])
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+        await page.goto(`http://127.0.0.1:${port}/__account-capabilities?locale=${locale}&unconfirmed=1`)
+        await page.getByRole('alert').getByText(labels.unconfirmed, { exact: false }).waitFor()
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
         assert.deepEqual(errors, [])
       } finally {await context.close()}

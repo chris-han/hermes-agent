@@ -12,7 +12,9 @@ const locale = new URLSearchParams(location.search).get('locale') || 'en'
 const origin = 'https://fixture.invalid'
 const scope = { userId: 'fixture-user', workspaceId: 'fixture-workspace', organizationId: 'fixture-org' }
 const events: string[] = []
-let file = { state: 'Paused', folder: '' }
+let file: { state: string; folder: string; stopState?: 'UNKNOWN' } = new URLSearchParams(location.search).has('unconfirmed')
+  ? { state: 'Error', folder: 'fixture-folder', stopState: 'UNKNOWN' }
+  : { state: 'Paused', folder: '' }
 let enabled = false
 let revision = 0
 const preference = () => ({ desired: { enabled, revision, version: 1 }, execution: 'unavailable' })

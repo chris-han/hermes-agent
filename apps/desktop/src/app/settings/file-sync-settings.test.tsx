@@ -40,6 +40,15 @@ it('keeps the account folder visible when the agent runtime changes', async () =
   expect(screen.getByText('selected-folder')).toBeTruthy()
   expect(status).toHaveBeenCalledTimes(1)
 })
+it('explains an unconfirmed stop without claiming that sent work has finished', async () => {
+  const status = vi.fn().mockResolvedValue({ state: 'Error', folder: 'selected-folder', stopState: 'UNKNOWN' })
+  window.hermesDesktop = { ...original, fileSync: { status, choose: vi.fn(), pause: vi.fn(), resume: vi.fn() } }
+  connect('a')
+  render(<FileSyncSettings />)
+  const alert = await screen.findByRole('alert')
+  expect(alert.textContent).toContain('could not confirm that previously sent work has stopped')
+  expect(alert.textContent).toContain('Resume will retry the stop check')
+})
 it('ignores a completed folder operation from the previous account', async () => {
   let finish: (value: any) => void = () => {}
 

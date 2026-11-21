@@ -9,7 +9,7 @@ import { refreshConnectionsRegistry } from '@/store/connections'
 
 import { ListRow, SectionHeading } from './primitives'
 
-type Status = { state: 'Paused' | 'Syncing' | 'Synced' | 'Conflict' | 'Error'; folder?: string; message?: string }
+type Status = { state: 'Paused' | 'Syncing' | 'Synced' | 'Conflict' | 'Error'; folder?: string; message?: string; stopState?: 'PENDING' | 'UNKNOWN' }
 
 export function FileSyncSettings() {
   const { locale } = useI18n()
@@ -21,6 +21,9 @@ export function FileSyncSettings() {
   const [error, setError] = useState('')
   const api = window.hermesDesktop?.fileSync
   const connected = Boolean(account)
+  const stopMessage = status.stopState && (zh
+    ? '无法确认先前发送的任务已停止，任务仍可能完成。文件会保留；点击“继续”可重试停止检查，确认前不会重新开始同步。'
+    : 'File Sync could not confirm that previously sent work has stopped; it may still finish. Your files are preserved. Resume will retry the stop check; syncing will not restart until the stop is confirmed.')
   useEffect(() => window.hermesDesktop?.workspace?.onAccountChanged?.(() => {
     void refreshConnectionsRegistry()
   }), [])
@@ -131,9 +134,9 @@ export function FileSyncSettings() {
           </p>
         </>
       )}
-      {(error || status.message) && (
+      {(error || stopMessage || status.message) && (
         <p className="text-sm text-destructive" role="alert">
-          {error || status.message}
+          {stopMessage || error || status.message}
         </p>
       )}
     </div>

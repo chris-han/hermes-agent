@@ -256,7 +256,7 @@ it('persists an unresolved device stop and refuses reconnect after restart', asy
   expect(registry.bindings[0]).toMatchObject({ enabled: false, deviceStop: 'PENDING' })
   const restarted = new FileSyncSupervisor(supervisor.options)
   await restarted.restore()
-  expect((await restarted.statusFor('https://cloud.example', { userId: 'a', workspaceId: 'wa' })).state).toBe('Error')
+  expect(await restarted.statusFor('https://cloud.example', { userId: 'a', workspaceId: 'wa' })).toMatchObject({ state: 'Error', stopState: 'PENDING' })
   await expect(restarted.enable('https://cloud.example', folder)).rejects.toThrow(/stop.*pending/i)
   expect((await restarted.owners())[0].sealedToken).toBe('sealed:' + token)
 })
@@ -275,7 +275,7 @@ it('records an unknown device stop before contacting the server', async () => {
   await supervisor.enable('https://cloud.example', folder)
   await supervisor.pause()
   expect((await supervisor.owners())[0]).toMatchObject({ enabled: false, deviceStop: 'UNKNOWN' })
-  expect(supervisor.status().state).toBe('Error')
+  expect(supervisor.status()).toMatchObject({ state: 'Error', stopState: 'UNKNOWN' })
 })
 
 it('fences a previously enabled device grant before restoring after a crash', async () => {
