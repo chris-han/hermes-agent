@@ -33,6 +33,9 @@ test('explicit File Sync in Windows Electron uses the selected account and local
     const before = await page.evaluate(() => (window as any).hermesDesktop.connections.list())
     expect(before.primary).toBe('local')
     await page.getByRole('button', { name: 'Open settings', exact: true }).click()
+    console.log('FIXTURE_NAV_PROVIDERS', JSON.stringify(await page.locator('[data-tour="nav-providers"]').evaluateAll(nodes =>
+      nodes.map(node => ({ text: node.textContent, rect: node.getBoundingClientRect().toJSON(),
+        display: getComputedStyle(node).display, visibility: getComputedStyle(node).visibility })))))
     await page.getByRole('button', { name: 'Model service', exact: true }).click()
     await page.getByRole('button', { name: 'Accounts', exact: true }).click()
     await page.getByLabel('Workspace address').fill(origin)
