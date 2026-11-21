@@ -141,6 +141,39 @@ it('adopts an interrupted exact engine pair without re-adding or resetting its b
   await restarted.pause()
   expect(added).toBe(0)
 })
+
+it('restores an opted-in legacy pair using a new device grant rather than the old account token', async () => {
+  const { folder, supervisor } = await setup()
+  const legacyToken = 'legacy-account-token'
+  const deviceToken = 'fxd_' + 'u'.repeat(43)
+  supervisor.options.binding = async () => ({ userId: 'a', workspaceId: 'wa', remoteRoot: 'private://',
+    token: legacyToken, enginePath: '/api/file-sync/engine', version: '0.61.1' })
+  await supervisor.enable('https://cloud.example', folder)
+  await fs.writeFile(path.join(folder, 'retained.txt'), 'preserve existing bytes')
+  await supervisor.shutdown()
+  const old = (await supervisor.owners())[0]
+  expect(old).toMatchObject({ enabled: true, paired: true })
+  expect(old.deviceGrant).toBeUndefined()
+
+  const run = supervisor.options.run!
+  const invocations: Array<{ args: string[]; token: string | undefined }> = []
+  const restarted = new FileSyncSupervisor({ ...supervisor.options,
+    binding: async () => ({ userId: 'a', workspaceId: 'wa', remoteRoot: 'private://',
+      token: deviceToken, enginePath: '/api/file-sync/engine', version: '0.61.1' }),
+    seal: token => 'sealed:' + token, unseal: token => token.slice(7), stopDevice: async () => 'STOPPED',
+    run: async (args, env, event, signal) => {
+      invocations.push({ args, token: env.FILEX_TOKEN })
+      return run(args, env, event, signal)
+    }
+  })
+  await restarted.restore()
+  const adopted = (await restarted.owners())[0]
+  expect(adopted).toMatchObject({ id: old.id, enabled: true, paired: true, deviceGrant: true })
+  expect(invocations.map(call => call.args[1])).toEqual(['list', 'run'])
+  expect(invocations.every(call => call.token === deviceToken)).toBe(true)
+  expect(await fs.readFile(path.join(folder, 'retained.txt'), 'utf8')).toBe('preserve existing bytes')
+  await restarted.pause()
+})
 it('fences a different origin even when another origin was previously current', async () => {
   const { folder, supervisor } = await setup()
   await supervisor.enable('https://old.example', folder)
