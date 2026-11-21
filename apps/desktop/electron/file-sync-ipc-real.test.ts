@@ -118,6 +118,22 @@ it.skipIf(!fixture)('uses Desktop File Sync IPC with real account and FileX owne
       expect((await supervisor.owners())[0]).toMatchObject({ enabled: false, deviceStop: 'STOPPED' })
     }
     await invoke('resume')
+    if (process.env.FILEX_DEVICE_SUPERVISOR === '1') {
+      const gate = async (action?: string) => {
+        const response = await fetch(origin + '/__fixture/filex-gate', action ? {
+          method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ action })
+        } : { headers: { cookie } })
+        expect(response.status).toBe(200)
+        return response.json()
+      }
+      await gate('arm')
+      await fs.writeFile(path.join(mock.folder, 'held-' + randomUUID() + '.md'), 'held device upload\n')
+      await expect.poll(async () => (await gate()).entered, { timeout: 20000 }).toBe(true)
+      expect((await invoke('pause')).state).toBe('Error')
+      expect((await supervisor.owners())[0]).toMatchObject({ enabled: false, deviceStop: 'PENDING' })
+      await gate('release')
+      await expect.poll(async () => (await gate()).finished, { timeout: 15000 }).toBe(true)
+    }
     await supervisor.accountChanging(origin)
     await login(f.other_login)
     const other = await mock.client.identity()
