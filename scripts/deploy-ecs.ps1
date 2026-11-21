@@ -2598,7 +2598,9 @@ if($saved -and $saved.binding -cne $script:runBinding){
   $saved=$null;$rebound=$true
 }
 if($saved) {
-  if(!$ResumeSigned -and $saved.completed.PSObject.Properties['signed'] -and $saved.receipt.tooling.toolingCommit -cne $script:SourceBinding.toolingHermesHead){Assert-SignedResumeContract $saved}
+  # Generic local-only checkpoints predate native publication tooling receipts.
+  # Their artifact/source/signature/installed-byte checks below still apply.
+  if(!$ResumeSigned -and $saved.completed.PSObject.Properties['signed'] -and !($LocalOnly -and !$NativeUpdateFrom) -and $saved.receipt.tooling.toolingCommit -cne $script:SourceBinding.toolingHermesHead){Assert-SignedResumeContract $saved}
   foreach($property in $saved.completed.PSObject.Properties){$script:checkpoints[$property.Name]=$property.Value}
   $previous=$saved.receipt
   foreach($property in $previous.PSObject.Properties){$receipt[$property.Name]=$property.Value}
