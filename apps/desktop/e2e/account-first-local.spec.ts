@@ -1,0 +1,105 @@
+/** Isolated source Electron: synthetic account login, real IPC and local gateway. */
+import { createHash, randomBytes } from 'node:crypto'
+import fs from 'node:fs'
+import http from 'node:http'
+import path from 'node:path'
+
+import { expect, test } from '@playwright/test'
+
+import { DesktopFixtureSession } from './fixture-session'
+import { buildAppEnv, createSandbox } from './fixtures'
+
+// eslint-disable-next-line no-empty-pattern -- Electron supplies its own page.
+test('one account login preserves the local gateway and leaves capabilities off', async ({}, info) => {
+  test.skip(process.platform !== 'linux' || !process.env.HERMES_DESKTOP_DEV_SERVER, 'Requires the WSL source-Electron fixture')
+  test.setTimeout(180_000)
+  const requests: string[] = []
+  const server = http.createServer((req, res) => {
+    const pathname = new URL(req.url!, 'http://fixture').pathname
+    requests.push(req.method + ' ' + pathname)
+    if (pathname === '/login' && req.method === 'POST') {
+      res.writeHead(303, { 'Set-Cookie': 'fixture-session=authorized; HttpOnly; SameSite=Lax; Path=/', Location: '/' })
+      res.end(); return
+    }
+    if (pathname === '/') {
+      res.writeHead(200, { 'content-type': 'text/html' })
+      res.end('<form method="post" action="/login"><button>Sign in fixture</button></form>'); return
+    }
+    res.setHeader('content-type', 'application/json')
+    if (pathname === '/auth/context') {
+      const authenticated = (req.headers.cookie || '').includes('fixture-session=authorized')
+      res.end(JSON.stringify(authenticated ? { authenticated: true,
+        user: { user_id: 'fixture-user', workspace_id: 'fixture-workspace', name: 'Fixture' },
+        workspace: { id: 'fixture-workspace' }, organization_id: 'fixture-org' } : { authenticated: false }))
+      return
+    }
+    if (pathname === '/api/winman/capability') {
+      res.end(JSON.stringify({ desired: { version: 1, enabled: false, revision: 0 }, execution: 'unavailable' })); return
+    }
+    res.writeHead(503); res.end('{}')
+  })
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address()
+  if (!address || typeof address === 'string') {throw new Error('Fixture origin unavailable')}
+  const origin = `http://127.0.0.1:${address.port}`
+  const sandbox = createSandbox('account-first-local')
+  fs.writeFileSync(sandbox.hermesHome + '/config.yaml', 'language: en\n')
+  const root = path.resolve(import.meta.dirname, '../../..')
+  const support = path.join(sandbox.root, 'python-fixture')
+  fs.mkdirSync(support)
+  const wrapper = path.join(support, 'python')
+  const key = randomBytes(32).toString('base64url') + '='
+  fs.writeFileSync(path.join(support, 'sitecustomize.py'), `
+import os, sys
+from pathlib import Path
+if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.stringify(sandbox.hermesHome)}):
+    from cryptography.fernet import Fernet
+    from hermes_cli import cloud_device_client as device
+    cipher = Fernet(${JSON.stringify(key)}.encode())
+    device._protect = cipher.encrypt
+    device._unprotect = cipher.decrypt
+    sys.executable = ${JSON.stringify(wrapper)}
+`)
+  const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'"
+  fs.writeFileSync(wrapper, `#!/bin/sh\nexport PYTHONPATH=${quote(support + ':' + root)}\nexec ${quote(process.env.HERMES_PYTHON!)} "$@"\n`, { mode: 0o700 })
+  const fixture = new DesktopFixtureSession(sandbox, buildAppEnv(sandbox, {
+    HERMES_PYTHON: wrapper, HERMES_DESKTOP_PYTHON: wrapper, HERMES_DESKTOP_DEV_SERVER: process.env.HERMES_DESKTOP_DEV_SERVER!,
+    HERMES_DESKTOP_CDP_PORT: 'off'
+  }), info)
+  try {
+    const { app, page } = await fixture.launch()
+    page.on('pageerror', error => console.log('FIXTURE_RENDERER_ERROR', error.message))
+    await fixture.stage('desktop.ready', async () => {
+      await expect(page.getByRole('button', { name: 'default', exact: true })).toHaveAttribute('aria-pressed', 'true', { timeout: 90_000 })
+    })
+    const localBefore = await page.evaluate(() => (window as any).hermesDesktop.connections.list())
+    expect(localBefore.primary).toBe('local')
+    const partition = 'persist:semantier-workspace-' + createHash('sha256').update('https://cloud.semantier.cn').digest('hex')
+    await app.evaluate(({ session }, partitionName) => {
+      session.fromPartition(partitionName).webRequest.onBeforeRequest({ urls: ['https://cloud.semantier.cn/*'] },
+        (_details: unknown, callback: (value: { cancel: boolean }) => void) => callback({ cancel: true }))
+    }, partition)
+    await page.getByRole('button', { name: 'Open settings', exact: true }).click()
+    await page.getByRole('button', { name: 'Model service', exact: true }).click()
+    await page.getByRole('button', { name: 'Accounts', exact: true }).click()
+    await expect(page.getByText('Semantier Account', { exact: true })).toBeVisible()
+    await page.getByLabel('Workspace address').fill(origin)
+    await expect(page.getByText('Sign in to use eligible account services.', { exact: true })).toBeVisible()
+    const popupPromise = app.waitForEvent('window')
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+    const popup = await popupPromise
+    await popup.getByRole('button', { name: 'Sign in fixture', exact: true }).click()
+    await expect(page.getByText('Fixture', { exact: true })).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByText('Preference off.', { exact: false })).toBeVisible({ timeout: 20_000 })
+    await page.getByRole('button', { name: 'File Sync', exact: true }).click()
+    await expect(page.getByText('No folder selected', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Close settings', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'default', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    expect((await page.evaluate(() => (window as any).hermesDesktop.connections.list())).primary).toBe(localBefore.primary)
+    expect(requests.filter(request => request === 'POST /login')).toHaveLength(1)
+    expect(requests.some(request => /\/api\/(?:file-sync\/binding|winman\/messages)/.test(request))).toBe(false)
+  } finally {
+    await fixture.close()
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+  }
+})
