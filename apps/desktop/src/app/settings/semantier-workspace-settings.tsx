@@ -7,7 +7,7 @@ import { useI18n } from '@/i18n'
 import { semantierWorkspaceCopy } from '@/i18n/semantier-workspace'
 import { refreshConnectionsRegistry } from '@/store/connections'
 
-import type { WorkspaceIdentity } from '../../../electron/semantier-workspace-client'
+import type { WorkspaceIdentity, WorkspaceScope } from '../../../electron/semantier-workspace-client'
 
 import { ListRow } from './primitives'
 import { SemantierManagedDevices } from './semantier-managed-devices'
@@ -16,11 +16,13 @@ import { SemantierPersonalSync } from './semantier-personal-sync'
 export function SemantierWorkspaceSettings({
   accountOnly = false,
   accountOrigin,
+  accountScope,
   connections,
   onConnect
 }: {
   accountOnly?: boolean
   accountOrigin?: string
+  accountScope?: WorkspaceScope
   connections: DesktopRegistryConnection[]
   onConnect: (id: string) => Promise<void> | void
 }) {
@@ -36,6 +38,8 @@ export function SemantierWorkspaceSettings({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [accountRevision, setAccountRevision] = useState(0)
+  const [modelState, setModelState] = useState<'preparing' | 'ready' | 'denied' | 'unavailable'>('unavailable')
+  const [modelIssue, setModelIssue] = useState<string | undefined>()
   const generation = useRef(0)
   const accountAction = useRef(false)
   const addressId = useId()
@@ -48,6 +52,17 @@ export function SemantierWorkspaceSettings({
     void refreshConnectionsRegistry()
     if (!accountAction.current) {setAccountRevision(value => value + 1)}
   }), [])
+
+  useEffect(() => {
+    if (!accountOnly) {return}
+    const api = window.hermesDesktop.workspace
+    let live = true
+    let updates = 0
+    const update = (value: { state: typeof modelState; issue?: string }) => {setModelState(value.state); setModelIssue(value.issue)}
+    const unsubscribe = api?.onModelStatus?.(value => {updates++; if (live) {update(value)}})
+    void api?.modelStatus?.().then(value => {if (live && updates === 0) {update(value)}}).catch(() => {})
+    return () => {live = false; unsubscribe?.()}
+  }, [accountOnly])
 
   useEffect(() => {
     const current = ++generation.current
@@ -212,6 +227,18 @@ export function SemantierWorkspaceSettings({
           </Button>
         ) : null}
       </div>
+      {accountOnly && accountOrigin === origin && identity?.authenticated && accountScope &&
+        identity.user?.user_id === accountScope.userId && identity.workspace?.id === accountScope.workspaceId &&
+        identity.organization_id === accountScope.organizationId ? (
+          <ListRow title={copy.modelService} description={modelState === 'preparing' ? copy.modelPreparing :
+            modelState === 'ready' ? copy.modelReady : modelState === 'denied' ?
+              modelIssue?.startsWith('billing_account_') ? copy.modelBillingDenied : copy.modelDenied : copy.modelUnavailable}
+            action={modelState === 'unavailable' || modelState === 'denied' ? (
+              <Button disabled={busy} onClick={() => void window.hermesDesktop.workspace?.prepareModel?.().catch(() => setModelState('unavailable'))} type="button" variant="outline">
+                {copy.modelRetry}
+              </Button>
+            ) : undefined} />
+        ) : null}
       {identity?.authenticated && identity.user?.user_id && identity.workspace?.id && identity.organization_id ? (
         <>
         <SemantierPersonalSync key={JSON.stringify([origin,identity.user.user_id,identity.workspace.id,identity.organization_id])} origin={origin} scope={{userId:identity.user.user_id,workspaceId:identity.workspace.id,organizationId:identity.organization_id}} />

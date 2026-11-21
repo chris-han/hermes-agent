@@ -24,6 +24,9 @@ export interface DesktopWorkspaceApi {
   identity: (origin: string) => Promise<WorkspaceIdentity>
   selectAccount: (origin: string, scope: WorkspaceScope) => Promise<void>
   onAccountChanged?: (callback: () => void) => () => void
+  modelStatus?: () => Promise<{ state: 'preparing' | 'ready' | 'denied' | 'unavailable'; issue?: string }>
+  prepareModel?: () => Promise<void>
+  onModelStatus?: (callback: (status: { state: 'preparing' | 'ready' | 'denied' | 'unavailable'; issue?: string }) => void) => () => void
   login: (origin: string) => Promise<WorkspaceIdentity>
   logout: (origin: string) => Promise<void>
   ensureWinmanChat: (origin: string, scope: WorkspaceScope) => Promise<WorkspaceWinmanProfile>
@@ -50,7 +53,7 @@ export function workspace(origin: string) {
   return { owned, origin: canonicalOrigin, client: createSemantierWorkspaceClient(canonicalOrigin, owned.fetch.bind(owned)) }
 }
 
-export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string, authenticated: boolean) => void, beforeAccountChange?: (origin:string)=>Promise<void>, enrollment?:ManagedDeviceEnrollment, personal?:PersonalCapabilitySync, selectAccount?: (account: { origin: string; scope: WorkspaceScope }) => void, currentAccount?: () => { origin: string; scope: WorkspaceScope } | undefined, afterAccountChange?: () => void): void {
+export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string, authenticated: boolean) => void, beforeAccountChange?: (origin:string)=>Promise<void>, enrollment?:ManagedDeviceEnrollment, personal?:PersonalCapabilitySync, selectAccount?: (account: { origin: string; scope: WorkspaceScope }) => void, currentAccount?: () => { origin: string; scope: WorkspaceScope } | undefined, afterAccountChange?: () => void, onAccountSelected?: (account: { origin: string; scope: WorkspaceScope }) => void): void {
   let accountGeneration = 0
   const personalOwner=()=>{if(!personal){throw new Error('Personal sync is unavailable')}
 
@@ -141,13 +144,17 @@ return personal}
     if (generation !== accountGeneration) {throw new Error('The account changed. Try again.')}
     const selected = currentAccount?.()
     if (selected?.origin === target.origin && selected.scope.userId === scope.userId &&
-        selected.scope.workspaceId === scope.workspaceId && selected.scope.organizationId === scope.organizationId) {return}
+        selected.scope.workspaceId === scope.workspaceId && selected.scope.organizationId === scope.organizationId) {
+      onAccountSelected?.(selected)
+      return
+    }
     await beforeAccountChange?.(target.origin)
     try {
       assertWorkspaceScope(await target.client.identity(), scope)
       if (generation !== accountGeneration) {throw new Error('The account changed. Try again.')}
       selectAccount({ origin: target.origin, scope: { userId: scope.userId, workspaceId: scope.workspaceId, organizationId: scope.organizationId } })
     } finally {afterAccountChange?.()}
+    onAccountSelected?.({ origin: target.origin, scope: { userId: scope.userId, workspaceId: scope.workspaceId, organizationId: scope.organizationId } })
   })
   ipcMain.handle('hermes:workspace:logout', async (_event, origin: string) => {
     accountGeneration++

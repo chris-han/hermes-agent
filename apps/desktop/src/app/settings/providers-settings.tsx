@@ -544,7 +544,7 @@ export function ProvidersSettings({
     </div>
   )
   const accountSection = window.hermesDesktop?.workspace ? (
-    <SemantierWorkspaceSettings accountOnly accountOrigin={registry?.accountContext?.origin} connections={registry?.connections ?? []} onConnect={() => {}} />
+    <SemantierWorkspaceSettings accountOnly accountOrigin={registry?.accountContext?.origin} accountScope={registry?.accountContext?.scope} connections={registry?.connections ?? []} onConnect={() => {}} />
   ) : null
 
   if (view === 'custom-endpoints') {
@@ -627,7 +627,7 @@ export function ProvidersSettings({
         onTerminalDisconnect={provider => void handleTerminalDisconnect(provider)}
         onWantApiKey={() => onViewChange('keys')}
         onWantLocalEndpoint={() => onViewChange('custom-endpoints')}
-        providers={oauthProviders}
+        providers={registry?.accountContext ? oauthProviders.filter(provider => provider.id !== 'semantier-cloud') : oauthProviders}
       />
     </SettingsContent>
   )

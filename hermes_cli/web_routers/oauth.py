@@ -881,6 +881,13 @@ async def set_cloud_account_context(request: Request, profile: Optional[str] = N
     return await _cloud_device_request(profile, 'set_account_fence', value['account'])
 
 
+@router.post("/api/providers/oauth/semantier-cloud/approval-attempt/{session_id}")
+async def mark_cloud_approval_attempt(session_id: str, request: Request, profile: Optional[str] = None):
+    _require_token(request)
+    _validate_oauth_profile(profile)
+    return await _cloud_device_request(profile, 'mark_browser_approval', session_id)
+
+
 @router.post("/api/providers/oauth/{provider_id}/start")
 async def start_oauth_login(provider_id: str, request: Request, profile: Optional[str] = None, account_prepare: bool = False):
     """Initiate an OAuth login flow. Token-protected."""
@@ -896,9 +903,9 @@ async def start_oauth_login(provider_id: str, request: Request, profile: Optiona
                 value = await request.json()
             except ValueError as exc:
                 raise HTTPException(422, "Account scope required.") from exc
-            if not isinstance(value, dict) or set(value) != {'expected_actor'}:
+            if not isinstance(value, dict) or set(value) != {'expected_actor', 'origin'}:
                 raise HTTPException(422, "Account scope required.")
-            return await _cloud_device_request(profile, "start", True, value['expected_actor'])
+            return await _cloud_device_request(profile, "start", True, value['expected_actor'], value['origin'])
         return await _cloud_device_request(profile, "start")
     if account_prepare:
         raise HTTPException(400, "Account preparation is only available for Semantier Cloud.")

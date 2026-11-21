@@ -19,7 +19,9 @@ const en = {
   accountDescription: 'Sign in to use your account without changing the agent runtime.',
   accountSignIn: 'Sign in',
   accountSignedOut: 'Sign in to use eligible account services.',
-  accountRetry: 'Check account'
+  accountRetry: 'Check account',
+  modelService: 'Model Service', modelPreparing: 'Preparing…', modelReady: 'Available',
+  modelDenied: 'Access denied for this account.', modelBillingDenied: 'The billing account is unavailable or does not match this organization.', modelUnavailable: 'Unavailable. Check access or retry.', modelRetry: 'Retry Model Service'
 }
 
 const zh: typeof en = {
@@ -43,7 +45,9 @@ const zh: typeof en = {
   accountDescription: '登录账户不会更改智能体的运行位置。',
   accountSignIn: '登录',
   accountSignedOut: '登录后可使用账户有权使用的服务。',
-  accountRetry: '检查账户'
+  accountRetry: '检查账户',
+  modelService: '模型服务', modelPreparing: '正在准备…', modelReady: '可用',
+  modelDenied: '此账户无权访问。', modelBillingDenied: '计费账户不可用或与此组织不匹配。', modelUnavailable: '暂不可用，请检查权限或重试。', modelRetry: '重试模型服务'
 }
 
 const hant: typeof en = {
@@ -67,7 +71,9 @@ const hant: typeof en = {
   accountDescription: '登入帳戶不會更改智能體的執行位置。',
   accountSignIn: '登入',
   accountSignedOut: '登入後可使用帳戶有權使用的服務。',
-  accountRetry: '檢查帳戶'
+  accountRetry: '檢查帳戶',
+  modelService: '模型服務', modelPreparing: '正在準備…', modelReady: '可用',
+  modelDenied: '此帳戶無權存取。', modelBillingDenied: '計費帳戶無法使用或與此組織不相符。', modelUnavailable: '暫時無法使用，請檢查權限或重試。', modelRetry: '重試模型服務'
 }
 
 export function semantierWorkspaceCopy(locale: string): typeof en {

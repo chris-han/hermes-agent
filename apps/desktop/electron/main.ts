@@ -1,6 +1,8 @@
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process'
 
 import { formatApiRequestFailure } from './api-request-failure'
+import { runAccountFence } from './account-fence-process'
+import { AccountModelCoordinator } from './account-model-coordinator'
 import { createFileSyncIpc } from './file-sync-ipc'
 import type { GatewayEndpoint } from './local-gateway'
 import {
@@ -16788,6 +16790,47 @@ async function handleHermesApiRequest(request) {
 
 const personalFileSync = createFileSyncIpc(() => readDesktopConnectionsRegistry().accountContext ?? null)
 
+const accountModel = new AccountModelCoordinator({
+  current: () => readDesktopConnectionsRegistry().accountContext ?? null,
+  client: origin => semantierWorkspace(origin).client,
+  native: (nativePath, method, body) => handleHermesApiRequest({
+    connectionId: LOCAL_CONNECTION_ID, profile: 'default', path: nativePath, method: method || 'GET', body
+  }),
+  fence: async account => {
+    const backend = await resolveHermesBackend([])
+    const command = backend.ticketCommand || (backend.kind === 'python' && backend.args[0] === '-m' && backend.args[1] === 'hermes_cli.main' ? backend.command : null)
+    if (!command || !backend.root || backend.shell) {throw new Error('Account context is unavailable.')}
+    await runAccountFence({ command, cwd: backend.root, env: { ...process.env, ...backend.env, ...backend.ticketEnv, HERMES_HOME } }, account)
+  }
+})
+
+let accountModelRevision = 0
+let accountModelState: { state: 'preparing' | 'ready' | 'denied' | 'unavailable'; issue?: string } = { state: 'unavailable' }
+function publishAccountModelState(state: typeof accountModelState) {
+  accountModelState = state
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.webContents.isDestroyed()) {win.webContents.send('hermes:workspace:model-status', state)}
+  }
+}
+function prepareAccountModel(account: NonNullable<ReturnType<typeof readDesktopConnectionsRegistry>['accountContext']>) {
+  const revision = ++accountModelRevision
+  publishAccountModelState({ state: 'preparing' })
+  void accountModel.prepare(account).then(state => {
+    if (revision === accountModelRevision) {publishAccountModelState({ state })}
+  }).catch(error => {
+    const issue = ['billing_account_scope_mismatch', 'billing_account_mismatch', 'billing_account_missing',
+      'billing_account_inconsistent', 'intent_actor_mismatch', 'current_account_access_required',
+      'current_membership_required'].includes(error?.deviceCode) ? error.deviceCode : undefined
+    if (revision === accountModelRevision) {publishAccountModelState({ state: error?.statusCode === 403 || issue ? 'denied' : 'unavailable', issue })}
+  })
+}
+ipcMain.handle('hermes:workspace:model-status', () => accountModelState)
+ipcMain.handle('hermes:workspace:prepare-model', () => {
+  const account = readDesktopConnectionsRegistry().accountContext
+  if (!account) {throw new Error('Sign in to your Semantier account first.')}
+  prepareAccountModel(account)
+})
+
 const managedDeviceEnrollment=new ManagedDeviceEnrollment({
   client:origin=>semantierWorkspace(origin).client,
   read:()=>readDesktopConnectionsRegistry().managedWindowsDevices,
@@ -16844,10 +16887,15 @@ registerSemantierWorkspaceIpc((origin, authenticated) => {
 
     broadcastConnectionsChanged({ connectionId: source.id, reason: 'account-changed', authenticated })
   }
-}, origin => personalFileSync.accountChanging(origin), managedDeviceEnrollment, personalCapabilitySync, account => {
+}, async origin => {
+  accountModelRevision++
+  publishAccountModelState({ state: 'unavailable' })
+  await personalFileSync.accountChanging(origin)
+  try {await accountModel.suspend()} catch (error) {personalFileSync.accountChanged(); throw error}
+}, managedDeviceEnrollment, personalCapabilitySync, account => {
   writeDesktopConnectionsRegistry({ ...readDesktopConnectionsRegistry(), accountContext: account })
   notifyAccountContextChanged()
-}, () => readDesktopConnectionsRegistry().accountContext, () => personalFileSync.accountChanged())
+}, () => readDesktopConnectionsRegistry().accountContext, () => personalFileSync.accountChanged(), prepareAccountModel)
 
 ipcMain.handle('hermes:api', async (event, request) => {
   const ownRoute = windowConnectionRoutes.get(event.sender.id)
@@ -18540,8 +18588,15 @@ app.on('open-url', (event, url) => {
 })
 
 app.whenReady().then(async () => {
-  if (readDesktopConnectionsRegistry().accountContext) {
+  const account = readDesktopConnectionsRegistry().accountContext
+  if (account) {
     void personalFileSync.restore().catch(() => { /* Settings exposes reconnection; never reset pair state. */ })
+    const revision = accountModelRevision
+    void accountModel.suspend().then(() => {
+      if (revision === accountModelRevision && JSON.stringify(readDesktopConnectionsRegistry().accountContext) === JSON.stringify(account)) {
+        prepareAccountModel(account)
+      }
+    }).catch(() => {if (revision === accountModelRevision) {publishAccountModelState({ state: 'unavailable' })}})
   }
   journeyObservations = new JourneyObservations(app.getPath('userData'), process.env.SEMANTIER_CLOUD_PUBLIC_ORIGIN ?? '', () => semantierObservations.status().journeyEnabled, (input, init) => electronNet.fetch(input, init), app.getVersion())
   void journeyObservations.firstOpen()

@@ -4,6 +4,15 @@ import pytest
 from cryptography.fernet import Fernet
 
 ACTOR = {'user_id': 'user-test', 'workspace_id': 'workspace-test', 'organization_id': 'org-test'}
+ACCOUNT_ORIGIN = 'http://127.0.0.1:8765'
+
+def test_first_account_fence_creates_owner_root(native, monkeypatch, tmp_path):
+    import hermes_constants
+    device, _ = native
+    root = tmp_path / 'new-owner'
+    monkeypatch.setattr(hermes_constants, 'get_default_hermes_root', lambda: root)
+    device.set_account_fence(None)
+    assert device._read_account_fence() == {'version': 1, 'account': None}
 
 @pytest.fixture
 def native(tmp_path, monkeypatch):
@@ -85,7 +94,7 @@ def test_account_preparation_installs_scoped_credential_without_selecting_model(
         config['model'] = model
     atomic_config_replace(home/'config.yaml', config)
     install_wire(device, monkeypatch)
-    started = device.start(prepare_only=True, expected_actor=ACTOR)
+    started = device.start(prepare_only=True, expected_actor=ACTOR, expected_origin=ACCOUNT_ORIGIN)
     assert device.poll(started['session_id'])['status'] == 'approved'
     installed = device._config()
     assert installed.get('model') == model
@@ -97,14 +106,14 @@ def test_account_preparation_does_not_adopt_an_existing_manual_intent(native, mo
     install_wire(device, monkeypatch)
     manual = device.start()
     with pytest.raises(device.CloudConnectionError, match='already in progress'):
-        device.start(prepare_only=True, expected_actor=ACTOR)
+        device.start(prepare_only=True, expected_actor=ACTOR, expected_origin=ACCOUNT_ORIGIN)
     assert device._read()['session_id'] == manual['session_id']
 
 
 def test_manual_connection_does_not_adopt_an_existing_account_preparation(native, monkeypatch):
     device, _ = native
     install_wire(device, monkeypatch)
-    preparation = device.start(prepare_only=True, expected_actor=ACTOR)
+    preparation = device.start(prepare_only=True, expected_actor=ACTOR, expected_origin=ACCOUNT_ORIGIN)
     with pytest.raises(device.CloudConnectionError, match='already in progress'):
         device.start()
     assert device._read()['session_id'] == preparation['session_id']
@@ -114,10 +123,10 @@ def test_account_preparation_ack_recovery_preserves_model(native, monkeypatch):
     device, _ = native
     before = device._config()['model'].copy()
     calls = install_wire(device, monkeypatch, ack_lost=True)
-    started = device.start(prepare_only=True, expected_actor=ACTOR)
+    started = device.start(prepare_only=True, expected_actor=ACTOR, expected_origin=ACCOUNT_ORIGIN)
     with pytest.raises(ValueError, match='lost ack'):
         device.poll(started['session_id'])
-    recovered = device.start(prepare_only=True, expected_actor=ACTOR)
+    recovered = device.start(prepare_only=True, expected_actor=ACTOR, expected_origin=ACCOUNT_ORIGIN)
     assert recovered['session_id'] == started['session_id']
     assert recovered['verification_url'] == started['verification_url']
     assert device.poll(started['session_id'])['status'] == 'approved'
@@ -128,9 +137,9 @@ def test_account_preparation_ack_recovery_preserves_model(native, monkeypatch):
 def test_account_preparation_refuses_changed_actor_and_foreign_claim(native, monkeypatch):
     device, home = native
     install_wire(device, monkeypatch)
-    started = device.start(prepare_only=True, expected_actor=ACTOR)
+    started = device.start(prepare_only=True, expected_actor=ACTOR, expected_origin=ACCOUNT_ORIGIN)
     with pytest.raises(device.CloudConnectionError, match='already in progress'):
-        device.start(prepare_only=True, expected_actor={**ACTOR, 'user_id': 'other-user'})
+        device.start(prepare_only=True, expected_actor={**ACTOR, 'user_id': 'other-user'}, expected_origin=ACCOUNT_ORIGIN)
     original = device._wire
     def foreign(origin, operation, body=None, bearer=None):
         reply = original(origin, operation, body, bearer)
@@ -150,7 +159,18 @@ def test_account_preparation_requires_complete_expected_actor(native, monkeypatc
     install_wire(device, monkeypatch)
     for expected in (None, {'user_id': 'u'}, {**ACTOR, 'extra': 'x'}):
         with pytest.raises(device.CloudConnectionError):
-            device.start(prepare_only=True, expected_actor=expected)
+            device.start(prepare_only=True, expected_actor=expected, expected_origin=ACCOUNT_ORIGIN)
+
+
+def test_account_preparation_uses_selected_origin_without_changing_model(native, monkeypatch):
+    device, _ = native
+    before = device._config()['model'].copy()
+    install_wire(device, monkeypatch)
+    started = device.start(prepare_only=True, expected_actor=ACTOR, expected_origin='http://127.0.0.1:8767')
+    assert started['verification_url'].startswith('http://127.0.0.1:8767/')
+    assert device.poll(started['session_id'])['status'] == 'approved'
+    assert device._config()['model'] == before
+    assert device._config()['providers']['semantier-cloud']['base_url'] == 'http://127.0.0.1:8767/v1'
 
 
 def test_account_preparation_sends_expected_actor_and_rejects_missing_recovery_scope(native, monkeypatch):
@@ -163,7 +183,7 @@ def test_account_preparation_sends_expected_actor_and_rejects_missing_recovery_s
             captured.append(body)
         return original(origin, operation, body, bearer)
     monkeypatch.setattr(device, '_wire', wire)
-    started = device.start(prepare_only=True, expected_actor=ACTOR)
+    started = device.start(prepare_only=True, expected_actor=ACTOR, expected_origin=ACCOUNT_ORIGIN)
     assert captured[0]['expected_actor'] == ACTOR
     state = device._read()
     state.pop('expected_actor')
@@ -174,13 +194,24 @@ def test_account_preparation_sends_expected_actor_and_rejects_missing_recovery_s
     assert (home/'config.yaml').read_bytes() == before
 
 
+def test_account_preparation_persists_one_browser_approval_attempt(native, monkeypatch):
+    device, _ = native
+    install_wire(device, monkeypatch)
+    started = device.start(prepare_only=True, expected_actor=ACTOR, expected_origin=ACCOUNT_ORIGIN)
+    assert device.mark_browser_approval(started['session_id']) == {'first': True}
+    assert device.mark_browser_approval(started['session_id']) == {'first': False}
+    assert device._read()['approval_attempted'] is True
+    with pytest.raises(device.CloudConnectionError):
+        device.mark_browser_approval('cloud-foreign')
+
+
 def test_account_prepared_credential_requires_matching_device_fence(native, monkeypatch):
     from hermes_cli import cloud_device_client as device
     import hermes_constants
     device, home = native
     monkeypatch.setattr(hermes_constants, 'get_default_hermes_root', lambda **_: home)
     calls = install_wire(device, monkeypatch)
-    started = device.start(prepare_only=True, expected_actor=ACTOR)
+    started = device.start(prepare_only=True, expected_actor=ACTOR, expected_origin=ACCOUNT_ORIGIN)
     assert device.poll(started['session_id'])['status'] == 'approved'
     base = 'http://127.0.0.1:8765/v1'
     with pytest.raises(device.CloudConnectionError, match='account'):
@@ -254,14 +285,14 @@ def test_account_fence_applies_across_local_profiles(native, monkeypatch):
     monkeypatch.setattr(hermes_constants, 'get_default_hermes_root', lambda **_: home)
     install_wire(device, monkeypatch)
     initial_config = (home/'config.yaml').read_text()
-    start = device.start(prepare_only=True, expected_actor=ACTOR)
+    start = device.start(prepare_only=True, expected_actor=ACTOR, expected_origin=ACCOUNT_ORIGIN)
     device.poll(start['session_id'])
     second = home/'profiles'/'second'
     second.mkdir(parents=True)
     (second/'config.yaml').write_text(initial_config)
     token = set_hermes_home_override(str(second))
     try:
-        start = device.start(prepare_only=True, expected_actor=ACTOR)
+        start = device.start(prepare_only=True, expected_actor=ACTOR, expected_origin=ACCOUNT_ORIGIN)
         device.poll(start['session_id'])
         device.set_account_fence({'origin': 'http://127.0.0.1:8765', **ACTOR})
         assert device.credential('token-test', base_url='http://127.0.0.1:8765/v1') == 'private-account-token'
@@ -279,7 +310,7 @@ def test_account_switch_during_readiness_does_not_publish_old_account(native, mo
     device, home = native
     monkeypatch.setattr(hermes_constants, 'get_default_hermes_root', lambda **_: home)
     install_wire(device, monkeypatch)
-    started = device.start(prepare_only=True, expected_actor=ACTOR)
+    started = device.start(prepare_only=True, expected_actor=ACTOR, expected_origin=ACCOUNT_ORIGIN)
     device.poll(started['session_id'])
     device.set_account_fence({'origin': 'http://127.0.0.1:8765', **ACTOR})
     state = device._read()
@@ -304,7 +335,7 @@ def test_captured_agent_route_rechecks_account_fence_before_later_requests(nativ
     device, home = native
     monkeypatch.setattr(hermes_constants, 'get_default_hermes_root', lambda **_: home)
     install_wire(device, monkeypatch)
-    started = device.start(prepare_only=True, expected_actor=ACTOR)
+    started = device.start(prepare_only=True, expected_actor=ACTOR, expected_origin=ACCOUNT_ORIGIN)
     device.poll(started['session_id'])
     device.set_account_fence({'origin': 'http://127.0.0.1:8765', **ACTOR})
     agent = SimpleNamespace(base_url='http://127.0.0.1:8765/v1', api_key='private-account-token')
@@ -519,7 +550,7 @@ def test_account_preparation_local_route_preserves_model_and_keeps_secrets_nativ
     path = '/api/providers/oauth/semantier-cloud/start?account_prepare=true'
     assert client.post(path).status_code == 401
     headers = {'X-Hermes-Session-Token': _SESSION_TOKEN}
-    started = client.post(path, headers=headers, json={'expected_actor': ACTOR})
+    started = client.post(path, headers=headers, json={'expected_actor': ACTOR, 'origin': ACCOUNT_ORIGIN})
     assert started.status_code == 200
     assert 'proof' not in started.text
     result = client.get('/api/providers/oauth/semantier-cloud/poll/'+started.json()['session_id'], headers=headers)

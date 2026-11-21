@@ -159,18 +159,23 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
 
     if (!response.ok) {
       let managedDeviceCode: string | undefined
+      let deviceCode: string | undefined
 
-      if (path.startsWith('/api/cloud-provider/device/managed')) {
+      if (path.startsWith('/api/cloud-provider/device/')) {
         try {
           const detail = (await response.json())?.detail
 
-          if (typeof detail === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(detail)) { managedDeviceCode = detail }
+          if (path.startsWith('/api/cloud-provider/device/managed') && typeof detail === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(detail)) { managedDeviceCode = detail }
+          if (['billing_account_scope_mismatch', 'billing_account_mismatch', 'billing_account_missing',
+            'billing_account_inconsistent', 'intent_actor_mismatch', 'current_account_access_required',
+            'current_membership_required'].includes(detail)) {deviceCode = detail}
         } catch { /* A non-JSON refusal retains its HTTP status. */ }
       }
 
       throw Object.assign(new Error(`Semantier workspace request failed (${response.status}).`), {
         statusCode: response.status,
         ...(managedDeviceCode ? { managedDeviceCode } : {}),
+        ...(deviceCode ? { deviceCode } : {}),
         needsWorkspaceLogin: response.status === 401
       })
     }
@@ -179,6 +184,20 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
   }
 
   return {
+    async deviceStatus(intent: string): Promise<{ status: string }> {
+      if (!/^dci_[A-Za-z0-9_-]{1,128}$/.test(intent)) {throw new Error('Invalid device intent.')}
+      const response = await (await request(`/api/cloud-provider/device/${encodeURIComponent(intent)}`)).json()
+      if (response?.contract_version !== 'semantier-cloud-device-connection/v1' ||
+          response?.intent_ref !== intent || typeof response?.status !== 'string') {throw new Error('Invalid device authorization response.')}
+      return { status: response.status }
+    },
+    async approveDevice(intent: string): Promise<{ status: string }> {
+      if (!/^dci_[A-Za-z0-9_-]{1,128}$/.test(intent)) {throw new Error('Invalid device intent.')}
+      const response = await (await request(`/api/cloud-provider/device/${encodeURIComponent(intent)}/approve`, { decision: 'approve' })).json()
+      if (response?.contract_version !== 'semantier-cloud-device-connection/v1' ||
+          response?.intent_ref !== intent || typeof response?.status !== 'string') {throw new Error('Invalid device authorization response.')}
+      return { status: response.status }
+    },
     async personalSources() {
       return (await request('/api/personal-capabilities/skills/list', {})).json()
     },

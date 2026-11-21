@@ -2,6 +2,23 @@ import { expect, it, vi } from 'vitest'
 
 import { createSemantierWorkspaceClient, requireWorkspaceCompletion, workspaceDesktopRead, workspaceTranscript } from './semantier-workspace-client'
 
+it('approves only a bounded device intent through the account-owned browser session', async () => {
+  const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ contract_version: 'semantier-cloud-device-connection/v1', intent_ref: 'dci_test', status: 'approved' }))
+  const client = createSemantierWorkspaceClient('https://cloud.example', transport)
+  await expect(client.approveDevice('dci_test')).resolves.toEqual({ status: 'approved' })
+  expect(transport).toHaveBeenCalledWith('https://cloud.example/api/cloud-provider/device/dci_test/approve',
+    expect.objectContaining({ method: 'POST', credentials: 'include', redirect: 'error',
+      headers: expect.objectContaining({ 'X-Semantier-CSRF': '1' }) }))
+  await expect(client.approveDevice('../foreign')).rejects.toThrow('intent')
+  expect(transport).toHaveBeenCalledTimes(1)
+})
+
+it('retains only known device account refusal codes without calling them login failures', async () => {
+  const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ detail: 'billing_account_scope_mismatch' }, { status: 403 }))
+  const client = createSemantierWorkspaceClient('https://cloud.example', transport)
+  await expect(client.approveDevice('dci_test')).rejects.toMatchObject({ statusCode: 403, needsWorkspaceLogin: false, deviceCode: 'billing_account_scope_mismatch' })
+})
+
 it('refuses insecure remote origins and URL credentials', () => {
   for (const origin of ['http://cloud.example', 'https://user:secret@cloud.example', 'https://cloud.example/other']) {
     expect(() => createSemantierWorkspaceClient(origin, fetch)).toThrow()

@@ -344,6 +344,13 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     managedDeviceRevoke: (origin, scope, deviceId) => ipcRenderer.invoke('hermes:workspace:managed-device-revoke', origin, scope, deviceId),
     identity: origin => ipcRenderer.invoke('hermes:workspace:identity', origin),
     selectAccount: (origin, scope) => ipcRenderer.invoke('hermes:workspace:select-account', origin, scope),
+    modelStatus: () => ipcRenderer.invoke('hermes:workspace:model-status'),
+    prepareModel: () => ipcRenderer.invoke('hermes:workspace:prepare-model'),
+    onModelStatus: callback => {
+      const listener = (_event, status) => callback(status)
+      ipcRenderer.on('hermes:workspace:model-status', listener)
+      return () => ipcRenderer.removeListener('hermes:workspace:model-status', listener)
+    },
     onAccountChanged: callback => {
       const listener = () => callback()
       ipcRenderer.on('hermes:workspace:account-changed', listener)

@@ -209,8 +209,11 @@ def _normalize_account_fence(account):
 def set_account_fence(account):
     """Restrict future use; this device preference never grants server authority."""
     from hermes_cli.auth import _file_lock
+    from hermes_constants import get_default_hermes_root
     from utils import atomic_write_bytes
     value = None if account is None else _normalize_account_fence(account)
+    # First account selection can precede the first local backend launch.
+    get_default_hermes_root().mkdir(parents=True, exist_ok=True)
     path = _account_fence_path()
     lock_path = path.with_suffix('.lock')
     if lock_path.is_symlink() or getattr(lock_path, 'is_junction', lambda: False)():
@@ -310,6 +313,8 @@ def _config_hash():
 
 def _cloud_http(origin):
     settings = (_config().get('providers') or {}).get('semantier-cloud') or {}
+    if settings.get('base_url') and _origin(settings['base_url']) != _origin(origin):
+        settings = {}
     version = settings.get('http_version')
     if version is None and sys.platform == 'win32' and urlsplit(origin).scheme == 'https':
         version = '3'
@@ -394,7 +399,7 @@ def _started(state):
             'expires_in':max(0, int(_time(state['expires_at'])-_now())), 'poll_interval':5}
 
 
-def _new_state(previous, prepare_only=False, expected_actor=None):
+def _new_state(previous, prepare_only=False, expected_actor=None, expected_origin=None):
     cfg = _config()
     provider = (cfg.get('providers') or {}).get('semantier-cloud') or {}
     model = cfg.get('model') or {}
@@ -403,12 +408,14 @@ def _new_state(previous, prepare_only=False, expected_actor=None):
             or (model.get('base_url') if isinstance(model,dict) and model.get('provider') == 'semantier-cloud' else None))
     if not base:
         base = DEFAULT_CLOUD_ORIGIN
+    if prepare_only:
+        base = expected_origin
     origin = _origin(str(base))
     from hermes_constants import get_default_hermes_root
     home = str(get_hermes_home().resolve())
     return {'home':home, 'origin':origin, 'session_id':'cloud-'+secrets.token_urlsafe(24),
             'proof':secrets.token_urlsafe(32), 'claim_id':secrets.token_hex(16),
-            'portal_origin':_origin(str(provider.get('portal_origin') or (cfg.get('billing') or {}).get('portal_origin') or origin)),
+            'portal_origin':origin if prepare_only else _origin(str(provider.get('portal_origin') or (cfg.get('billing') or {}).get('portal_origin') or origin)),
             'original_config':cfg,
             'runtime_ref':_digest(str(get_default_hermes_root().resolve()).encode()),
             'profile_ref':_digest(home.encode()), 'generation':previous.get('generation',0)+1,
@@ -417,27 +424,33 @@ def _new_state(previous, prepare_only=False, expected_actor=None):
             'expected_actor':expected_actor}
 
 
-def start(prepare_only=False, expected_actor=None):
+def start(prepare_only=False, expected_actor=None, expected_origin=None):
     if not isinstance(prepare_only, bool):
         raise CloudConnectionError('cloud_config_invalid', 'Invalid account preparation mode.', 422)
     fields = {'user_id', 'workspace_id', 'organization_id'}
     if (prepare_only and (not isinstance(expected_actor, dict) or set(expected_actor) != fields
             or any(not isinstance(expected_actor[k], str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,128}', expected_actor[k]) for k in fields))
-            or not prepare_only and expected_actor is not None):
+            or not prepare_only and (expected_actor is not None or expected_origin is not None)):
         raise CloudConnectionError('cloud_config_invalid', 'The authenticated account scope is required.', 422)
+    if prepare_only:
+        normalized_origin = _origin(expected_origin)
+        if not isinstance(expected_origin, str) or expected_origin.rstrip('/') != normalized_origin:
+            raise CloudConnectionError('cloud_config_invalid', 'The account origin is invalid.', 422)
+        expected_origin = normalized_origin
     with _locked():
         state = _read()
         if state and state.get('status') not in _TERMINAL | {'approved'}:
             if state.get('expires_at') and _time(state['expires_at']) <= _now():
                 state['status'] = 'expired'
-            elif state.get('prepare_only', False) != prepare_only or (prepare_only and state.get('expected_actor') != expected_actor):
+            elif (state.get('prepare_only', False) != prepare_only or
+                    (prepare_only and (state.get('expected_actor') != expected_actor or state.get('origin') != expected_origin))):
                 raise CloudConnectionError('cloud_intent_in_progress', 'Another Cloud connection is already in progress.', 409, recovery='retry')
             elif state.get('verification_uri') and (state.get('config_hash') == _config_hash()
                     or state.get('committed_hash') == _config_hash()
                     or state.get('staged_config') == _config()):
                 return _started(state)
         if not state or state.get('status') != 'starting':
-            state = _new_state(state, prepare_only, expected_actor)
+            state = _new_state(state, prepare_only, expected_actor, expected_origin)
             _write(state)  # persist idempotency/proof BEFORE a possibly lost start reply
         for attempt in range(2):
             body = {k:state[k] for k in ('runtime_ref','profile_ref','generation')}
@@ -454,7 +467,7 @@ def start(prepare_only=False, expected_actor=None):
                 # An older client may have persisted the proof before losing its
                 # reply, then upgraded its start payload. Only that exact conflict
                 # permits a new intent; retain all already-installed credentials.
-                state = _new_state(state, prepare_only, expected_actor)
+                state = _new_state(state, prepare_only, expected_actor, expected_origin)
                 _write(state)
         uri = reply['data']['verification_uri']
         if _origin(f'{urlsplit(uri).scheme}://{urlsplit(uri).netloc}') != state['portal_origin']:
@@ -475,6 +488,20 @@ def _session(session_id):
     if not state or not secrets.compare_digest(state.get('session_id',''), session_id):
         raise CloudConnectionError('cloud_session_unavailable', 'Cloud session is unavailable for this profile.', 404, recovery='original_profile')
     return state
+
+
+def mark_browser_approval(session_id):
+    """Persist an attempt before the browser write; never replay an uncertain approval."""
+    with _locked():
+        state = _session(session_id)
+        if (state.get('prepare_only') is not True or state.get('status') != 'pending'
+                or state.get('config_hash') != _config_hash() or _time(state.get('expires_at')) <= _now()):
+            raise CloudConnectionError('cloud_session_unavailable', 'Account preparation is unavailable; retry safely.', 409)
+        if state.get('approval_attempted') is True:
+            return {'first': False}
+        state['approval_attempted'] = True
+        _write(state)
+        return {'first': True}
 
 
 def cancel(session_id):
@@ -587,7 +614,8 @@ def _install(state, binding):
         cfg = _config()
         entry = {'base_url':state['origin']+'/v1', 'credential_ref':ref, 'portal_origin':state['portal_origin']}
         previous_cloud = ((cfg.get('providers') or {}).get('semantier-cloud') or {})
-        if previous_cloud.get('http_version') == '3':
+        if (previous_cloud.get('http_version') == '3' and previous_cloud.get('base_url') and
+                _origin(previous_cloud['base_url']) == state['origin']):
             entry['http_version'] = '3'
             if previous_cloud.get('ssl_ca_cert'):
                 entry['ssl_ca_cert'] = previous_cloud['ssl_ca_cert']
