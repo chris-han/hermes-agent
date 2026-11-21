@@ -2067,13 +2067,14 @@ const fd=fs.openSync(path,'r');fs.closeSync(fd);console.log('Prebuilt cache read
 }
 function Install-LocalPilotPackage([string]$SignedPackage,$Volume) {
   $current=@(Get-AppxPackage -Name $identity)
-  if($current.Count -ne 1 -or $current[0].Publisher -cne $publisher){
-    throw 'Local pilot requires one existing package with the verified publisher.'
+  if($current.Count -gt 1 -or ($current.Count -eq 1 -and $current[0].Publisher -cne $publisher)){
+    throw 'Local installation requires zero packages or one existing package with the verified publisher.'
   }
-  if([Version]$Version -le [Version]$current[0].Version){
-    throw 'Local pilot requires a newer version; downgrade and same-version replacement are forbidden.'
+  if($current.Count -eq 1 -and [Version]$Version -le [Version]$current[0].Version){
+    throw 'Local upgrade requires a newer version; downgrade and same-version replacement are forbidden.'
   }
-  # In-place Windows deployment preserves registration and package data on failure.
+  # Zero existing packages is the clean local-install case. Existing installs
+  # retain the same in-place deployment and downgrade guards.
   Add-AppxPackage -Path $SignedPackage -Volume $Volume -ForceTargetApplicationShutdown
 }
 function Remove-ExistingAcceptancePackage {
