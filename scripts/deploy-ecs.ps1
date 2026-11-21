@@ -2728,13 +2728,21 @@ try {
   $receipt.installedSignature=$expectedSignature
   Complete-Checkpoint 'installed'
   $binding=Join-Path $Output 'installed-binding.json';$uiOutput=Join-Path $Output ('acceptance-'+[Guid]::NewGuid().ToString('N'))
+  # Isolated credential/profile state needs the same private NTFS DACL as native
+  # continuity state. Inherited workspace writers are not valid test inputs.
+  $privateOwner=Join-Path $Repository 'apps\desktop\scripts\native-package-update.ps1'
+  $privateState=". '"+$privateOwner.Replace("'","''")+"'; `$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; "
+  foreach($directory in @($uiOutput,(Join-Path $uiOutput 'hermes-home'),(Join-Path $uiOutput 'userdata'))){
+    $privateState+="New-NativeUpdateJournalDirectory '"+$directory.Replace("'","''")+"' `$sid; "
+  }
+  Run (Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe') @('-NoProfile','-NonInteractive','-EncodedCommand',[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($privateState)))
   Save-Json @{version=([Version]$Version).ToString(3);sourceCommit=$SourceCommit;artifactSha256=$hash;
     executable=(Join-Path $registered[0].InstallLocation 'app\Semantier Agent.exe');output=$uiOutput;
     playwright=(Join-Path $AcceptanceNodeModules '@playwright\test')} $binding
   $harness=@'
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 const b=JSON.parse(fs.readFileSync(process.argv[2],'utf8').replace(/^\uFEFF/,''));
-const {_electron}=require(b.playwright);fs.mkdirSync(b.output);let app;const errors=[];
+const {_electron}=require(b.playwright);fs.mkdirSync(b.output,{recursive:true});let app;const errors=[];
 (async()=>{try{
  const env=Object.fromEntries(Object.entries(process.env).filter(([k])=>/^(PATH|SYSTEMROOT|WINDIR|COMSPEC|PATHEXT|USERPROFILE|SYSTEMDRIVE|PROCESSOR_ARCHITECTURE|NUMBER_OF_PROCESSORS|APPDATA|LOCALAPPDATA|TEMP|TMP|PROGRAMFILES|PROGRAMFILES\(X86\))$/i.test(k)));
  app=await _electron.launch({executablePath:b.executable,cwd:path.dirname(b.executable),timeout:120000,
