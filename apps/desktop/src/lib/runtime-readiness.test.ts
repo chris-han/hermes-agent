@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { fetchRuntimeReadinessSignals, interpretRuntimeReadiness, runtimeReadinessDisplay } from './runtime-readiness'
+import { evaluateRuntimeReadiness, fetchRuntimeReadinessSignals, interpretRuntimeReadiness, runtimeReadinessDisplay } from './runtime-readiness'
 
 describe('interpretRuntimeReadiness', () => {
   it('prefers runtime_check when both signals exist', () => {
@@ -109,5 +109,33 @@ describe('runtimeReadinessDisplay', () => {
         source: 'setup_status'
       })
     ).toBe('needs_setup')
+  })
+})
+
+
+describe('fresh Semantier product account readiness', () => {
+  it.each([false, true])('offers Cloud sign-in when generic configured credentials is %s', async configured => {
+    const calls: string[] = []
+
+    const request = async <T = unknown>(method: string) => {
+      calls.push(method)
+
+      if (method === 'setup.status') { return { provider_configured: configured } as T }
+
+      if (method === 'setup.runtime_check') {
+        return { ok: false, provider: 'semantier-cloud', source: 'semantier-cloud', error: 'Semantier Model Provider connection required.' } as T
+      }
+
+      if (method === 'billing.state') {
+        return { ok: false, backend: 'semantier', schema_version: 'semantier.billing.v1', error: 'provider_not_configured', message: 'Semantier Model Provider is disabled for this profile.' } as T
+      }
+
+      throw new Error(`Unexpected request: ${method}`)
+    }
+
+    const result = await evaluateRuntimeReadiness(request)
+    expect(result.ready).toBe(false)
+    expect(result.modelService?.state).toBe('setup')
+    expect(calls).toEqual(['setup.status', 'setup.runtime_check', 'billing.state'])
   })
 })
