@@ -21,7 +21,7 @@ function fixture() {
     return { ok: true }
   })
   const owner = new AccountModelCoordinator({ native, fence, client: () => ({ identity: identityRead, approveDevice: approve, deviceStatus }), current: () => selected })
-  return { owner, native, fence, approve, identityRead, setAccount: (value: typeof account | null) => {selected = value} }
+  return { owner, native, fence, approve, deviceStatus, identityRead, setAccount: (value: typeof account | null) => {selected = value} }
 }
 
 describe('account model preparation', () => {
@@ -51,6 +51,38 @@ describe('account model preparation', () => {
       path.includes('/approval-attempt/') ? { first: false } : native(path, method, body))
     expect(await f.owner.prepare(account)).toBe('unavailable')
     expect(f.approve).not.toHaveBeenCalled()
+  })
+
+  it('uses a fresh poll operation after a definite pending response', async () => {
+    const f = fixture()
+    const native = f.native.getMockImplementation()!
+    let polls = 0
+    f.native.mockImplementation(async (path: string, method?: string, body?: unknown) => {
+      if (path.includes('/poll/') && ++polls === 1) {return { status: 'pending' }}
+      return native(path, method, body)
+    })
+    expect(await f.owner.prepare(account)).toBe('unavailable')
+    f.deviceStatus.mockResolvedValue({ status: 'approved' })
+    expect(await f.owner.prepare(account)).toBe('ready')
+    const calls = f.native.mock.calls.filter(([path]) => path.includes('/poll/')).map(([path]) => path)
+    expect(calls).toHaveLength(2)
+    expect(calls[0]).not.toBe(calls[1])
+  })
+
+  it('reuses the same poll operation after a lost response', async () => {
+    const f = fixture()
+    const native = f.native.getMockImplementation()!
+    let polls = 0
+    f.native.mockImplementation(async (path: string, method?: string, body?: unknown) => {
+      if (path.includes('/poll/') && ++polls === 1) {throw new Error('lost response')}
+      return native(path, method, body)
+    })
+    await expect(f.owner.prepare(account)).rejects.toThrow('lost response')
+    f.deviceStatus.mockResolvedValue({ status: 'approved' })
+    expect(await f.owner.prepare(account)).toBe('ready')
+    const calls = f.native.mock.calls.filter(([path]) => path.includes('/poll/')).map(([path]) => path)
+    expect(calls).toHaveLength(2)
+    expect(calls[0]).toBe(calls[1])
   })
 
   it('coalesces concurrent preparation for the same account', async () => {

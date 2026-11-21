@@ -93,9 +93,11 @@ export class AccountModelCoordinator {
     const operation = this.polls.get(started.session_id) || randomUUID()
     this.polls.set(started.session_id, operation)
     const reply = await this.options.native(`/api/providers/oauth/semantier-cloud/poll/${encodeURIComponent(started.session_id)}?operation_id=${operation}`)
+    // A returned result settles this operation, even when the intent is still
+    // pending. Only an uncertain transport outcome must reuse its operation ID.
+    this.polls.delete(started.session_id)
     await current()
     if (reply.status !== 'approved') {return 'unavailable'}
-    this.polls.delete(started.session_id)
     return this.ready(reply.readiness)
   }
 
