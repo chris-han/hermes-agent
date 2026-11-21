@@ -654,31 +654,37 @@ class PostgreSQLSessionDB(PostgreSQLMaintenanceMixin,PostgreSQLMutationsMixin,Po
 
     def branch_session(self,source_session_id,child_session_id,*,title,branch_point_message_id,
                        branch_point_sequence,idempotency_key,request_hash):
+        with self._transaction() as conn:
+            return self._branch_on_conn(conn, source_session_id, child_session_id, title=title,
+                branch_point_message_id=branch_point_message_id, branch_point_sequence=branch_point_sequence,
+                idempotency_key=idempotency_key, request_hash=request_hash)
+
+    def _branch_on_conn(self, conn, source_session_id, child_session_id, *, title, branch_point_message_id,
+                        branch_point_sequence, idempotency_key, request_hash):
         expected=dict(child_session_id=child_session_id,source_session_id=source_session_id,
             branch_point_message_id=str(branch_point_message_id),branch_point_sequence=branch_point_sequence,
             title=title,idempotency_key=idempotency_key,request_hash=request_hash)
-        with self._transaction() as conn:
-            source=self._session_on_conn(conn,source_session_id,lock=True)
-            if not source: raise KeyError('SOURCE_SESSION_NOT_FOUND')
-            existing=conn.execute(sql.SQL('SELECT * FROM {} WHERE child_session_id=%s').format(self.table('semantier_session_branches')),(child_session_id,)).fetchone()
-            idempotent=bool(existing)
-            if existing:
-                if existing!=expected: raise ValueError('IDEMPOTENCY_CONFLICT')
-            else:
-                if self._session_on_conn(conn,child_session_id): raise ValueError('IDEMPOTENCY_CONFLICT')
-                rows=conn.execute(sql.SQL('SELECT * FROM {} WHERE session_id=%s AND active=1 ORDER BY id').format(self.table('messages')),(source_session_id,)).fetchall()
-                if branch_point_sequence<1 or branch_point_sequence>len(rows): raise KeyError('BRANCH_POINT_NOT_FOUND')
-                boundary=rows[branch_point_sequence-1]
-                if str(boundary['id'])!=str(branch_point_message_id) or boundary['role']!='assistant': raise KeyError('BRANCH_POINT_NOT_FOUND')
-                cfg=json.loads(source.get('model_config') or '{}'); cfg['_branched_from']=source_session_id
-                self._create_on_conn(conn,child_session_id,source['source'],parent_session_id=source_session_id,
-                    model=source['model'],model_config=cfg,system_prompt=source['system_prompt'],user_id=source['user_id'],display_name=title)
-                for row in rows[:branch_point_sequence]:
-                    values=dict(row); values.pop('id'); values['session_id']=child_session_id
-                    # A fork is a new occurrence, retaining all original payload bytes.
-                    values['message_uid']=str(uuid.uuid4()); self._insert(conn,'messages',values)
-                self._recount_on_conn(conn,child_session_id); self._insert(conn,'semantier_session_branches',expected)
-            count=conn.execute(sql.SQL('SELECT COUNT(*) AS n FROM {} WHERE session_id=%s AND active=1').format(self.table('messages')),(child_session_id,)).fetchone()['n']
+        source=self._session_on_conn(conn,source_session_id,lock=True)
+        if not source: raise KeyError('SOURCE_SESSION_NOT_FOUND')
+        existing=conn.execute(sql.SQL('SELECT * FROM {} WHERE child_session_id=%s').format(self.table('semantier_session_branches')),(child_session_id,)).fetchone()
+        idempotent=bool(existing)
+        if existing:
+            if existing!=expected: raise ValueError('IDEMPOTENCY_CONFLICT')
+        else:
+            if self._session_on_conn(conn,child_session_id): raise ValueError('IDEMPOTENCY_CONFLICT')
+            rows=conn.execute(sql.SQL('SELECT * FROM {} WHERE session_id=%s AND active=1 ORDER BY id').format(self.table('messages')),(source_session_id,)).fetchall()
+            if branch_point_sequence<1 or branch_point_sequence>len(rows): raise KeyError('BRANCH_POINT_NOT_FOUND')
+            boundary=rows[branch_point_sequence-1]
+            if str(boundary['id'])!=str(branch_point_message_id) or boundary['role']!='assistant': raise KeyError('BRANCH_POINT_NOT_FOUND')
+            cfg=json.loads(source.get('model_config') or '{}'); cfg['_branched_from']=source_session_id
+            self._create_on_conn(conn,child_session_id,source['source'],parent_session_id=source_session_id,
+                model=source['model'],model_config=cfg,system_prompt=source['system_prompt'],user_id=source['user_id'],display_name=title)
+            for row in rows[:branch_point_sequence]:
+                values=dict(row); values.pop('id'); values['session_id']=child_session_id
+                # A fork is a new occurrence, retaining all original payload bytes.
+                values['message_uid']=str(uuid.uuid4()); self._insert(conn,'messages',values)
+            self._recount_on_conn(conn,child_session_id); self._insert(conn,'semantier_session_branches',expected)
+        count=conn.execute(sql.SQL('SELECT COUNT(*) AS n FROM {} WHERE session_id=%s AND active=1').format(self.table('messages')),(child_session_id,)).fetchone()['n']
         return dict(id=child_session_id,session_id=child_session_id,parent_session_id=source_session_id,
             lineage_root_id=source.get('parent_session_id') or source_session_id,
             branch_point_message_id=str(branch_point_message_id),branch_point_sequence=branch_point_sequence,
