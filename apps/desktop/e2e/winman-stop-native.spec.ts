@@ -38,6 +38,18 @@ test('turning Winman off interrupts the owned fixture turn', async ({}, info) =>
     const cookies = await app.evaluate(async ({ session }, name) => session.fromPartition(name).cookies.get({}), partition)
     const cookie = cookies.map((item: { name: string; value: string }) => `${item.name}=${item.value}`).join('; ')
     const headers = { cookie, Origin: origin, 'X-Semantier-CSRF': '1' }
+    const secondLogin = await fetch(origin + '/auth/password/login', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login: account.login, password: account.password }) })
+    expect(secondLogin.status).toBe(200)
+    const secondCookie = secondLogin.headers.getSetCookie().map(value => value.split(';')[0]).join('; ')
+    expect(secondCookie).toBeTruthy()
+    const readSecondPreference = async () => {
+      const response = await fetch(origin + '/api/winman/capability', { headers: { cookie: secondCookie } })
+      expect(response.status).toBe(200)
+      return response.json()
+    }
+    expect(await readSecondPreference()).toMatchObject({ desired: { enabled: true }, execution: 'unavailable' })
     expect((await fetch(origin + '/__fixture/start', { method: 'POST', headers })).status).toBe(200)
     const otherLogin = await fetch(origin + '/auth/password/login', { method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -54,6 +66,7 @@ test('turning Winman off interrupts the owned fixture turn', async ({}, info) =>
     expect(await beforeOwnerOff.json()).toMatchObject({ interrupted: false, stop_requested: false, released: false })
     await page.getByRole('button', { name: 'Turn preference off', exact: true }).click()
     await expect(page.getByText('Preference off.', { exact: false })).toBeVisible({ timeout: 20_000 })
+    expect(await readSecondPreference()).toMatchObject({ desired: { enabled: false }, execution: 'unavailable' })
     const response = await fetch(origin + '/__fixture/status', { headers })
     expect(response.status).toBe(200)
     const status = await response.json()
