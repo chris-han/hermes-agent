@@ -140,21 +140,33 @@ class PostgreSQLPortabilityMixin(SessionPortabilityMixin):
     def assert_exports_safe(self,session_ids,max_messages=None):
         for session_id in session_ids: self.assert_export_safe(session_id,max_messages)
 
-    def import_sessions(self,sessions):
+    def import_sessions(self,sessions,*,require_complete=False):
         if not isinstance(sessions,list): raise ValueError('sessions must be a list')
         if len(sessions)>self._IMPORT_MAX_SESSIONS: raise ValueError('sessions exceeds import limit')
         normalized,errors=self._validate_import_payload(sessions)
         if errors: return dict(ok=False,imported=0,skipped=0,detached=0,errors=errors)
+        if require_complete:
+            ids = {item['session']['id'] for item in normalized}
+            if len(ids) != len(normalized):
+                raise ValueError('strict import requires unique session IDs')
+            if any(item['session'].get('parent_session_id') not in ids | {None, ''} for item in normalized):
+                raise ValueError('strict import requires every parent in the same payload')
         imported,skipped,parents=[],[],[]
         with self._transaction() as conn:
             self._lock_conversation(conn,'__history_import__')
             for item in normalized:
                 raw=item['session'];sid=raw['id']
-                if self._session_on_conn(conn,sid):skipped.append(sid);continue
+                if self._session_on_conn(conn,sid):
+                    if require_complete:
+                        raise ValueError('strict import destination session collision')
+                    skipped.append(sid)
+                    continue
                 self._import_session_row(conn,raw,item['messages'],sid)
                 if raw.get('parent_session_id'):parents.append((sid,raw['parent_session_id']))
                 imported.append(sid)
             detached=self._attach_import_parents(conn,parents)
+            if require_complete and detached:
+                raise ValueError('strict import cannot detach lineage')
         return dict(ok=True,imported=len(imported),skipped=len(skipped),detached=detached,imported_ids=imported,skipped_ids=skipped,errors=[])
 
     def _import_session_row(self,conn,raw,messages,sid):
