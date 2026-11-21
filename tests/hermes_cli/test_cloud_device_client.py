@@ -384,6 +384,30 @@ def test_captured_agent_route_rechecks_account_fence_before_later_requests(nativ
         semantier_gateway.agent_cloud_settings(agent)
 
 
+def test_queued_cloud_title_revalidates_account_fence(native, monkeypatch):
+    import hermes_constants
+    from types import SimpleNamespace
+    from agent import semantier_gateway
+    from agent.turn_context import _maybe_title_session_at_turn_start
+    device, home = native
+    monkeypatch.setattr(hermes_constants, 'get_default_hermes_root', lambda **_: home)
+    install_wire(device, monkeypatch)
+    started = device.start(prepare_only=True, expected_actor=ACTOR, expected_origin=ACCOUNT_ORIGIN)
+    device.poll(started['session_id'])
+    device.set_account_fence({'origin': ACCOUNT_ORIGIN, **ACTOR})
+    agent = SimpleNamespace(platform='desktop', session_id='fixture', model='fixture-model', provider='custom',
+                            base_url=ACCOUNT_ORIGIN + '/v1', api_key='private-account-token', api_mode='chat_completions',
+                            _session_db=object(), _session_db_created=True)
+    semantier_gateway.capture_agent_route(agent)
+    validators = []
+    monkeypatch.setattr('agent.title_generator.maybe_auto_title',
+                        lambda *args, **kwargs: validators.append(kwargs['runtime_validator']))
+    _maybe_title_session_at_turn_start(agent, [{'role': 'user', 'content': 'fixture'}])
+    assert validators[0]() is True
+    device.set_account_fence(None)
+    assert validators[0]() is False
+
+
 def test_cancel_persists_terminal_before_lost_remote_reply(native, monkeypatch):
     device, _ = native
     monkeypatch.setattr(device, '_wire', lambda origin, operation, body=None, bearer=None: {

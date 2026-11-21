@@ -253,6 +253,17 @@ def _maybe_title_session_at_turn_start(
             main_runtime.update(context, parent_run_id=context['run_id'], run_id='title-'+uuid.uuid4().hex)
         else:
             main_runtime['run_id'] = getattr(agent,'_current_task_id',None)
+        def title_runtime_is_current():
+            if (getattr(agent, "model", None) != main_runtime["model"]
+                    or getattr(agent, "provider", None) != main_runtime["provider"]):
+                return False
+            if bound:
+                try:
+                    return agent_cloud_settings(agent) == bound
+                except Exception:
+                    return False
+            return True
+
         upgrade = maybe_auto_title(
             session_db,
             session_id,
@@ -264,10 +275,7 @@ def _maybe_title_session_at_turn_start(
             ),
             main_runtime=main_runtime,
             title_callback=getattr(agent, "_on_session_title", None),
-            runtime_validator=lambda: (
-                getattr(agent, "model", None) == main_runtime["model"]
-                and getattr(agent, "provider", None) == main_runtime["provider"]
-            ),
+            runtime_validator=title_runtime_is_current,
             title_preview=title_preview,
         )
         # Unstarted = the title call would share a self-hosted endpoint with this turn's request
