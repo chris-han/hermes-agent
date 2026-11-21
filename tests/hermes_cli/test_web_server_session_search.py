@@ -107,6 +107,17 @@ class _FakeSessionDB:
         self.closed = True
 
 
+def test_internal_search_uses_supplied_store_without_opening_or_closing(monkeypatch):
+    def unexpected_open(*args, **kwargs):
+        raise AssertionError("profile store must not be opened")
+
+    monkeypatch.setattr(_rt_sessions, "_open_session_db_for_profile", unexpected_open)
+    db = _FakeSessionDB()
+    result = asyncio.run(_rt_sessions.search_sessions_with_database(q="20260603", limit=2, db=db))
+    assert [row["session_id"] for row in result["results"]] == ["20260603_090200_exact", "content_session"]
+    assert not db.closed
+
+
 def test_desktop_session_search_merges_id_matches_before_content_matches(monkeypatch):
     from hermes_state import SessionDB
 

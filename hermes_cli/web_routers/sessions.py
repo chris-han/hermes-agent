@@ -287,6 +287,13 @@ def _is_compression_edge(child: dict, parent: dict) -> bool:
 async def search_sessions(
     q: str = "", limit: int = 20, profile: Optional[str] = None, source: str | None = None,
     sources: str | None = None, exclude_sources: str | None = None):
+    return await search_sessions_with_database(q=q, limit=limit, profile=profile, source=source,
+                                               sources=sources, exclude_sources=exclude_sources, db=None)
+
+
+async def search_sessions_with_database(
+    q: str = "", limit: int = 20, profile: Optional[str] = None, source: str | None = None,
+    sources: str | None = None, exclude_sources: str | None = None, *, db):
     """Search sessions by ID (first) plus FTS5 message content.
 
     Results are deduped by compression lineage, not raw ``session_id``:
@@ -460,6 +467,8 @@ async def search_sessions(
             return {"results": list(seen.values())}
 
         # FTS over a large state.db is the slowest read here; keep it off the loop (#60747).
+        if db is not None:
+            return await asyncio.to_thread(_search, db)
         return await asyncio.to_thread(_with_db, profile, _search, read_only=True)
 
 
