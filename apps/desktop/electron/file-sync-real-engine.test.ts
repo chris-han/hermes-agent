@@ -122,12 +122,20 @@ it.skipIf(!fixture)(
       expect(await supervisor.owners()).toEqual([])
       expect(await readWinman()).toMatchObject({ desired: { enabled: false }, execution: 'unavailable' })
       expect(await admitWinman('files-off-winman-off')).toEqual({ status: 'denied', admissions: 0 })
+      if (process.env.FILEX_DEVICE_SUPERVISOR === '1') {
+        expect((await request('/__fixture/winman-execute', { method: 'POST' })).status).toBe(403)
+      }
       await secondDevice.restore()
       expect(await secondDevice.owners()).toEqual([])
       expect((await secondDevice.statusFor(origin, await options.identity())).state).toBe('Paused')
       expect(await setWinman(true)).toMatchObject({ desired: { enabled: true }, execution: 'unavailable' })
       expect(await supervisor.owners()).toEqual([])
       expect(await admitWinman('files-off-winman-on')).toEqual({ status: 'queued', admissions: 1 })
+      if (process.env.FILEX_DEVICE_SUPERVISOR === '1') {
+        const execution = await request('/__fixture/winman-execute', { method: 'POST' })
+        expect(execution.status).toBe(200)
+        expect(await execution.json()).toEqual({ requests: ['files-off-winman-on'], completed: 1 })
+      }
       const secondLogin = await fetch(origin + '/auth/password/login', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ login: f.login, password: f.password })
@@ -143,6 +151,11 @@ it.skipIf(!fixture)(
       }
       expect(await readWinman()).toMatchObject({ desired: { enabled: true }, execution: 'unavailable' })
       expect(await admitWinman('files-on-winman-on')).toEqual({ status: 'queued', admissions: 2 })
+      if (process.env.FILEX_DEVICE_SUPERVISOR === '1') {
+        const execution = await request('/__fixture/winman-execute', { method: 'POST' })
+        expect(execution.status).toBe(200)
+        expect(await execution.json()).toEqual({ requests: ['files-off-winman-on', 'files-on-winman-on'], completed: 2 })
+      }
       await fs.writeFile(path.join(folder, name), 'Portable supervisor upload\n')
       await expect.poll(async () => {
         const bytes = await request('/api/file-sync/files?download=true&path=' + name)
@@ -187,6 +200,9 @@ it.skipIf(!fixture)(
       expect(await setWinman(false)).toMatchObject({ desired: { enabled: false }, execution: 'unavailable' })
       expect((await supervisor.owners())[0].enabled).toBe(true)
       expect(await admitWinman('files-on-winman-off')).toEqual({ status: 'denied', admissions: 2 })
+      if (process.env.FILEX_DEVICE_SUPERVISOR === '1') {
+        expect((await request('/__fixture/winman-execute', { method: 'POST' })).status).toBe(403)
+      }
       const activeOwner = (await supervisor.owners())[0]
       const credential = await options.binding()
       let lockCode = 0
