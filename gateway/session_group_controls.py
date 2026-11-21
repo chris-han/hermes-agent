@@ -268,6 +268,24 @@ def readable_canonical_bot_chat(db, subject, *, operator=False):
     return None
 
 
+def profile_session_summary(db, session, *, tip=None):
+    """Project the stored read-only session fields used by the native roster."""
+    tip = tip or db.get_compression_tip(session['id']) or session['id']
+    target = db.get_session(tip) or session
+    with db._read_ctx() as conn:
+        message = conn.execute(
+            _storage_statement(sqlite="SELECT content FROM messages WHERE session_id=? AND active=1 "
+            "AND role IN ('user','assistant') AND TRIM(COALESCE(content,''))!='' "
+            "ORDER BY id DESC LIMIT 1", postgresql="SELECT content FROM messages WHERE session_id=%s AND active=1 AND role IN ('user','assistant') AND TRIM(COALESCE(content,''))!='' ORDER BY id DESC LIMIT 1", connection=conn), (tip,)).fetchone()
+    text = ' '.join(str(message[0] or '').split()) if message else ''
+    return {'id': session['id'], 'resolved_id': tip, 'title': target.get('title') or '',
+            'root_title': session.get('title') or '',
+            'preview': text[:80] + '...' if len(text) > 80 else text,
+            'started_at': target.get('started_at') or 0,
+            'last_active': target.get('last_activity_at') or target.get('started_at') or 0,
+            'message_count': target.get('message_count') or 0}
+
+
 def _profiles(authority, actor, home, params, *, include_siblings=True):
     from hermes_cli.profiles import _profile_info, read_profile_meta
     import hermes_yaml as yaml
@@ -293,28 +311,12 @@ def _profiles(authority, actor, home, params, *, include_siblings=True):
     if include_sessions:
         row.update(last_session=None, worker_session=None, canonical_session=None)
         # Discovery is read-only: no legacy restore/unarchive or new SessionDB handle.
-        def summary(session):
-            tip = authority.db.get_compression_tip(session['id']) or session['id']
-            target = authority.db.get_session(tip) or session
-            with authority.db._read_ctx() as conn:
-                message = conn.execute(
-                    _storage_statement(sqlite="SELECT content FROM messages WHERE session_id=? AND active=1 "
-                    "AND role IN ('user','assistant') AND TRIM(COALESCE(content,''))!='' "
-                    "ORDER BY id DESC LIMIT 1", postgresql="SELECT content FROM messages WHERE session_id=%s AND active=1 AND role IN ('user','assistant') AND TRIM(COALESCE(content,''))!='' ORDER BY id DESC LIMIT 1", connection=conn), (tip,)).fetchone()
-            text = ' '.join(str(message[0] or '').split()) if message else ''
-            return {'id': session['id'], 'resolved_id': tip, 'title': target.get('title') or '',
-                    'root_title': session.get('title') or '',
-                    'preview': text[:80] + '...' if len(text) > 80 else text,
-                    'started_at': target.get('started_at') or 0,
-                    'last_active': target.get('last_activity_at') or target.get('started_at') or 0,
-                    'message_count': target.get('message_count') or 0}
-
         # The named registry is not a recency window and canonical chats are hidden.
         canonical = readable_canonical_bot_chat(
             authority.db, actor.subject, operator='session:operator' in actor.capabilities,
         )
         if canonical:
-            row['canonical_session'] = summary(canonical)
+            row['canonical_session'] = profile_session_summary(authority.db, canonical)
         if 'session:operator' in actor.capabilities:
             owner_filter, owner_params = '', ()
         else:
@@ -329,7 +331,7 @@ def _profiles(authority, actor, home, params, *, include_siblings=True):
                 postgresql=f"SELECT id FROM sessions WHERE {owner_filter}chat_id LIKE 'local-%%' AND archived=0 AND COALESCE(source,'') NOT IN ({hidden_sources}) ORDER BY COALESCE(last_activity_at,started_at) DESC LIMIT 1",connection=conn),
                 (*owner_params, *INTERNAL_LISTING_SOURCES)).fetchone()
         if latest:
-            row['last_session'] = summary(authority.db.get_session(latest[0]))
+            row['last_session'] = profile_session_summary(authority.db, authority.db.get_session(latest[0]))
     profiles = [row]
     seen = {home.resolve()}
 
