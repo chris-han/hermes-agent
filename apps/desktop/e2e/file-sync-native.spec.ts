@@ -20,6 +20,8 @@ test('explicit File Sync in Windows Electron uses the selected account and local
   const sandbox = createSandbox('file-sync-native')
   const folder = path.join(sandbox.root, 'documents')
   fs.mkdirSync(folder)
+  const preConsentFile = path.join(folder, `not-selected-${randomUUID()}.txt`)
+  fs.writeFileSync(preConsentFile, 'Local before consent\n')
   fs.writeFileSync(path.join(sandbox.hermesHome, 'config.yaml'), 'language: en\ndisplay:\n  language: en\n')
   const fixture = new DesktopFixtureSession(sandbox, buildAppEnv(sandbox, {
     HERMES_PYTHON: process.env.HERMES_PYTHON!, HERMES_DESKTOP_PYTHON: process.env.HERMES_PYTHON!,
@@ -66,6 +68,12 @@ test('explicit File Sync in Windows Electron uses the selected account and local
     await expect(page.getByText('Preference off.', { exact: false })).toBeVisible({ timeout: 20_000 })
     await page.getByRole('button', { name: 'File Sync', exact: true }).click()
     await expect(page.getByText('No folder selected', { exact: true })).toBeVisible()
+    if (process.env.NATIVE_MODEL_E2E === '1') {
+      const off = await request('/__fixture/file-sync-off')
+      expect(off.status).toBe(200)
+      expect(await off.json()).toEqual({ device_issuance: 0, engine_requests: 0 })
+      expect(fs.readFileSync(preConsentFile, 'utf8')).toBe('Local before consent\n')
+    }
     if (process.env.FILEX_OUTAGE_FIXTURE === '1') {
       const fixtureGate = async (action: string) => {
         const response = await request('/__fixture/filex-gate', { method: 'POST', body: JSON.stringify({ action }) })
