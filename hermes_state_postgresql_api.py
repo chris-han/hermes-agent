@@ -90,7 +90,9 @@ class PostgreSQLResponseStore(PostgreSQLAPIStore):
     def __init__(self,max_size=100,db_path=None,max_identities=None,*,session_db=None):
         super().__init__(db_path, session_db=session_db)
         self._max_size,self._max_identities=max_size,max_identities
-        with self.store._transaction() as conn:self._evict(conn)
+        if not getattr(self.store, 'read_only', False):
+            with self.store._transaction() as conn:
+                self._evict(conn)
 
     def get(self,response_id):
         with self.store._transaction() as conn:
