@@ -2,7 +2,8 @@
 import path from 'node:path'
 
 import { expect, test } from '@playwright/test'
-import { MOCK_REPLY, startMockServer } from '../../../tests-js/scripts/mock-server'
+import { startMockServer } from '../../../tests-js/scripts/mock-server'
+import { runDesktopChatSmoke } from '../../../tests-js/scripts/desktop-chat-smoke'
 import { writeEnvFile, writeMockProviderConfig } from '../../../tests-js/scripts/mock-provider-config'
 import { DesktopFixtureSession } from './fixture-session'
 import { buildAppEnv, createSandbox } from './fixtures'
@@ -13,7 +14,7 @@ test('signed-out Local completes a turn without Semantier cloud', async ({}, inf
   test.setTimeout(300_000)
   const mock = await startMockServer()
   const sandbox = createSandbox('signed-out-local')
-  writeMockProviderConfig(sandbox.hermesHome, mock.url)
+  writeMockProviderConfig(sandbox.hermesHome, mock.url, undefined, 'language: en\ndisplay:\n  language: en\n')
   writeEnvFile(sandbox.hermesHome)
   const fixture = new DesktopFixtureSession(sandbox, buildAppEnv(sandbox, {
     HERMES_PYTHON: process.env.HERMES_PYTHON!, HERMES_DESKTOP_PYTHON: process.env.HERMES_PYTHON!,
@@ -30,13 +31,9 @@ test('signed-out Local completes a turn without Semantier cloud', async ({}, inf
       session.defaultSession.webRequest.onBeforeRequest({ urls: ['https://cloud.semantier.cn/*'] },
         (_details: unknown, callback: (value: { cancel: boolean }) => void) => callback({ cancel: true }))
     })
-    const composer = page.locator('[data-slot="composer-root"] [contenteditable="true"]').filter({ visible: true }).first()
-    const prompt = 'Respond using only the isolated local fixture.'
-    await composer.fill(prompt)
-    await composer.press('Enter')
-    await expect(page.locator('[data-slot="aui_assistant-message-content"]').getByText(MOCK_REPLY, { exact: true }).last())
-      .toBeVisible({ timeout: 90_000 })
-    expect(mock.receivedPrompts).toContain(prompt)
+    const turn = await runDesktopChatSmoke(page, { mockUrl: mock.url, phase: 'installed', outDir: info.outputPath('local-turn') })
+    expect(turn.status).toBe('passed')
+    expect(mock.receivedPrompts.some(value => value.includes(turn.prompt))).toBe(true)
     const after = await page.evaluate(() => (window as any).hermesDesktop.connections.list())
     expect(after.primary).toBe('local')
     expect(after.accountContext).toBeFalsy()
