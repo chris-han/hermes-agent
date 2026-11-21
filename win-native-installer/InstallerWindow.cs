@@ -177,6 +177,10 @@ sealed class InstallerWindow : Form {
         } else if(message=="Downloading signed release…") {
             headline.Text=InstallerText.Choose("Downloading Semantier Agent","正在下载 Semantier Agent");
             status.Text=InstallerText.Choose("Connecting to the download service…","正在连接下载服务…");
+        } else if(message=="Reusing verified download…") {
+            headline.Text=InstallerText.Choose("Using your completed download","正在使用已下载的安装包");
+            status.Text=InstallerText.Choose("No package download needed. Checking publisher…","无需重新下载，正在检查发布者…");
+            progress.Style=ProgressBarStyle.Continuous;progress.Value=100;
         } else if(message=="Verifying package and publisher…") {
             headline.Text=InstallerText.Choose("Verifying your download","正在校验下载内容");
             status.Text=InstallerText.Choose("Checking package integrity and publisher identity…","正在检查安装包完整性与发布者身份…");
@@ -299,6 +303,8 @@ sealed class InstallerWindow : Form {
                 if(window.wordmark.Text!="Semantier")throw new InvalidOperationException("Brand capitalization changed.");
                 window.Report("Downloading 42%");
                 if(window.progress.Value!=42 || !window.status.Text.Contains("42%"))throw new InvalidOperationException("Progress binding failed.");
+                window.Report("Reusing verified download…");
+                if(window.progress.Value!=100 || window.status.Text!=InstallerText.Choose("No package download needed. Checking publisher…","无需重新下载，正在检查发布者…"))throw new InvalidOperationException("Cached retry status failed.");
                 window.Report("Verifying package and publisher…");
                 if(window.progress.Style!=ProgressBarStyle.Marquee)throw new InvalidOperationException("Verification progress failed.");
             }

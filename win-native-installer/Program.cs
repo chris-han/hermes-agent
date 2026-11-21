@@ -83,11 +83,12 @@ internal static class Program {
     // A fresh PC must consent to the pinned development publisher before
     // Authenticode trust validation, and before the expensive download.
     EnsurePublisherTrust(report);
-    string directory=TemporaryDirectory();
+    string directory=Path.Combine(Path.GetDirectoryName(LogPath),"download");
+    Directory.CreateDirectory(directory);
     bool installed=false;
     try{
       report("Downloading signed release…");
-      string package=DownloadPackage(directory,(done,total)=>report("Downloading "+(100*done/total).ToString(CultureInfo.InvariantCulture)+"%"),null,report);
+      string package=DownloadPackage(directory,(done,total)=>report("Downloading "+(100*done/total).ToString(CultureInfo.InvariantCulture)+"%"),null,report,reuseVerified:true);
       report("Installing for the current Windows user…");Install(package,report);
       installed=true;
       report("Semantier Agent "+AppVersionString+" installed.");
@@ -116,20 +117,40 @@ internal static class Program {
       if(output.Length!=response.ContentLength)throw new InvalidDataException("Incomplete metadata.");return output.ToArray();
     }
   }
-  internal static string DownloadPackage(string directory,Action<long,long> progress,string expected,Action<string> report=null,string candidateBuild=null,string candidateManifestHash=null,long candidateSequence=0){
+  static bool PackageBytesMatch(string file,long size,string expected){
+    if(!File.Exists(file) || new FileInfo(file).Length!=size)return false;
+    using(var stream=File.OpenRead(file))using(var sha=SHA256.Create()){
+      return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-","").ToLowerInvariant()==expected;
+    }
+  }
+  internal static void PreparePackageBytes(string file,long size,string expected,bool reuseVerified,Action download,Action<string> report){
+    if(reuseVerified && File.Exists(file)){
+      if(PackageBytesMatch(file,size,expected)){
+        if(report!=null)report("Reusing verified download…");
+        return;
+      }
+      // Only this attempt's known download is replaceable; never trust a receipt alone.
+      File.Delete(file);
+    }
+    download();
+    if(!PackageBytesMatch(file,size,expected))throw new InvalidDataException("MSIX size/SHA256 mismatch; no full-file retry.");
+  }
+  internal static string DownloadPackage(string directory,Action<long,long> progress,string expected,Action<string> report=null,string candidateBuild=null,string candidateManifestHash=null,long candidateSequence=0,bool reuseVerified=false){
     using(var metadata=new NativeWinHttpRequests())using(var client=new NativeWinHttpRequests()){
       var release=ReleaseSelection.Resolve(url=>ReadMetadata(metadata,url),candidateBuild,candidateManifestHash,candidateSequence);
       if(expected!=null && !string.Equals(release.Sha256,expected,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Selected release differs from expected SHA256.");
-      using(var head=Open(client,release.Uri,true))if(head.StatusCode!=200 || head.ContentLength!=release.Size)throw new InvalidDataException("OSS package size mismatch.");
       string file=Path.Combine(directory,"SemantierAgent.msix");
-      // CreateNew prevents an accidental second full download over retained evidence.
-      using(var output=new FileStream(file,FileMode.CreateNew,FileAccess.Write,FileShare.None)){
-        var clock=Stopwatch.StartNew();long last=0;
-        BootstrapperWinHttp.Download(client,release.Uri,output,release.Size,done=>{if(progress!=null && (done==release.Size || clock.ElapsedMilliseconds-last>=200)){progress(done,release.Size);last=clock.ElapsedMilliseconds;}});
-      }
       if(report!=null)report("Verifying package and publisher…");
-      string observed;using(var stream=File.OpenRead(file))using(var sha=SHA256.Create()){observed=BitConverter.ToString(sha.ComputeHash(stream)).Replace("-","").ToLowerInvariant();}
-      if(observed!=release.Sha256)throw new InvalidDataException("MSIX SHA256 mismatch; no full-file retry.");
+      PreparePackageBytes(file,release.Size,release.Sha256,reuseVerified,()=>{
+        using(var head=Open(client,release.Uri,true))if(head.StatusCode!=200 || head.ContentLength!=release.Size)throw new InvalidDataException("OSS package size mismatch.");
+        // Qualification retains CreateNew semantics; interactive retry alone may reuse bytes.
+        using(var output=new FileStream(file,FileMode.CreateNew,FileAccess.Write,FileShare.None)){
+          var clock=Stopwatch.StartNew();long last=0;
+          BootstrapperWinHttp.Download(client,release.Uri,output,release.Size,done=>{if(progress!=null && (done==release.Size || clock.ElapsedMilliseconds-last>=200)){progress(done,release.Size);last=clock.ElapsedMilliseconds;}});
+        }
+      },report);
+      if(report!=null)report("Verifying package and publisher…");
+      string observed=release.Sha256;
       VerifyIdentity(file,release);VerifySignature(file);
       var current=ReleaseSelection.Resolve(url=>ReadMetadata(metadata,url),candidateBuild,candidateManifestHash,candidateSequence);
       if(current.ManifestSha256!=release.ManifestSha256 || current.ChannelSha256!=release.ChannelSha256)throw new InvalidDataException("Selected release changed during download.");
