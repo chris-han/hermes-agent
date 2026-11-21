@@ -42,7 +42,12 @@ test('explicit File Sync in Windows Electron uses the selected account and local
     await popup.getByLabel('Login').fill(account.login)
     await popup.getByLabel('Password').fill(account.password)
     await popup.getByRole('button', { name: 'Sign in fixture', exact: true }).click()
-    await expect(page.getByText('Fixture', { exact: true })).toBeVisible({ timeout: 60_000 })
+    if (process.env.NATIVE_MODEL_E2E === '1') {
+      await expect.poll(() => page.evaluate(() => (window as any).hermesDesktop.workspace.modelDefault()),
+        { timeout: 90_000 }).toMatchObject({ model: 'deepseek-v4.1-flash-1017' })
+    } else {
+      await expect(page.getByText('Fixture', { exact: true })).toBeVisible({ timeout: 60_000 })
+    }
     await expect(page.getByText('Preference off.', { exact: false })).toBeVisible({ timeout: 20_000 })
     await page.getByRole('button', { name: 'File Sync', exact: true }).click()
     await expect(page.getByText('No folder selected', { exact: true })).toBeVisible()
@@ -101,6 +106,13 @@ test('explicit File Sync in Windows Electron uses the selected account and local
       return response.status === 206 ? response.text() : ''
     }, { timeout: 40_000 }).toBe('Explicit resume after restart\n')
     await restarted.getByRole('button', { name: 'Pause', exact: true }).click()
+    if (process.env.NATIVE_MODEL_E2E === '1') {
+      await restarted.getByRole('button', { name: 'Close settings', exact: true }).click()
+      const composer = restarted.locator('[data-slot="composer-root"] [contenteditable="true"]').filter({ visible: true }).first()
+      await composer.fill('Reply with the fixture response.')
+      await composer.press('Enter')
+      await expect(restarted.getByText('fixture response', { exact: true })).toBeVisible({ timeout: 90_000 })
+    }
   } finally {
     await fixture.close()
   }
