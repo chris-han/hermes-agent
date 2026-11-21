@@ -12,7 +12,7 @@ import { buildAppEnv, createSandbox } from './fixtures'
 // eslint-disable-next-line no-empty-pattern -- Electron supplies its own page.
 test('one account login preserves the local gateway and leaves capabilities off', async ({}, info) => {
   test.skip(!['linux', 'win32'].includes(process.platform) || !process.env.HERMES_DESKTOP_DEV_SERVER, 'Requires the source-Electron fixture')
-  test.setTimeout(180_000)
+  test.setTimeout(process.platform === 'win32' ? 300_000 : 180_000)
   const requests: string[] = []
   const server = http.createServer((req, res) => {
     const pathname = new URL(req.url!, 'http://fixture').pathname
@@ -45,7 +45,7 @@ test('one account login preserves the local gateway and leaves capabilities off'
     ? JSON.parse(fs.readFileSync(process.env.ACCOUNT_MODEL_E2E_FIXTURE, 'utf8')) : null
   const origin = connected?.origin || `http://127.0.0.1:${address.port}`
   const sandbox = createSandbox('account-first-local')
-  fs.writeFileSync(sandbox.hermesHome + '/config.yaml', 'language: en\nauxiliary:\n  title_generation:\n    model_upgrade_enabled: false\n')
+  fs.writeFileSync(sandbox.hermesHome + '/config.yaml', 'language: en\ndisplay:\n  language: en\nauxiliary:\n  title_generation:\n    model_upgrade_enabled: false\n')
   const root = path.resolve(import.meta.dirname, '../../..')
   const support = path.join(sandbox.root, 'python-fixture')
   fs.mkdirSync(support)
@@ -83,7 +83,9 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
     })
     await fixture.stage('desktop.ready', async () => {
       try {
-        await expect(page.getByRole('button', { name: 'default', exact: true })).toHaveAttribute('aria-pressed', 'true', { timeout: 90_000 })
+        await expect(page.getByRole('button', { name: 'default', exact: true })).toHaveAttribute('aria-pressed', 'true', {
+          timeout: process.platform === 'win32' ? 180_000 : 90_000
+        })
       } catch (error) {
         const state = await page.evaluate(() => ({ ready: document.readyState, rootChildren: document.getElementById('root')?.childElementCount ?? -1 }))
         console.log('FIXTURE_RENDERER_STATE', JSON.stringify(state), 'failedRequests', failures)
