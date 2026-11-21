@@ -1069,7 +1069,7 @@ def backfill_legacy_session_owners(db):
     return stamped
 
 
-async def initialize_session_authority(runner, *, profile_id, instance_id, db=None, register=True):
+async def initialize_session_authority(runner, *, profile_id, instance_id, db=None, register=True, recover=True):
     """Call after exclusive profile ownership, before connecting adapters/API.
 
     ``register=False`` builds a served secondary's authority without making it the runner's
@@ -1083,13 +1083,15 @@ async def initialize_session_authority(runner, *, profile_id, instance_id, db=No
     db_key = await asyncio.to_thread(session_store_key, db)
     epoch = await asyncio.to_thread(begin_runtime_epoch, db, instance_id=instance_id)
     # Hot-serve builds a profile while the loop serves the others: both writes stay off it.
-    await asyncio.to_thread(recover_session_inputs, db, epoch=epoch)
-    await asyncio.to_thread(backfill_legacy_session_owners, db)
+    if recover:
+        await asyncio.to_thread(recover_session_inputs, db, epoch=epoch)
+        await asyncio.to_thread(backfill_legacy_session_owners, db)
     authority = SessionAuthority(runner, profile_id=profile_id, instance_id=instance_id, db=db, epoch=epoch)
     if register:
         runner.session_authority = authority
-    from gateway.session_cron import bind_owner
-    bind_owner(authority)
+    if recover:
+        from gateway.session_cron import bind_owner
+        bind_owner(authority)
     store = runner.session_store
     if register:
         store._local_authority_epoch = epoch
@@ -1098,6 +1100,7 @@ async def initialize_session_authority(runner, *, profile_id, instance_id, db=No
     if epochs is None:
         epochs = store._local_authority_epochs = {}
     epochs[db_key] = epoch
-    from gateway.session_local_recovery import recover_local_sessions
-    recover_local_sessions(authority)
+    if recover:
+        from gateway.session_local_recovery import recover_local_sessions
+        recover_local_sessions(authority)
     return authority

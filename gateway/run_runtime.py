@@ -33,7 +33,7 @@ def reserved_profile_homes(runner):
     return homes
 
 
-async def _build_profile_authority(runner, name, home, *, register, session_db=None):
+async def _build_profile_authority(runner, name, home, *, register, session_db=None, recover=True):
     """Build a profile authority with its existing runner store or an explicitly supplied writer."""
     from gateway.run import _profile_runtime_scope
     from gateway.session_authority import initialize_session_authority
@@ -52,7 +52,7 @@ async def _build_profile_authority(runner, name, home, *, register, session_db=N
         registry.add(home, None, name=name)
         try:
             authority = await initialize_session_authority(
-                runner, profile_id=str(home), instance_id=instance_id, db=db, register=register)
+                runner, profile_id=str(home), instance_id=instance_id, db=db, register=register, recover=recover)
         except BaseException:
             registry.remove(home)
             raise
