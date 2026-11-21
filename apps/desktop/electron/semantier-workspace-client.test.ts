@@ -2,6 +2,16 @@ import { expect, it, vi } from 'vitest'
 
 import { createSemantierWorkspaceClient, requireWorkspaceCompletion, workspaceDesktopRead, workspaceTranscript } from './semantier-workspace-client'
 
+it('reads and changes only the server-owned Winman preference and preserves unavailable execution', async () => {
+  const reply = { desired: { version: 1, enabled: true, revision: 1 }, execution: 'unavailable' }
+  const transport = vi.fn<typeof fetch>().mockImplementation(async () => Response.json(reply))
+  const client = createSemantierWorkspaceClient('https://cloud.example', transport)
+  await expect(client.winmanCapability()).resolves.toEqual(reply)
+  await expect(client.setWinmanCapability({ userId: 'a', workspaceId: 'wa', organizationId: 'oa' }, true)).resolves.toEqual(reply)
+  expect(transport.mock.calls[1]).toMatchObject(['https://cloud.example/api/winman/capability',
+    { method: 'PUT', body: '{"enabled":true,"expected_scope":{"user_id":"a","workspace_id":"wa","organization_id":"oa"}}', credentials: 'include' }])
+})
+
 it('approves only a bounded device intent through the account-owned browser session', async () => {
   const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ contract_version: 'semantier-cloud-device-connection/v1', intent_ref: 'dci_test', status: 'approved' }))
   const client = createSemantierWorkspaceClient('https://cloud.example', transport)

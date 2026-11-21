@@ -19,6 +19,17 @@ it('accepts only the current authenticated server scope', () => {
   expect(() => assertWorkspaceScope({ ...identity, authenticated: false }, scope)).toThrow('changed')
 })
 
+it('does not issue a Winman preference write after account selection changes', async () => {
+  let selected: { origin: string; scope: typeof scope } | undefined = { origin: 'https://cloud.example', scope }
+  const fetch = vi.fn(async () => {selected = undefined; return Response.json(identity)})
+  vi.mocked(session.fromPartition).mockReturnValue({ fetch } as never)
+  vi.mocked(ipcMain.handle).mockClear()
+  registerSemantierWorkspaceIpc(undefined, undefined, undefined, undefined, undefined, () => selected)
+  const handler = vi.mocked(ipcMain.handle).mock.calls.find(([name]) => name === 'hermes:workspace:set-winman-capability')![1]
+  await expect(handler({} as never, 'https://cloud.example', scope, true)).rejects.toThrow('changed')
+  expect(fetch).toHaveBeenCalledTimes(1)
+})
+
 it('selects an account only after two matching authenticated scope checks and stopping sync', async () => {
   const fetch = vi.fn(async () => Response.json(identity))
   vi.mocked(session.fromPartition).mockReturnValue({ fetch } as never)

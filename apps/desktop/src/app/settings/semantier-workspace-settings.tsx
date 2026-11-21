@@ -12,6 +12,7 @@ import type { WorkspaceIdentity, WorkspaceScope } from '../../../electron/semant
 import { ListRow } from './primitives'
 import { SemantierManagedDevices } from './semantier-managed-devices'
 import { SemantierPersonalSync } from './semantier-personal-sync'
+import { SemantierWinmanCapability } from './semantier-winman-capability'
 
 export function SemantierWorkspaceSettings({
   accountOnly = false,
@@ -238,6 +239,11 @@ export function SemantierWorkspaceSettings({
                 {copy.modelRetry}
               </Button>
             ) : undefined} />
+        ) : null}
+      {accountOnly && accountOrigin === origin && identity?.authenticated && accountScope &&
+        identity.user?.user_id === accountScope.userId && identity.workspace?.id === accountScope.workspaceId &&
+        identity.organization_id === accountScope.organizationId ? (
+          <SemantierWinmanCapability key={JSON.stringify([origin, accountScope])} origin={origin} scope={accountScope} />
         ) : null}
       {identity?.authenticated && identity.user?.user_id && identity.workspace?.id && identity.organization_id ? (
         <>

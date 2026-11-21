@@ -4,7 +4,7 @@ import { BrowserWindow, ipcMain, session } from 'electron'
 
 import type {ManagedDeviceEnrollment} from './managed-device-enrollment'
 import type {PersonalCapabilitySync,PersonalPin,PersonalSnapshot} from './personal-capability-sync'
-import { assertWorkspaceScope, createSemantierWorkspaceClient, type ManagedDeviceInventory, type ManagedDevicePermission, requireNativeCompletion, requireWorkspaceCompletion, WORKSPACE_USER_STOP_ERROR, type WorkspaceHistory, type WorkspaceIdentity, type WorkspaceMainContext, type WorkspaceNativeCancellation, type WorkspaceNativeSnapshot, type WorkspaceNativeSubmission, type WorkspaceScope, type WorkspaceWinmanProfile } from './semantier-workspace-client'
+import { assertWorkspaceScope, createSemantierWorkspaceClient, type ManagedDeviceInventory, type ManagedDevicePermission, requireNativeCompletion, requireWorkspaceCompletion, WORKSPACE_USER_STOP_ERROR, type WinmanCapability, type WorkspaceHistory, type WorkspaceIdentity, type WorkspaceMainContext, type WorkspaceNativeCancellation, type WorkspaceNativeSnapshot, type WorkspaceNativeSubmission, type WorkspaceScope, type WorkspaceWinmanProfile } from './semantier-workspace-client'
 
 export { assertWorkspaceScope } from './semantier-workspace-client'
 export type { WorkspaceScope } from './semantier-workspace-client'
@@ -22,6 +22,8 @@ export interface DesktopWorkspaceApi {
   managedDeviceConsent: (origin: string, scope: WorkspaceScope, deviceId: string, permissions: ManagedDevicePermission[]) => Promise<unknown>
   managedDeviceRevoke: (origin: string, scope: WorkspaceScope, deviceId: string) => Promise<{ device_id: string; status: 'revoked' }>
   identity: (origin: string) => Promise<WorkspaceIdentity>
+  winmanCapability: (origin: string, scope: WorkspaceScope) => Promise<WinmanCapability>
+  setWinmanCapability: (origin: string, scope: WorkspaceScope, enabled: boolean) => Promise<WinmanCapability>
   selectAccount: (origin: string, scope: WorkspaceScope) => Promise<void>
   onAccountChanged?: (callback: () => void) => () => void
   modelStatus?: () => Promise<{ state: 'preparing' | 'ready' | 'denied' | 'unavailable'; issue?: string }>
@@ -136,6 +138,36 @@ return personal}
     return result
   })
   ipcMain.handle('hermes:workspace:identity', (_event, origin: string) => workspace(origin).client.identity())
+  const checkAccount = (origin: string, scope: WorkspaceScope, generation: number) => {
+    const selected = currentAccount?.()
+    if (generation !== accountGeneration || !selected || selected.origin !== origin ||
+        selected.scope.userId !== scope.userId || selected.scope.workspaceId !== scope.workspaceId ||
+        selected.scope.organizationId !== scope.organizationId) {throw new Error('The account changed. Try again.')}
+  }
+  ipcMain.handle('hermes:workspace:winman-capability', async (_event, origin: string, scope: WorkspaceScope) => {
+    const generation = accountGeneration
+    const target = workspace(origin)
+    checkAccount(target.origin, scope, generation)
+    assertWorkspaceScope(await target.client.identity(), scope)
+    checkAccount(target.origin, scope, generation)
+    const result = await target.client.winmanCapability()
+    checkAccount(target.origin, scope, generation)
+    assertWorkspaceScope(await target.client.identity(), scope)
+    checkAccount(target.origin, scope, generation)
+    return result
+  })
+  ipcMain.handle('hermes:workspace:set-winman-capability', async (_event, origin: string, scope: WorkspaceScope, enabled: boolean) => {
+    const generation = accountGeneration
+    const target = workspace(origin)
+    checkAccount(target.origin, scope, generation)
+    assertWorkspaceScope(await target.client.identity(), scope)
+    checkAccount(target.origin, scope, generation)
+    const result = await target.client.setWinmanCapability(scope, enabled)
+    checkAccount(target.origin, scope, generation)
+    assertWorkspaceScope(await target.client.identity(), scope)
+    checkAccount(target.origin, scope, generation)
+    return result
+  })
   ipcMain.handle('hermes:workspace:select-account', async (_event, origin: string, scope: WorkspaceScope) => {
     if (!selectAccount) {throw new Error('Account selection is unavailable.')}
     const generation = ++accountGeneration

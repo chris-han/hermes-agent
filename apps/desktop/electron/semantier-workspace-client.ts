@@ -143,6 +143,17 @@ export function normalizeSemantierWorkspaceOrigin(origin: string): string {
   return base.origin
 }
 
+export type WinmanCapability = { desired: { version: 1; enabled: boolean; revision: number }; execution: 'unavailable' }
+
+function parseWinmanCapability(value: unknown): WinmanCapability {
+  const result = value as WinmanCapability
+  if (!result || result.execution !== 'unavailable' || result.desired?.version !== 1 ||
+      typeof result.desired.enabled !== 'boolean' || !Number.isSafeInteger(result.desired.revision) || result.desired.revision < 0) {
+    throw new Error('Winman capability is unavailable.')
+  }
+  return { desired: { version: 1, enabled: result.desired.enabled, revision: result.desired.revision }, execution: 'unavailable' }
+}
+
 export function createSemantierWorkspaceClient(origin: string, fetchSession: (input: string, init?: RequestInit) => Promise<Response>) {
   const base = new URL(normalizeSemantierWorkspaceOrigin(origin))
 
@@ -184,6 +195,14 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
   }
 
   return {
+    async winmanCapability(): Promise<WinmanCapability> {
+      return parseWinmanCapability(await (await request('/api/winman/capability')).json())
+    },
+    async setWinmanCapability(scope: WorkspaceScope, enabled: boolean): Promise<WinmanCapability> {
+      if (typeof enabled !== 'boolean') {throw new Error('Explicit Winman preference required.')}
+      return parseWinmanCapability(await (await request('/api/winman/capability', { enabled,
+        expected_scope: { user_id: scope.userId, workspace_id: scope.workspaceId, organization_id: scope.organizationId } }, 'PUT')).json())
+    },
     async deviceStatus(intent: string): Promise<{ status: string }> {
       if (!/^dci_[A-Za-z0-9_-]{1,128}$/.test(intent)) {throw new Error('Invalid device intent.')}
       const response = await (await request(`/api/cloud-provider/device/${encodeURIComponent(intent)}`)).json()

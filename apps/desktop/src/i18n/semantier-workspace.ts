@@ -21,7 +21,12 @@ const en = {
   accountSignedOut: 'Sign in to use eligible account services.',
   accountRetry: 'Check account',
   modelService: 'Model Service', modelPreparing: 'Preparing…', modelReady: 'Available',
-  modelDenied: 'Access denied for this account.', modelBillingDenied: 'The billing account is unavailable or does not match this organization.', modelUnavailable: 'Unavailable. Check access or retry.', modelRetry: 'Retry Model Service'
+  modelDenied: 'Access denied for this account.', modelBillingDenied: 'The billing account is unavailable or does not match this organization.', modelUnavailable: 'Unavailable. Check access or retry.', modelRetry: 'Retry Model Service',
+  winmanTitle: 'Cloud Winman', winmanLoading: 'Checking preference…', winmanError: 'Preference unavailable. Try again later.',
+  winmanOff: 'Preference off. Cloud execution is unavailable; existing work status is unknown.',
+  winmanRequested: 'Enablement requested. Cloud execution is unavailable; existing work status is unknown.',
+  winmanEnable: 'Request enablement', winmanDisable: 'Turn preference off', winmanConfirm: 'Confirm request', winmanCancel: 'Cancel',
+  winmanConsequences: 'When available, Cloud Winman can execute tasks, wake for schedules, and incur model costs. This request does not activate it now.'
 }
 
 const zh: typeof en = {
@@ -47,7 +52,11 @@ const zh: typeof en = {
   accountSignedOut: '登录后可使用账户有权使用的服务。',
   accountRetry: '检查账户',
   modelService: '模型服务', modelPreparing: '正在准备…', modelReady: '可用',
-  modelDenied: '此账户无权访问。', modelBillingDenied: '计费账户不可用或与此组织不匹配。', modelUnavailable: '暂不可用，请检查权限或重试。', modelRetry: '重试模型服务'
+  modelDenied: '此账户无权访问。', modelBillingDenied: '计费账户不可用或与此组织不匹配。', modelUnavailable: '暂不可用，请检查权限或重试。', modelRetry: '重试模型服务',
+  winmanTitle: '云端僚机', winmanLoading: '正在检查设置…', winmanError: '无法读取设置，请稍后重试。',
+  winmanOff: '设置已关闭。云端执行不可用，现有任务的状态未知。', winmanRequested: '已请求启用。云端执行不可用，现有任务的状态未知。',
+  winmanEnable: '请求启用', winmanDisable: '关闭设置', winmanConfirm: '确认请求', winmanCancel: '取消',
+  winmanConsequences: '可用后，云端僚机可执行任务、按计划唤醒并可能产生模型费用。此请求不会立即激活。'
 }
 
 const hant: typeof en = {
@@ -73,7 +82,11 @@ const hant: typeof en = {
   accountSignedOut: '登入後可使用帳戶有權使用的服務。',
   accountRetry: '檢查帳戶',
   modelService: '模型服務', modelPreparing: '正在準備…', modelReady: '可用',
-  modelDenied: '此帳戶無權存取。', modelBillingDenied: '計費帳戶無法使用或與此組織不相符。', modelUnavailable: '暫時無法使用，請檢查權限或重試。', modelRetry: '重試模型服務'
+  modelDenied: '此帳戶無權存取。', modelBillingDenied: '計費帳戶無法使用或與此組織不相符。', modelUnavailable: '暫時無法使用，請檢查權限或重試。', modelRetry: '重試模型服務',
+  winmanTitle: '雲端僚機', winmanLoading: '正在檢查設定…', winmanError: '無法讀取設定，請稍後重試。',
+  winmanOff: '設定已關閉。雲端執行無法使用，現有任務的狀態未知。', winmanRequested: '已請求啟用。雲端執行無法使用，現有任務的狀態未知。',
+  winmanEnable: '請求啟用', winmanDisable: '關閉設定', winmanConfirm: '確認請求', winmanCancel: '取消',
+  winmanConsequences: '可用後，雲端僚機可執行任務、按排程喚醒並可能產生模型費用。此請求不會立即啟用。'
 }
 
 export function semantierWorkspaceCopy(locale: string): typeof en {
