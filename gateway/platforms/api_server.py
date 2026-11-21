@@ -1120,7 +1120,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
     _handle_chat_completions = _admit_api_agent_request(OpenAICompatRoutesMixin._handle_chat_completions)
     _handle_responses = _admit_api_agent_request(OpenAICompatRoutesMixin._handle_responses)
 
-    def __init__(self, config: PlatformConfig):
+    def __init__(self, config: PlatformConfig, *, session_db=None):
         super().__init__(config, Platform.API_SERVER)
         extra = config.extra or {}
         self._host, self._port = listen_address(extra)
@@ -1149,12 +1149,24 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         self._runner: Optional[web.AppRunner] = None
         self._site: Optional[web.TCPSite] = None
         from hermes_constants import get_hermes_home
-        self._response_store = ResponseStore()  # this home's; a /p/<profile>/ route gets its own
-        self._response_store_home = str(get_hermes_home())
+        self._explicit_session_db = session_db
+        if session_db is None:
+            self._response_store = ResponseStore()
+            self._response_store_home = str(get_hermes_home())
+            run_store_factory = RunIdempotencyStore
+        else:
+            from hermes_state_postgresql import PostgreSQLSessionDB
+            from hermes_state_postgresql_api import PostgreSQLResponseStore, PostgreSQLRunIdempotencyStore
+            if not isinstance(session_db, PostgreSQLSessionDB):
+                raise TypeError("Explicit API session store must be PostgreSQL")
+            self._require_explicit_session_home()
+            self._response_store = PostgreSQLResponseStore(session_db=session_db)
+            self._response_store_home = str(session_db.home)
+            run_store_factory = lambda: PostgreSQLRunIdempotencyStore(session_db=session_db)
         self._response_stores: dict[str, ResponseStore] = {}
         self._response_store_lock = threading.Lock()
-        _api_runs._initialize_run_state(self, store_factory=RunIdempotencyStore)
-        self._session_db: Optional[Any] = None  # explicit override (tests/manual wiring)
+        _api_runs._initialize_run_state(self, store_factory=run_store_factory)
+        self._session_db: Optional[Any] = None  # legacy test/manual override
         configured_state_root = os.environ.get("SEMANTIER_LOCAL_STATE_DIR")
         self._semantier_session_db_home = (Path(configured_state_root).expanduser().resolve()
                                          if configured_state_root else None)
@@ -1786,9 +1798,20 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
 
     # -- Responses state ----------------------------------------------------------------
 
+    def _require_explicit_session_home(self):
+        from hermes_constants import get_hermes_home
+
+        db = self._explicit_session_db
+        if Path(get_hermes_home()).resolve() != Path(db.home).resolve():
+            raise PermissionError("Explicit API session store profile mismatch")
+        return db
+
     def _current_response_store(self) -> ResponseStore:
         """Responses state of the routed profile's home. Conversation names are client-chosen, so one
         shared store let any profile's key read, chain onto and overwrite another's (#84253)."""
+        if getattr(self, "_explicit_session_db", None) is not None:
+            self._require_explicit_session_home()
+            return self._response_store
         from hermes_constants import get_hermes_home
         home = get_hermes_home()
         if str(home) == self._response_store_home:
@@ -1804,6 +1827,8 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
     def _open_and_cache_session_db(self, home) -> Optional[Any]:
         """Cached SessionDB for ``home`` (shared by both ``_ensure_session_db*``). Never writes
         ``self._session_db`` (explicit override only), so no profile pins later requests."""
+        if getattr(self, "_explicit_session_db", None) is not None:
+            return self._require_explicit_session_home()
         if self.gateway_runner is not None and not getattr(self, "_semantier_embedded_boundary_required", False):
             from gateway.platforms.api_server_store import selected_session_db
             return selected_session_db(self, home)
@@ -1858,6 +1883,8 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
 
         Core pins its host-configured state root at adapter startup; workspace tool homes
         never select that database. Handlers use the matching async accessor."""
+        if getattr(self, "_explicit_session_db", None) is not None:
+            return self._require_explicit_session_home()
         if self.gateway_runner is not None and not getattr(self, "_semantier_embedded_boundary_required", False):
             from hermes_constants import get_hermes_home
             from gateway.platforms.api_server_store import selected_session_db
@@ -1875,6 +1902,8 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
     async def _ensure_session_db_async(self):
         """Async variant: the profile home is captured on the loop thread (its scope is invisible
         inside ``to_thread``), only the blocking open runs in the worker, single-flight locked."""
+        if getattr(self, "_explicit_session_db", None) is not None:
+            return self._require_explicit_session_home()
         if self.gateway_runner is not None and not getattr(self, "_semantier_embedded_boundary_required", False):
             from hermes_constants import get_hermes_home
             from gateway.platforms.api_server_store import selected_session_db
