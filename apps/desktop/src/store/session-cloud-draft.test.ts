@@ -1,7 +1,9 @@
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { desktopSessionCreateParams } from '@/app/session/hooks/use-session-actions/session-create-request'
+import { $connectionsRegistry } from '@/store/connection-registry-state'
 import {
+  $connection,
   $currentModel,
   resetCloudComposerForFreshDraft,
   setCurrentModel,
@@ -18,6 +20,54 @@ afterEach(() => {
   setCurrentModel('')
   setCurrentProvider('')
   setCurrentModelSource('')
+  $connection.set(null)
+  $connectionsRegistry.set(null)
+})
+
+it('uses the currently selected authorized account default only for a fresh local draft', async () => {
+  const original = Object.getOwnPropertyDescriptor(window, 'hermesDesktop')
+  const account = { origin: 'https://cloud.example', scope: { userId: 'a', workspaceId: 'wa', organizationId: 'oa' } }
+  Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: { workspace: {
+    modelDefault: vi.fn().mockResolvedValue({ account, model: 'eligible-model' })
+  } } })
+  try {
+    $connection.set({ mode: 'local', connectionId: 'local', baseUrl: 'http://127.0.0.1' } as never)
+    $connectionsRegistry.set({ connections: [], accountContext: account } as never)
+    setCurrentModel(''); setCurrentProvider(''); setCurrentModelSource('default')
+    expect(await desktopSessionCreateParams('', null, 'default')).toMatchObject({ provider: 'semantier-cloud', model: 'eligible-model' })
+    setCurrentModel('my-local-model'); setCurrentProvider('custom:byok'); setCurrentModelSource('manual')
+    expect(await desktopSessionCreateParams('', null, 'default')).toMatchObject({ provider: 'custom:byok', model: 'my-local-model' })
+    setCurrentModelSource('default')
+    expect(await desktopSessionCreateParams('', null, 'default')).not.toHaveProperty('model')
+    setCurrentModel(''); setCurrentProvider(''); setCurrentModelSource('default')
+    $connectionsRegistry.set({ connections: [], accountContext: { ...account, scope: { ...account.scope, userId: 'other' } } } as never)
+    expect(await desktopSessionCreateParams('', null, 'default')).not.toHaveProperty('model')
+    $connection.set({ mode: 'remote', connectionId: 'remote', baseUrl: 'https://remote.example' } as never)
+    $connectionsRegistry.set({ connections: [], accountContext: account } as never)
+    expect(await desktopSessionCreateParams('', null, 'default')).not.toHaveProperty('model')
+  } finally {
+    if (original) {Object.defineProperty(window, 'hermesDesktop', original)} else {delete (window as { hermesDesktop?: unknown }).hermesDesktop}
+  }
+})
+
+it('does not apply a default if the account changes while the draft is prepared', async () => {
+  const original = Object.getOwnPropertyDescriptor(window, 'hermesDesktop')
+  const account = { origin: 'https://cloud.example', scope: { userId: 'a', workspaceId: 'wa', organizationId: 'oa' } }
+  let release!: (value: unknown) => void
+  Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: { workspace: {
+    modelDefault: vi.fn(() => new Promise(resolve => {release = resolve}))
+  } } })
+  try {
+    $connection.set({ mode: 'local', connectionId: 'local', baseUrl: 'http://127.0.0.1' } as never)
+    $connectionsRegistry.set({ connections: [], accountContext: account } as never)
+    setCurrentModel(''); setCurrentProvider(''); setCurrentModelSource('default')
+    const pending = desktopSessionCreateParams('', null, 'default')
+    $connectionsRegistry.set({ connections: [], accountContext: { ...account, scope: { ...account.scope, userId: 'b' } } } as never)
+    release({ account, model: 'eligible-model' })
+    expect(await pending).not.toHaveProperty('model')
+  } finally {
+    if (original) {Object.defineProperty(window, 'hermesDesktop', original)} else {delete (window as { hermesDesktop?: unknown }).hermesDesktop}
+  }
 })
 
 it.each(['semantier-cloud', 'custom:byok'])('fresh draft has the correct model policy for %s', async provider => {

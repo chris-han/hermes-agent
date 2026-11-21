@@ -881,6 +881,13 @@ async def set_cloud_account_context(request: Request, profile: Optional[str] = N
     return await _cloud_device_request(profile, 'set_account_fence', value['account'])
 
 
+@router.get("/api/providers/oauth/semantier-cloud/account-default-eligibility")
+async def cloud_account_default_eligibility(request: Request, profile: Optional[str] = None):
+    _require_token(request)
+    _validate_oauth_profile(profile)
+    return await _cloud_device_request(profile, 'account_default_eligibility')
+
+
 @router.post("/api/providers/oauth/semantier-cloud/approval-attempt/{session_id}")
 async def mark_cloud_approval_attempt(session_id: str, request: Request, profile: Optional[str] = None):
     _require_token(request)

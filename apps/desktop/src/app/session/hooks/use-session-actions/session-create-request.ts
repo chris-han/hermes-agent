@@ -1,3 +1,6 @@
+import { currentAccountModelDefault } from '@/lib/account-model-default'
+import { withTimeout } from '@/lib/with-timeout'
+import { $connectionsRegistry } from '@/store/connection-registry-state'
 import { requestGatewayForAgent } from '@/store/gateway'
 import {
   $activeGatewayProfile,
@@ -9,12 +12,14 @@ import {
   resolveNewChatOwnerRoute
 } from '@/store/profile'
 import {
+  $connection,
   $currentCwdExplicit,
   $currentFastMode,
   $currentModel,
   $currentProvider,
   $currentReasoningEffort,
   $currentServiceTier,
+  getComposerSelectionGeneration,
   getCurrentModelSource
 } from '@/store/session'
 import type { SessionCreateResponse } from '@/types/hermes'
@@ -107,6 +112,8 @@ export async function desktopSessionCreateParams(
   // Shipping that stale value as an override pins every new chat to the old
   // model. Omit model/provider unless the source is 'manual'.
   const isManualSelection = getCurrentModelSource() === 'manual'
+  const capturedConnection = $connection.get()
+  const generation = getComposerSelectionGeneration()
 
   const selection = {
     effort: $currentReasoningEffort.get().trim(),
@@ -122,6 +129,15 @@ export async function desktopSessionCreateParams(
     $newChatProfile.get() ||
     normalizeProfileKey($activeGatewayProfile.get())
 
+  const mayUseAccountDefault = includeComposerSelection && !isManualSelection &&
+    (!$currentProvider.get().trim() || $currentProvider.get().trim() === 'semantier-cloud') &&
+    capturedConnection?.mode === 'local' && profile === 'default' &&
+    (!capturedRoute || capturedRoute.connectionId === capturedConnection.connectionId)
+  const readDefault = window.hermesDesktop?.workspace?.modelDefault
+  const pendingDefault = mayUseAccountDefault && readDefault
+    ? withTimeout(readDefault(), 1000, 'Account model default unavailable').catch(() => null)
+    : Promise.resolve(null)
+
   if (capturedRoute) {
     await ensureGatewayAgent(capturedRoute.connectionId, profile)
   } else if (legacyProfileIntent) {
@@ -129,6 +145,10 @@ export async function desktopSessionCreateParams(
   } else {
     await ensureGatewayProfile(profile)
   }
+
+  const candidate = await pendingDefault
+  const accountModel = $connection.get() === capturedConnection && getComposerSelectionGeneration() === generation &&
+    getCurrentModelSource() !== 'manual' ? currentAccountModelDefault(candidate, $connectionsRegistry.get()) : null
 
   return {
     cols: 96,
@@ -142,7 +162,7 @@ export async function desktopSessionCreateParams(
       ? {
           ...(selection.model
             ? { model: selection.model, ...(selection.provider ? { provider: selection.provider } : {}) }
-            : {}),
+            : accountModel ? { model: accountModel, provider: 'semantier-cloud' } : {}),
           ...(selection.effort ? { reasoning_effort: selection.effort } : {}),
           fast: selection.fast,
           // Only Ultrafast needs the tier: `fast` already pins Priority/normal, and a

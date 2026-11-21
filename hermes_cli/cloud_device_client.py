@@ -298,6 +298,21 @@ def _config():
     return cfg
 
 
+def account_default_eligibility():
+    """A saved model or endpoint remains the user's choice; return no config data."""
+    from hermes_cli.config import _CONFIG_LOCK
+    with _CONFIG_LOCK:
+        model = _config().get('model')
+    if model is None or model == '':
+        return {'allowed': True}
+    if not isinstance(model, dict):
+        return {'allowed': False}
+    if any(value for key, value in model.items() if key != 'provider'):
+        return {'allowed': False}
+    provider = model.get('provider')
+    return {'allowed': provider is None or provider == '' or provider == 'semantier-cloud'}
+
+
 def _config_hash():
     path = get_hermes_home()/'config.yaml'
     if path.is_symlink() or getattr(path,'is_junction',lambda:False)():

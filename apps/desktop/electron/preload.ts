@@ -347,6 +347,7 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     setWinmanCapability: (origin, scope, enabled) => ipcRenderer.invoke('hermes:workspace:set-winman-capability', origin, scope, enabled),
     selectAccount: (origin, scope) => ipcRenderer.invoke('hermes:workspace:select-account', origin, scope),
     modelStatus: () => ipcRenderer.invoke('hermes:workspace:model-status'),
+    modelDefault: () => ipcRenderer.invoke('hermes:workspace:model-default'),
     prepareModel: () => ipcRenderer.invoke('hermes:workspace:prepare-model'),
     onModelStatus: callback => {
       const listener = (_event, status) => callback(status)

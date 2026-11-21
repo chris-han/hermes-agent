@@ -16806,6 +16806,7 @@ const accountModel = new AccountModelCoordinator({
 
 let accountModelRevision = 0
 let accountModelState: { state: 'preparing' | 'ready' | 'denied' | 'unavailable'; issue?: string } = { state: 'unavailable' }
+let accountModelDefault: { model: string; account: NonNullable<ReturnType<typeof readDesktopConnectionsRegistry>['accountContext']> } | null = null
 function publishAccountModelState(state: typeof accountModelState) {
   accountModelState = state
   for (const win of BrowserWindow.getAllWindows()) {
@@ -16814,9 +16815,20 @@ function publishAccountModelState(state: typeof accountModelState) {
 }
 function prepareAccountModel(account: NonNullable<ReturnType<typeof readDesktopConnectionsRegistry>['accountContext']>) {
   const revision = ++accountModelRevision
+  accountModelDefault = null
   publishAccountModelState({ state: 'preparing' })
-  void accountModel.prepare(account).then(state => {
-    if (revision === accountModelRevision) {publishAccountModelState({ state })}
+  void accountModel.prepare(account).then(async state => {
+    if (revision !== accountModelRevision) {return}
+    publishAccountModelState({ state })
+    if (state !== 'ready') {return}
+    try {
+      const model = await accountModel.preferredModel(account)
+      if (model && revision === accountModelRevision &&
+          JSON.stringify(readDesktopConnectionsRegistry().accountContext) === JSON.stringify(account)) {
+        accountModelDefault = { model, account }
+        publishAccountModelState({ state: 'ready' })
+      }
+    } catch { /* Model preference is independent of the account session. */ }
   }).catch(error => {
     const issue = ['billing_account_scope_mismatch', 'billing_account_mismatch', 'billing_account_missing',
       'billing_account_inconsistent', 'intent_actor_mismatch', 'current_account_access_required',
@@ -16825,6 +16837,19 @@ function prepareAccountModel(account: NonNullable<ReturnType<typeof readDesktopC
   })
 }
 ipcMain.handle('hermes:workspace:model-status', () => accountModelState)
+ipcMain.handle('hermes:workspace:model-default', async () => {
+  const candidate = accountModelDefault
+  const revision = accountModelRevision
+  if (!candidate || accountModelState.state !== 'ready' ||
+      JSON.stringify(readDesktopConnectionsRegistry().accountContext) !== JSON.stringify(candidate.account)) {return null}
+  try {
+    const eligibility = await handleHermesApiRequest({ connectionId: LOCAL_CONNECTION_ID, profile: 'default',
+      path: '/api/providers/oauth/semantier-cloud/account-default-eligibility', method: 'GET' })
+    if (eligibility?.allowed !== true || revision !== accountModelRevision || accountModelDefault !== candidate ||
+        JSON.stringify(readDesktopConnectionsRegistry().accountContext) !== JSON.stringify(candidate.account)) {return null}
+    return candidate
+  } catch {return null}
+})
 ipcMain.handle('hermes:workspace:prepare-model', () => {
   const account = readDesktopConnectionsRegistry().accountContext
   if (!account) {throw new Error('Sign in to your Semantier account first.')}
@@ -16889,6 +16914,7 @@ registerSemantierWorkspaceIpc((origin, authenticated) => {
   }
 }, async origin => {
   accountModelRevision++
+  accountModelDefault = null
   publishAccountModelState({ state: 'unavailable' })
   await personalFileSync.accountChanging(origin)
   try {await accountModel.suspend()} catch (error) {personalFileSync.accountChanged(); throw error}

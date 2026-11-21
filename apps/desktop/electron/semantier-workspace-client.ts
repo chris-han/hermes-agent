@@ -195,6 +195,17 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
   }
 
   return {
+    async modelPreference(): Promise<{ account_id: string; model: string | null }> {
+      const value = await (await request('/api/billing/commerce/model-preference')).json()
+      if (typeof value?.account_id !== 'string' || !value.account_id ||
+          !(value.model === null || typeof value.model === 'string')) {throw new Error('Account model preference is unavailable.')}
+      return { account_id: value.account_id, model: value.model }
+    },
+    async modelRecommendations(): Promise<{ recommended_model: string }> {
+      const value = await (await request('/auth/model-preferences')).json()
+      if (typeof value?.recommended_model !== 'string' || !value.recommended_model) {throw new Error('Model recommendation is unavailable.')}
+      return { recommended_model: value.recommended_model }
+    },
     async winmanCapability(): Promise<WinmanCapability> {
       return parseWinmanCapability(await (await request('/api/winman/capability')).json())
     },

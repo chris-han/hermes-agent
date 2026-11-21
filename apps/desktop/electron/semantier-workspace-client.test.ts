@@ -2,6 +2,17 @@ import { expect, it, vi } from 'vitest'
 
 import { createSemantierWorkspaceClient, requireWorkspaceCompletion, workspaceDesktopRead, workspaceTranscript } from './semantier-workspace-client'
 
+it('reads the account preference and public recommendation from their server owners', async () => {
+  const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ account_id: 'acct-a', model: 'platform_recommended' }))
+    .mockResolvedValueOnce(Response.json({ recommended_model: 'model-a' }))
+  const client = createSemantierWorkspaceClient('https://cloud.example', transport)
+  await expect(client.modelPreference()).resolves.toEqual({ account_id: 'acct-a', model: 'platform_recommended' })
+  await expect(client.modelRecommendations()).resolves.toEqual({ recommended_model: 'model-a' })
+  expect(transport.mock.calls.map(([url]) => url)).toEqual([
+    'https://cloud.example/api/billing/commerce/model-preference', 'https://cloud.example/auth/model-preferences'
+  ])
+})
+
 it('reads and changes only the server-owned Winman preference and preserves unavailable execution', async () => {
   const reply = { desired: { version: 1, enabled: true, revision: 1 }, execution: 'unavailable' }
   const transport = vi.fn<typeof fetch>().mockImplementation(async () => Response.json(reply))

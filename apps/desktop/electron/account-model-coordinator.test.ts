@@ -12,6 +12,8 @@ function fixture() {
   const identityRead = vi.fn(async () => identity)
   const approve = vi.fn(async () => ({ status: 'approved' }))
   const deviceStatus = vi.fn(async () => ({ status: 'pending' }))
+  const modelPreference = vi.fn(async () => ({ account_id: 'acct-a', model: 'preferred' as string | null }))
+  const modelRecommendations = vi.fn(async () => ({ recommended_model: 'preferred' }))
   const fence = vi.fn(async (_account: Record<string, string> | null) => {})
   const native = vi.fn<(path: string, method?: string, body?: unknown) => Promise<any>>(async path => {
     if (path === '/api/providers/oauth') {return { providers: [{ id: 'semantier-cloud', status: { logged_in: false } }] }}
@@ -20,11 +22,47 @@ function fixture() {
     if (path.includes('/poll/')) {return { status: 'approved', readiness: { account_provisioning: { inference_ready: true }, catalog: { status: 'available', data: [{ id: 'eligible' }] } } }}
     return { ok: true }
   })
-  const owner = new AccountModelCoordinator({ native, fence, client: () => ({ identity: identityRead, approveDevice: approve, deviceStatus }), current: () => selected })
-  return { owner, native, fence, approve, deviceStatus, identityRead, setAccount: (value: typeof account | null) => {selected = value} }
+  const owner = new AccountModelCoordinator({ native, fence, client: () => ({ identity: identityRead, approveDevice: approve, deviceStatus, modelPreference, modelRecommendations }), current: () => selected })
+  return { owner, native, fence, approve, deviceStatus, identityRead, modelPreference, modelRecommendations, setAccount: (value: typeof account | null) => {selected = value} }
 }
 
 describe('account model preparation', () => {
+  it('resolves a preference only against the currently bound native device catalog', async () => {
+    const f = fixture()
+    f.native.mockImplementation(async path => path.includes('account-default-eligibility') ? { allowed: true } : { providers: [{ id: 'semantier-cloud', status: { logged_in: true, readiness: {
+      account_id: 'acct-a', account_provisioning: { inference_ready: true },
+      catalog: { status: 'available', data: [{ id: 'preferred', account_id: 'acct-a', access: 'authorized' }] }
+    } } }] })
+    expect(await f.owner.preferredModel(account)).toBe('preferred')
+    expect(f.modelRecommendations).not.toHaveBeenCalled()
+    f.modelPreference.mockResolvedValue({ account_id: 'foreign', model: 'preferred' })
+    expect(await f.owner.preferredModel(account)).toBeNull()
+  })
+
+  it('does not supersede a saved local model or provider', async () => {
+    const f = fixture()
+    f.native.mockImplementation(async path => path.includes('account-default-eligibility')
+      ? { allowed: false }
+      : { providers: [{ id: 'semantier-cloud', status: { logged_in: true, readiness: {
+          account_id: 'acct-a', account_provisioning: { inference_ready: true },
+          catalog: { status: 'available', data: [{ id: 'preferred', account_id: 'acct-a', access: 'authorized' }] }
+        } } }] })
+    expect(await f.owner.preferredModel(account)).toBeNull()
+  })
+
+  it('does not resolve an old account default after an account switch', async () => {
+    const f = fixture()
+    let release!: (value: { account_id: string; model: string }) => void
+    f.modelPreference.mockImplementationOnce(() => new Promise(resolve => {release = resolve}))
+    const pending = f.owner.preferredModel(account)
+    await vi.waitFor(() => expect(f.modelPreference).toHaveBeenCalled())
+    f.setAccount(null)
+    await f.owner.suspend()
+    release({ account_id: 'acct-a', model: 'preferred' })
+    await expect(pending).rejects.toThrow('changed')
+    expect(f.native).not.toHaveBeenCalled()
+  })
+
   it('uses the selected account and the native device flow without changing the agent runtime', async () => {
     const f = fixture()
     expect(await f.owner.prepare(account)).toBe('ready')

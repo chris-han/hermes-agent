@@ -6,6 +6,24 @@ from cryptography.fernet import Fernet
 ACTOR = {'user_id': 'user-test', 'workspace_id': 'workspace-test', 'organization_id': 'org-test'}
 ACCOUNT_ORIGIN = 'http://127.0.0.1:8765'
 
+
+@pytest.mark.parametrize(('model', 'allowed'), [
+    (None, True), ('', True), ({}, True), ({'provider': 'semantier-cloud'}, True),
+    ('local-model', False), ({'provider': 'custom:byok'}, False),
+    ({'provider': 'semantier-cloud', 'default': 'chosen-model'}, False),
+    ({'base_url': 'http://127.0.0.1:1234'}, False), (42, False),
+])
+def test_account_default_never_overrides_saved_model_or_endpoint(native, model, allowed):
+    from hermes_cli.config import atomic_config_replace
+    device, home = native
+    config = device._config()
+    if model is None:
+        config.pop('model', None)
+    else:
+        config['model'] = model
+    atomic_config_replace(home / 'config.yaml', config)
+    assert device.account_default_eligibility() == {'allowed': allowed}
+
 def test_first_account_fence_creates_owner_root(native, monkeypatch, tmp_path):
     import hermes_constants
     device, _ = native
@@ -276,6 +294,17 @@ def test_account_fence_local_api_is_authenticated_and_never_returns_credentials(
     assert b'user-test' not in (home/'.cloud-account-fence.bin').read_bytes()
     assert client.put(path, headers=headers, json={'account': None}).json() == {'ok': True}
     assert device._read_account_fence()['account'] is None
+
+
+def test_account_default_eligibility_api_requires_native_session_and_returns_no_config(native):
+    from fastapi.testclient import TestClient
+    from hermes_cli.web_server import app, _SESSION_TOKEN
+    client = TestClient(app)
+    path = '/api/providers/oauth/semantier-cloud/account-default-eligibility'
+    assert client.get(path).status_code == 401
+    response = client.get(path, headers={'X-Hermes-Session-Token': _SESSION_TOKEN})
+    assert response.status_code == 200
+    assert response.json() == {'allowed': False}
 
 
 def test_account_fence_applies_across_local_profiles(native, monkeypatch):

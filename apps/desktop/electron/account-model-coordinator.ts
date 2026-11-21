@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto'
 
+import { resolveAccountModelDefault } from './account-model-default'
 import { assertWorkspaceScope, normalizeSemantierWorkspaceOrigin, type WorkspaceIdentity, type WorkspaceScope } from './semantier-workspace-client'
 
 type Account = { origin: string; scope: WorkspaceScope }
 type Client = { identity: () => Promise<WorkspaceIdentity>; approveDevice: (intent: string) => Promise<{ status: string }>;
-  deviceStatus: (intent: string) => Promise<{ status: string }> }
+  deviceStatus: (intent: string) => Promise<{ status: string }>; modelPreference: () => Promise<{ account_id: string; model: string | null }>;
+  modelRecommendations: () => Promise<{ recommended_model: string }> }
 type Options = {
   current: () => Account | null
   client: (origin: string) => Client
@@ -31,6 +33,35 @@ export class AccountModelCoordinator {
     await this.enqueue(async () => {
       await this.options.fence(null)
     })
+  }
+
+  async preferredModel(account: Account): Promise<string | null> {
+    const origin = normalizeSemantierWorkspaceOrigin(account.origin)
+    const epoch = this.epoch
+    const client = this.options.client(origin)
+    const current = async () => {
+      const selected = this.options.current()
+      if (epoch !== this.epoch || !selected || selected.origin !== origin ||
+          selected.scope.userId !== account.scope.userId || selected.scope.workspaceId !== account.scope.workspaceId ||
+          selected.scope.organizationId !== account.scope.organizationId) {throw new Error('The account changed. Retry preparation.')}
+      assertWorkspaceScope(await client.identity(), account.scope)
+      if (epoch !== this.epoch) {throw new Error('The account changed. Retry preparation.')}
+    }
+    await current()
+    const preference = await client.modelPreference()
+    await current()
+    const recommendation = preference.model === null || preference.model === '' || preference.model === 'platform_recommended'
+      ? await client.modelRecommendations() : null
+    await current()
+    const providers = await this.options.native('/api/providers/oauth')
+    await current()
+    const status = providers?.providers?.find((item: any) => item.id === 'semantier-cloud')?.status
+    if (!status?.logged_in) {return null}
+    // The account default must not replace an existing saved local or BYOK choice.
+    const config = await this.options.native('/api/providers/oauth/semantier-cloud/account-default-eligibility')
+    await current()
+    if (config?.allowed !== true) {return null}
+    return resolveAccountModelDefault(preference, recommendation, status.readiness)
   }
 
   async prepare(account: Account): Promise<'ready' | 'unavailable'> {

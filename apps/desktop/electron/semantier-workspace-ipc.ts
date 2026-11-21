@@ -4,7 +4,7 @@ import { BrowserWindow, ipcMain, session } from 'electron'
 
 import type {ManagedDeviceEnrollment} from './managed-device-enrollment'
 import type {PersonalCapabilitySync,PersonalPin,PersonalSnapshot} from './personal-capability-sync'
-import { assertWorkspaceScope, createSemantierWorkspaceClient, type ManagedDeviceInventory, type ManagedDevicePermission, requireNativeCompletion, requireWorkspaceCompletion, WORKSPACE_USER_STOP_ERROR, type WinmanCapability, type WorkspaceHistory, type WorkspaceIdentity, type WorkspaceMainContext, type WorkspaceNativeCancellation, type WorkspaceNativeSnapshot, type WorkspaceNativeSubmission, type WorkspaceScope, type WorkspaceWinmanProfile } from './semantier-workspace-client'
+import { assertWorkspaceScope, createSemantierWorkspaceClient, type ManagedDeviceInventory, type ManagedDevicePermission, requireNativeCompletion, requireWorkspaceCompletion, type WinmanCapability, WORKSPACE_USER_STOP_ERROR, type WorkspaceHistory, type WorkspaceIdentity, type WorkspaceMainContext, type WorkspaceNativeCancellation, type WorkspaceNativeSnapshot, type WorkspaceNativeSubmission, type WorkspaceScope, type WorkspaceWinmanProfile } from './semantier-workspace-client'
 
 export { assertWorkspaceScope } from './semantier-workspace-client'
 export type { WorkspaceScope } from './semantier-workspace-client'
@@ -27,6 +27,7 @@ export interface DesktopWorkspaceApi {
   selectAccount: (origin: string, scope: WorkspaceScope) => Promise<void>
   onAccountChanged?: (callback: () => void) => () => void
   modelStatus?: () => Promise<{ state: 'preparing' | 'ready' | 'denied' | 'unavailable'; issue?: string }>
+  modelDefault?: () => Promise<{ model: string; account: { origin: string; scope: WorkspaceScope } } | null>
   prepareModel?: () => Promise<void>
   onModelStatus?: (callback: (status: { state: 'preparing' | 'ready' | 'denied' | 'unavailable'; issue?: string }) => void) => () => void
   login: (origin: string) => Promise<WorkspaceIdentity>
