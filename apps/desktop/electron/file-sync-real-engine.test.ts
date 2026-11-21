@@ -94,13 +94,21 @@ it.skipIf(!fixture)(
         expect(response.status).toBe(200)
         return response.json()
       }
+      const admitWinman = async (requestId: string) => {
+        const response = await request('/__fixture/winman-admission', { method: 'POST',
+          headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request_id: requestId }) })
+        expect(response.status).toBe(200)
+        return response.json()
+      }
       expect(await supervisor.owners()).toEqual([])
       expect(await readWinman()).toMatchObject({ desired: { enabled: false }, execution: 'unavailable' })
+      expect(await admitWinman('files-off-winman-off')).toEqual({ status: 'denied', admissions: 0 })
       await secondDevice.restore()
       expect(await secondDevice.owners()).toEqual([])
       expect((await secondDevice.statusFor(origin, await options.identity())).state).toBe('Paused')
       expect(await setWinman(true)).toMatchObject({ desired: { enabled: true }, execution: 'unavailable' })
       expect(await supervisor.owners()).toEqual([])
+      expect(await admitWinman('files-off-winman-on')).toEqual({ status: 'queued', admissions: 1 })
       const secondLogin = await fetch(origin + '/auth/password/login', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ login: f.login, password: f.password })
@@ -112,6 +120,7 @@ it.skipIf(!fixture)(
       await supervisor.enable(origin, folder)
       expect((await supervisor.owners())[0].enabled).toBe(true)
       expect(await readWinman()).toMatchObject({ desired: { enabled: true }, execution: 'unavailable' })
+      expect(await admitWinman('files-on-winman-on')).toEqual({ status: 'queued', admissions: 2 })
       await fs.writeFile(path.join(folder, name), 'Portable supervisor upload\n')
       await expect.poll(async () => {
         const bytes = await request('/api/file-sync/files?download=true&path=' + name)
@@ -123,6 +132,7 @@ it.skipIf(!fixture)(
       expect(await fs.readFile(path.join(secondFolder, secondOnly), 'utf8')).toBe('Must stay on second device\n')
       expect(await setWinman(false)).toMatchObject({ desired: { enabled: false }, execution: 'unavailable' })
       expect((await supervisor.owners())[0].enabled).toBe(true)
+      expect(await admitWinman('files-on-winman-off')).toEqual({ status: 'denied', admissions: 2 })
       const activeOwner = (await supervisor.owners())[0]
       const credential = await options.binding()
       let lockCode = 0
@@ -200,6 +210,9 @@ it.skipIf(!fixture)(
         supervisor.accountChanged()
         const otherIdentity = await options.identity()
         expect(otherIdentity.userId).not.toBe(activeOwner.userId)
+        const foreignAdmission = await request('/__fixture/winman-admission', { method: 'POST',
+          headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request_id: 'foreign' }) })
+        expect(foreignAdmission.status).toBe(403)
         expect(await readWinman()).toMatchObject({ desired: { enabled: false }, execution: 'unavailable' })
         const foreignToggle = await request('/api/winman/capability', { method: 'PUT',
           headers: { Origin: origin, 'x-semantier-csrf': '1', 'content-type': 'application/json' },
