@@ -3306,20 +3306,32 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             offset = requested_limit = -1
         if offset < 0 or (requested_limit is not None and requested_limit < 0):
             return _error_response("limit and offset must be non-negative integers", 400, code="invalid_pagination")
+        after_id = None
+        if scoped and "after_id" in request.query:
+            try:
+                after_id = int(request.query["after_id"])
+            except ValueError:
+                after_id = -1
+            if after_id < 0 or offset or order == "latest" or _coerce_request_bool(
+                request.query.get("include_compacted"), default=False,
+            ):
+                return _error_response("after_id requires oldest paging without offset or compacted rows",
+                                       400, code="invalid_pagination")
         default_page = requested_limit is None
-        latest_page = order == "latest" or (order is None and default_page)
+        latest_page = after_id is None and (order == "latest" or (order is None and default_page))
         limit = 500 if default_page else min(requested_limit, 500)
         include_compacted = _coerce_request_bool(request.query.get("include_compacted"), default=False)
         # Compression lineage: return root→tip messages, matching the REST router (#51058).
         messages = await asyncio.to_thread(
             db.get_messages, resolved_id, limit=limit, offset=offset, latest=latest_page,
-            include_compacted=include_compacted, include_ancestors=not scoped)
+            include_compacted=include_compacted, include_ancestors=not scoped,
+            **({"after_id": after_id} if after_id is not None else {}))
         return web.json_response({
             "object": "list", "session_id": resolved_id,
             "data": [self._message_response(m) for m in messages],
             "pagination": {
                 "limit": limit, "offset": offset,
-                "order": order or ("latest" if default_page else "oldest"),
+                "order": "latest" if latest_page else "oldest",
                 "returned": len(messages)}})
 
     @_require_auth
