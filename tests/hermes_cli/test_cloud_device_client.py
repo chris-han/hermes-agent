@@ -435,7 +435,8 @@ def test_account_agent_is_fenced_when_legacy_gateway_coexists(native, monkeypatc
     assert semantier_gateway.agent_cloud_settings(legacy_agent).api_key == 'legacy-secret'
 
 
-def test_compression_cannot_prepare_captured_cloud_route_after_account_switch(native, monkeypatch):
+@pytest.mark.parametrize(('task', 'async_mode'), [('compression', False), ('vision', True)])
+def test_auxiliary_cannot_prepare_captured_cloud_route_after_account_switch(native, monkeypatch, task, async_mode):
     import hermes_constants
     from types import SimpleNamespace
     from agent import auxiliary_client as aux, semantier_gateway as cloud
@@ -463,9 +464,9 @@ def test_compression_cannot_prepare_captured_cloud_route_after_account_switch(na
     assert runtime['cloud_credential_ref'] == 'token-test'
     device.set_account_fence(None)
     def prepare():
-        return aux._prepare_aux_request('compression', provider=None, model=None, base_url=None, api_key=None,
+        return aux._prepare_aux_request(task, provider=None, model=None, base_url=None, api_key=None,
             main_runtime=runtime, messages=[], temperature=None, max_tokens=None, tools=None, timeout=None,
-            extra_body=None, reasoning_config=None, extra_headers=None, api_mode=None, route_info=None, async_mode=False)
+            extra_body=None, reasoning_config=None, extra_headers=None, api_mode=None, route_info=None, async_mode=async_mode)
     with pytest.raises(device.CloudConnectionError, match='account'):
         prepare()
     client.api_key = 'independent-credential'
