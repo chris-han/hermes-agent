@@ -188,6 +188,9 @@ it.skipIf(!fixture)(
 
       if (f.other_login) {
         await supervisor.accountChanging(origin)
+        const heldAfterSwitch = 'account-switch-paused-' + randomUUID() + '.md'
+        await fs.writeFile(path.join(folder, heldAfterSwitch), 'Held until account A resumes\n')
+        await expect(supervisor.resumeFor(origin, selected)).rejects.toThrow(/account change/i)
         const otherLogin = await fetch(origin + '/auth/password/login', {
           method: 'POST', headers: { 'content-type': 'application/json', Origin: origin },
           body: JSON.stringify({ login: f.other_login, password: f.password })
@@ -202,9 +205,37 @@ it.skipIf(!fixture)(
           headers: { Origin: origin, 'x-semantier-csrf': '1', 'content-type': 'application/json' },
           body: JSON.stringify({ enabled: true, expected_scope: expectedScope }) })
         expect(foreignToggle.status).toBe(403)
+        const otherScope = { user_id: otherIdentity.userId, workspace_id: otherIdentity.workspaceId,
+          organization_id: otherIdentity.organizationId }
+        const otherToggle = await request('/api/winman/capability', { method: 'PUT',
+          headers: { Origin: origin, 'x-semantier-csrf': '1', 'content-type': 'application/json' },
+          body: JSON.stringify({ enabled: true, expected_scope: otherScope }) })
+        expect(otherToggle.status).toBe(200)
+        expect(await otherToggle.json()).toMatchObject({ desired: { enabled: true }, execution: 'unavailable' })
+        const ownerWinman = await fetch(origin + '/api/winman/capability', { headers: { cookie: secondCookie } })
+        expect(await ownerWinman.json()).toMatchObject({ desired: { enabled: false }, execution: 'unavailable' })
         expect(await supervisor.statusFor(origin, otherIdentity)).toEqual({ state: 'Paused' })
         await expect(supervisor.enable(origin, folder, otherIdentity)).rejects.toThrow(/another account|folder binding/i)
         expect(await fs.readFile(path.join(folder, name), 'utf8')).toBe('Web returned portable supervisor bytes\n')
+        // Observe longer than the real engine's five-second watch interval.
+        await new Promise(resolve => setTimeout(resolve, 6200))
+        const ownerFiles = await fetch(origin + '/api/file-sync/files', { headers: { cookie: secondCookie,
+          'X-Semantier-User-Id': selected.userId, 'X-Semantier-Workspace-Id': selected.workspaceId } })
+        expect(ownerFiles.status).toBe(200)
+        expect((await ownerFiles.json()).files.map((file: { name: string }) => file.name)).not.toContain(heldAfterSwitch)
+        await supervisor.accountChanging(origin)
+        cookie = secondCookie
+        supervisor.accountChanged()
+        await supervisor.shutdown()
+        supervisor = new FileSyncSupervisor(options)
+        await supervisor.restore()
+        expect((await supervisor.statusFor(origin, selected)).state).toBe('Paused')
+        expect((await supervisor.owners())[0].enabled).toBe(false)
+        await supervisor.resumeFor(origin, selected)
+        await expect.poll(async () => {
+          const response = await request('/api/file-sync/files?download=true&path=' + heldAfterSwitch)
+          return response.status === 206 ? response.text() : ''
+        }, { timeout: 20000 }).toBe('Held until account A resumes\n')
       }
     } finally {
       await supervisor.shutdown()
@@ -212,5 +243,5 @@ it.skipIf(!fixture)(
       await fs.rm(root, { recursive: true, force: true })
     }
   },
-  60000
+  90000
 )
