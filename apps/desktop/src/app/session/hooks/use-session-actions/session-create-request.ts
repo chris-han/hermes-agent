@@ -146,7 +146,11 @@ export async function desktopSessionCreateParams(
   }
 
   const candidate = await pendingDefault
-  const accountModel = $connection.get() === capturedConnection && getComposerSelectionGeneration() === generation &&
+  const currentConnection = $connection.get()
+  const sameLocalConnection = capturedConnection?.mode === 'local' && currentConnection?.mode === 'local' &&
+    currentConnection.connectionId === capturedConnection.connectionId && currentConnection.baseUrl === capturedConnection.baseUrl &&
+    currentConnection.wsUrl === capturedConnection.wsUrl
+  const accountModel = sameLocalConnection && getComposerSelectionGeneration() === generation &&
     getCurrentModelSource() !== 'manual' ? currentAccountModelDefault(candidate, $connectionsRegistry.get()) : null
 
   return {

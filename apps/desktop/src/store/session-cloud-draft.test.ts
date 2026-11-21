@@ -88,6 +88,32 @@ it('does not apply a default if the account changes while the draft is prepared'
   }
 })
 
+it.each([
+  ['same local connection refresh', { mode: 'local', connectionId: 'local', baseUrl: 'http://127.0.0.1', wsUrl: 'ws://127.0.0.1' }, true],
+  ['different connection', { mode: 'remote', connectionId: 'other', baseUrl: 'https://other', wsUrl: 'wss://other' }, false],
+  ['different local endpoint', { mode: 'local', connectionId: 'local', baseUrl: 'http://127.0.0.2', wsUrl: 'ws://127.0.0.2' }, false]
+])('handles %s while the default is loading', async (_label, next, accepted) => {
+  const original = Object.getOwnPropertyDescriptor(window, 'hermesDesktop')
+  const account = { origin: 'https://cloud.example', scope: { userId: 'a', workspaceId: 'wa', organizationId: 'oa' } }
+  let release!: (value: unknown) => void
+  Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: { workspace: {
+    modelDefault: vi.fn(() => new Promise(resolve => {release = resolve}))
+  } } })
+  try {
+    $connection.set({ mode: 'local', connectionId: 'local', baseUrl: 'http://127.0.0.1', wsUrl: 'ws://127.0.0.1' } as never)
+    $connectionsRegistry.set({ connections: [], accountContext: account } as never)
+    setCurrentModelSource('default')
+    const pending = desktopSessionCreateParams('', null, 'default')
+    $connection.set(next as never)
+    release({ account, model: 'eligible-model' })
+    const params = await pending
+    if (accepted) {expect(params).toMatchObject({ provider: 'semantier-cloud', model: 'eligible-model' })}
+    else {expect(params).not.toHaveProperty('model')}
+  } finally {
+    if (original) {Object.defineProperty(window, 'hermesDesktop', original)} else {delete (window as { hermesDesktop?: unknown }).hermesDesktop}
+  }
+})
+
 it.each(['semantier-cloud', 'custom:byok'])('fresh draft has the correct model policy for %s', async provider => {
   setCurrentModel('explicit-session-model')
   setCurrentProvider(provider)
