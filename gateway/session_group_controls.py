@@ -258,6 +258,16 @@ def _execution_control(service, method, params):
     return handlers[method]()
 
 
+
+def readable_canonical_bot_chat(db, subject, *, operator=False):
+    """Read the title registry for the owner's active local Bot Chat."""
+    row = db.get_session_by_title(db.CANONICAL_BOT_CHAT_TITLE)
+    if (row and (row.get('user_id') == subject or operator)
+            and str(row.get('chat_id') or '').startswith('local-') and not row.get('archived')):
+        return row
+    return None
+
+
 def _profiles(authority, actor, home, params, *, include_siblings=True):
     from hermes_cli.profiles import _profile_info, read_profile_meta
     import hermes_yaml as yaml
@@ -300,10 +310,10 @@ def _profiles(authority, actor, home, params, *, include_siblings=True):
                     'message_count': target.get('message_count') or 0}
 
         # The named registry is not a recency window and canonical chats are hidden.
-        canonical = authority.db.get_session_by_title('Bot Chat')
-        if (canonical and (canonical.get('user_id') == actor.subject
-                           or 'session:operator' in actor.capabilities)
-                and str(canonical.get('chat_id') or '').startswith('local-') and not canonical.get('archived')):
+        canonical = readable_canonical_bot_chat(
+            authority.db, actor.subject, operator='session:operator' in actor.capabilities,
+        )
+        if canonical:
             row['canonical_session'] = summary(canonical)
         if 'session:operator' in actor.capabilities:
             owner_filter, owner_params = '', ()
