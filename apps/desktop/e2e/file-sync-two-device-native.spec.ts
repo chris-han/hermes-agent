@@ -77,11 +77,16 @@ test('two Windows devices require separate File Sync consent and stop independen
     await choose(b.app, b.page, folders[1])
     await expect.poll(() => fs.promises.readFile(path.join(folders[1], first), 'utf8').catch(() => ''), { timeout: 40_000 })
       .toBe('Device A fixture bytes\n')
-    const uncertain = await fetch(origin + '/__fixture/filex-gate', { method: 'POST', headers: { cookie,
-      'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'first-device-unknown' }) })
-    expect(uncertain.status).toBe(200)
-    await a.page.getByRole('button', { name: 'Pause', exact: true }).click()
-    await expect(a.page.getByRole('alert')).toContainText('could not confirm that previously sent work has stopped')
+    const gate = async (action: string) => {
+      const response = await fetch(origin + '/__fixture/filex-gate', { method: 'POST', headers: { cookie,
+        'Content-Type': 'application/json' }, body: JSON.stringify({ action }) })
+      expect(response.status).toBe(200)
+    }
+    await gate('first-device-unknown')
+    await gate('first-device-offline')
+    fs.writeFileSync(path.join(folders[0], `device-a-offline-${randomUUID()}.md`), 'Fixture outage\n')
+    await expect(a.page.getByRole('alert')).toContainText('could not confirm that previously sent work has stopped', { timeout: 40_000 })
+    await gate('first-device-online')
     await a.page.getByRole('button', { name: 'Resume', exact: true }).click()
     await expect(a.page.getByRole('alert')).toContainText('Resume will retry the stop check')
     const second = `device-b-${randomUUID()}.md`
