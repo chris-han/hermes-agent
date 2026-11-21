@@ -871,7 +871,18 @@ async def start_oauth_login(provider_id: str, request: Request, profile: Optiona
     _gc_oauth_sessions()
     _validate_oauth_profile(profile)
     if provider_id == "semantier-cloud":
-        return await _cloud_device_request(profile, "start", True) if account_prepare else await _cloud_device_request(profile, "start")
+        if account_prepare:
+            raw = await request.body()
+            if len(raw) > 8192:
+                raise HTTPException(413, "Account scope too large.")
+            try:
+                value = await request.json()
+            except ValueError as exc:
+                raise HTTPException(422, "Account scope required.") from exc
+            if not isinstance(value, dict) or set(value) != {'expected_actor'}:
+                raise HTTPException(422, "Account scope required.")
+            return await _cloud_device_request(profile, "start", True, value['expected_actor'])
+        return await _cloud_device_request(profile, "start")
     if account_prepare:
         raise HTTPException(400, "Account preparation is only available for Semantier Cloud.")
     catalog_entry = next((p for p in _OAUTH_PROVIDER_CATALOG if p["id"] == provider_id), None)

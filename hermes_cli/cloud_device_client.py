@@ -9,6 +9,7 @@ from datetime import datetime, timezone, UTC
 from hashlib import sha256
 import json
 import os
+import re
 import secrets
 import socket
 import ssl
@@ -328,7 +329,7 @@ def _started(state):
             'expires_in':max(0, int(_time(state['expires_at'])-_now())), 'poll_interval':5}
 
 
-def _new_state(previous, prepare_only=False):
+def _new_state(previous, prepare_only=False, expected_actor=None):
     cfg = _config()
     provider = (cfg.get('providers') or {}).get('semantier-cloud') or {}
     model = cfg.get('model') or {}
@@ -347,28 +348,36 @@ def _new_state(previous, prepare_only=False):
             'runtime_ref':_digest(str(get_default_hermes_root().resolve()).encode()),
             'profile_ref':_digest(home.encode()), 'generation':previous.get('generation',0)+1,
             'config_hash':_config_hash(), 'status':'starting',
-            'credentials':previous.get('credentials',{}), 'prepare_only':prepare_only}
+            'credentials':previous.get('credentials',{}), 'prepare_only':prepare_only,
+            'expected_actor':expected_actor}
 
 
-def start(prepare_only=False):
+def start(prepare_only=False, expected_actor=None):
     if not isinstance(prepare_only, bool):
         raise CloudConnectionError('cloud_config_invalid', 'Invalid account preparation mode.', 422)
+    fields = {'user_id', 'workspace_id', 'organization_id'}
+    if (prepare_only and (not isinstance(expected_actor, dict) or set(expected_actor) != fields
+            or any(not isinstance(expected_actor[k], str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,128}', expected_actor[k]) for k in fields))
+            or not prepare_only and expected_actor is not None):
+        raise CloudConnectionError('cloud_config_invalid', 'The authenticated account scope is required.', 422)
     with _locked():
         state = _read()
         if state and state.get('status') not in _TERMINAL | {'approved'}:
             if state.get('expires_at') and _time(state['expires_at']) <= _now():
                 state['status'] = 'expired'
-            elif state.get('prepare_only', False) != prepare_only:
+            elif state.get('prepare_only', False) != prepare_only or (prepare_only and state.get('expected_actor') != expected_actor):
                 raise CloudConnectionError('cloud_intent_in_progress', 'Another Cloud connection is already in progress.', 409, recovery='retry')
             elif state.get('verification_uri') and (state.get('config_hash') == _config_hash()
                     or state.get('committed_hash') == _config_hash()
                     or state.get('staged_config') == _config()):
                 return _started(state)
         if not state or state.get('status') != 'starting':
-            state = _new_state(state, prepare_only)
+            state = _new_state(state, prepare_only, expected_actor)
             _write(state)  # persist idempotency/proof BEFORE a possibly lost start reply
         for attempt in range(2):
             body = {k:state[k] for k in ('runtime_ref','profile_ref','generation')}
+            if prepare_only:
+                body['expected_actor'] = state['expected_actor']
             body.update(client_label='Semantier Agent Windows', possession_challenge=_digest(state['proof'].encode()),
                         idempotency_key=state['session_id'])
             try:
@@ -380,7 +389,7 @@ def start(prepare_only=False):
                 # An older client may have persisted the proof before losing its
                 # reply, then upgraded its start payload. Only that exact conflict
                 # permits a new intent; retain all already-installed credentials.
-                state = _new_state(state, prepare_only)
+                state = _new_state(state, prepare_only, expected_actor)
                 _write(state)
         uri = reply['data']['verification_uri']
         if _origin(f'{urlsplit(uri).scheme}://{urlsplit(uri).netloc}') != state['portal_origin']:
@@ -489,6 +498,11 @@ def _install(state, binding):
         raise CloudConnectionError('cloud_profile_mismatch', 'Cloud claim binding mismatch.', 409, recovery='original_profile')
     if _binding(state,data) != _binding(state,binding) or data.get('currency') != binding['currency']:
         raise CloudConnectionError('cloud_profile_mismatch', 'Cloud account binding mismatch.', 409, recovery='original_profile')
+    if state.get('prepare_only'):
+        expected = state.get('expected_actor')
+        if (not isinstance(expected, dict) or set(expected) != {'user_id', 'workspace_id', 'organization_id'}
+                or any(data.get(key) != value for key, value in expected.items())):
+            raise CloudConnectionError('cloud_profile_mismatch', 'Cloud account binding mismatch.', 409, recovery='original_profile')
     if _origin(data['inference_origin']) != state['origin'] or _origin(data['billing_origin']) != state['origin']:
         raise CloudConnectionError('cloud_profile_mismatch', 'Cloud approved origin mismatch.', 409, recovery='original_profile')
     if _time(data['installation_expires_at']) <= _now() or _time(data['credential']['expires_at']) <= _now():

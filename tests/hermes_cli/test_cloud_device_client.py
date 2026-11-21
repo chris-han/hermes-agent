@@ -3,6 +3,7 @@ import json
 import pytest
 from cryptography.fernet import Fernet
 
+ACTOR = {'user_id': 'user-test', 'workspace_id': 'workspace-test', 'organization_id': 'org-test'}
 
 @pytest.fixture
 def native(tmp_path, monkeypatch):
@@ -84,7 +85,7 @@ def test_account_preparation_installs_scoped_credential_without_selecting_model(
         config['model'] = model
     atomic_config_replace(home/'config.yaml', config)
     install_wire(device, monkeypatch)
-    started = device.start(prepare_only=True)
+    started = device.start(prepare_only=True, expected_actor=ACTOR)
     assert device.poll(started['session_id'])['status'] == 'approved'
     installed = device._config()
     assert installed.get('model') == model
@@ -96,14 +97,14 @@ def test_account_preparation_does_not_adopt_an_existing_manual_intent(native, mo
     install_wire(device, monkeypatch)
     manual = device.start()
     with pytest.raises(device.CloudConnectionError, match='already in progress'):
-        device.start(prepare_only=True)
+        device.start(prepare_only=True, expected_actor=ACTOR)
     assert device._read()['session_id'] == manual['session_id']
 
 
 def test_manual_connection_does_not_adopt_an_existing_account_preparation(native, monkeypatch):
     device, _ = native
     install_wire(device, monkeypatch)
-    preparation = device.start(prepare_only=True)
+    preparation = device.start(prepare_only=True, expected_actor=ACTOR)
     with pytest.raises(device.CloudConnectionError, match='already in progress'):
         device.start()
     assert device._read()['session_id'] == preparation['session_id']
@@ -113,13 +114,62 @@ def test_account_preparation_ack_recovery_preserves_model(native, monkeypatch):
     device, _ = native
     before = device._config()['model'].copy()
     calls = install_wire(device, monkeypatch, ack_lost=True)
-    started = device.start(prepare_only=True)
+    started = device.start(prepare_only=True, expected_actor=ACTOR)
     with pytest.raises(ValueError, match='lost ack'):
         device.poll(started['session_id'])
-    assert device.start(prepare_only=True) == started
+    assert device.start(prepare_only=True, expected_actor=ACTOR) == started
     assert device.poll(started['session_id'])['status'] == 'approved'
     assert calls.count('intent-test/claim') == 1
     assert device._config()['model'] == before
+
+
+def test_account_preparation_refuses_changed_actor_and_foreign_claim(native, monkeypatch):
+    device, home = native
+    install_wire(device, monkeypatch)
+    started = device.start(prepare_only=True, expected_actor=ACTOR)
+    with pytest.raises(device.CloudConnectionError, match='already in progress'):
+        device.start(prepare_only=True, expected_actor={**ACTOR, 'user_id': 'other-user'})
+    original = device._wire
+    def foreign(origin, operation, body=None, bearer=None):
+        reply = original(origin, operation, body, bearer)
+        if operation.endswith('/claim'):
+            reply['data']['user_id'] = 'other-user'
+        return reply
+    monkeypatch.setattr(device, '_wire', foreign)
+    before = (home/'config.yaml').read_bytes()
+    with pytest.raises(device.CloudConnectionError, match='account binding mismatch'):
+        device.poll(started['session_id'])
+    assert (home/'config.yaml').read_bytes() == before
+    assert not device._read().get('credential_ref')
+
+
+def test_account_preparation_requires_complete_expected_actor(native, monkeypatch):
+    device, _ = native
+    install_wire(device, monkeypatch)
+    for expected in (None, {'user_id': 'u'}, {**ACTOR, 'extra': 'x'}):
+        with pytest.raises(device.CloudConnectionError):
+            device.start(prepare_only=True, expected_actor=expected)
+
+
+def test_account_preparation_sends_expected_actor_and_rejects_missing_recovery_scope(native, monkeypatch):
+    device, home = native
+    install_wire(device, monkeypatch)
+    original = device._wire
+    captured = []
+    def wire(origin, operation, body=None, bearer=None):
+        if operation == 'start':
+            captured.append(body)
+        return original(origin, operation, body, bearer)
+    monkeypatch.setattr(device, '_wire', wire)
+    started = device.start(prepare_only=True, expected_actor=ACTOR)
+    assert captured[0]['expected_actor'] == ACTOR
+    state = device._read()
+    state.pop('expected_actor')
+    device._write(state)
+    before = (home/'config.yaml').read_bytes()
+    with pytest.raises(device.CloudConnectionError, match='account binding mismatch'):
+        device.poll(started['session_id'])
+    assert (home/'config.yaml').read_bytes() == before
 
 
 def test_cancel_persists_terminal_before_lost_remote_reply(native, monkeypatch):
@@ -163,7 +213,7 @@ def install_wire(device, monkeypatch, *, ack_lost=False):
             status, data = 'approved', binding
         elif operation.endswith('/claim'):
             status = 'claimed'
-            data = {**binding,'claim_id':state['claim_id'],'organization_id':'org-test',
+            data = {**binding, **ACTOR, 'claim_id':state['claim_id'],
                 'credential':{'token_id':'token-test','secret':'private-account-token',
                               'expires_at':'2099-02-01T00:00:00+00:00'},
                 'inference_origin':origin,'billing_origin':origin,
@@ -324,7 +374,7 @@ def test_account_preparation_local_route_preserves_model_and_keeps_secrets_nativ
     path = '/api/providers/oauth/semantier-cloud/start?account_prepare=true'
     assert client.post(path).status_code == 401
     headers = {'X-Hermes-Session-Token': _SESSION_TOKEN}
-    started = client.post(path, headers=headers)
+    started = client.post(path, headers=headers, json={'expected_actor': ACTOR})
     assert started.status_code == 200
     assert 'proof' not in started.text
     result = client.get('/api/providers/oauth/semantier-cloud/poll/'+started.json()['session_id'], headers=headers)
