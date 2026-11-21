@@ -23,17 +23,17 @@ it('shows a bound default for a fresh local draft without replacing live or manu
   $currentModelSource.set('default')
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>
-  const base = { activeGatewayProfile: 'default', activeSessionId: null, contextSuggestions: [], currentModel: '',
-    currentProvider: '', gateway: null, gatewayOpen: false }
+  const base = { activeGatewayProfile: 'default', activeSessionId: null, contextSuggestions: [], currentModel: 'auto-local',
+    currentProvider: 'local', gateway: null, gatewayOpen: false }
   const hook = renderHook(({ sessionId }: { sessionId: string | null }) => useChatBarState({ ...base, activeSessionId: sessionId }),
     { initialProps: { sessionId: null as string | null }, wrapper })
   try {
     await waitFor(() => expect(hook.result.current.model).toMatchObject({ model: 'eligible-model', provider: 'semantier-cloud' }))
     act(() => $currentModelSource.set('manual'))
-    expect(hook.result.current.model.model).toBe('')
+    expect(hook.result.current.model.model).toBe('auto-local')
     act(() => $currentModelSource.set('default'))
     hook.rerender({ sessionId: 'live' })
-    expect(hook.result.current.model.model).toBe('')
+    expect(hook.result.current.model.model).toBe('auto-local')
   } finally {
     hook.unmount(); client.clear(); $connection.set(null); $connectionsRegistry.set(null); $currentModelSource.set('')
     if (original) {Object.defineProperty(window, 'hermesDesktop', original)} else {delete (window as { hermesDesktop?: unknown }).hermesDesktop}

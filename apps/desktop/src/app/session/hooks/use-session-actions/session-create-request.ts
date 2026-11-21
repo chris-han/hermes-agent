@@ -130,7 +130,6 @@ export async function desktopSessionCreateParams(
     normalizeProfileKey($activeGatewayProfile.get())
 
   const mayUseAccountDefault = includeComposerSelection && !isManualSelection &&
-    (!$currentProvider.get().trim() || $currentProvider.get().trim() === 'semantier-cloud') &&
     capturedConnection?.mode === 'local' && profile === 'default' &&
     (!capturedRoute || capturedRoute.connectionId === capturedConnection.connectionId)
   const readDefault = window.hermesDesktop?.workspace?.modelDefault

@@ -27,8 +27,9 @@ afterEach(() => {
 it('uses the currently selected authorized account default only for a fresh local draft', async () => {
   const original = Object.getOwnPropertyDescriptor(window, 'hermesDesktop')
   const account = { origin: 'https://cloud.example', scope: { userId: 'a', workspaceId: 'wa', organizationId: 'oa' } }
+  const modelDefault = vi.fn().mockResolvedValue({ account, model: 'eligible-model' })
   Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: { workspace: {
-    modelDefault: vi.fn().mockResolvedValue({ account, model: 'eligible-model' })
+    modelDefault
   } } })
   try {
     $connection.set({ mode: 'local', connectionId: 'local', baseUrl: 'http://127.0.0.1' } as never)
@@ -38,6 +39,7 @@ it('uses the currently selected authorized account default only for a fresh loca
     setCurrentModel('my-local-model'); setCurrentProvider('custom:byok'); setCurrentModelSource('manual')
     expect(await desktopSessionCreateParams('', null, 'default')).toMatchObject({ provider: 'custom:byok', model: 'my-local-model' })
     setCurrentModelSource('default')
+    modelDefault.mockResolvedValueOnce(null) // The native owner refuses a saved BYOK model.
     expect(await desktopSessionCreateParams('', null, 'default')).not.toHaveProperty('model')
     setCurrentModel(''); setCurrentProvider(''); setCurrentModelSource('default')
     $connectionsRegistry.set({ connections: [], accountContext: { ...account, scope: { ...account.scope, userId: 'other' } } } as never)
@@ -45,6 +47,22 @@ it('uses the currently selected authorized account default only for a fresh loca
     $connection.set({ mode: 'remote', connectionId: 'remote', baseUrl: 'https://remote.example' } as never)
     $connectionsRegistry.set({ connections: [], accountContext: account } as never)
     expect(await desktopSessionCreateParams('', null, 'default')).not.toHaveProperty('model')
+  } finally {
+    if (original) {Object.defineProperty(window, 'hermesDesktop', original)} else {delete (window as { hermesDesktop?: unknown }).hermesDesktop}
+  }
+})
+
+it('uses an eligible account default when the displayed provider was auto-detected', async () => {
+  const original = Object.getOwnPropertyDescriptor(window, 'hermesDesktop')
+  const account = { origin: 'https://cloud.example', scope: { userId: 'a', workspaceId: 'wa', organizationId: 'oa' } }
+  Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: { workspace: {
+    modelDefault: vi.fn().mockResolvedValue({ account, model: 'eligible-model' })
+  } } })
+  try {
+    $connection.set({ mode: 'local', connectionId: 'local', baseUrl: 'http://127.0.0.1' } as never)
+    $connectionsRegistry.set({ connections: [], accountContext: account } as never)
+    setCurrentModel('auto-detected-model'); setCurrentProvider('local'); setCurrentModelSource('default')
+    expect(await desktopSessionCreateParams('', null, 'default')).toMatchObject({ provider: 'semantier-cloud', model: 'eligible-model' })
   } finally {
     if (original) {Object.defineProperty(window, 'hermesDesktop', original)} else {delete (window as { hermesDesktop?: unknown }).hermesDesktop}
   }

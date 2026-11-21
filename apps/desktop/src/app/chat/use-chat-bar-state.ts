@@ -72,8 +72,8 @@ export function useChatBarState({
     refresh()
     return () => {live = false; revision++; unsubStatus?.(); unsubAccount?.()}
   }, [connection, profile, activeSessionId, modelOptionsOwnerConnectionId])
-  const accountDefault = account.allowCloud && !activeSessionId && modelSource !== 'manual' &&
-    (!currentProvider || currentProvider === 'semantier-cloud') ? currentAccountModelDefault(candidate, registry) : null
+  const accountDefault = account.allowCloud && !activeSessionId && modelSource !== 'manual'
+    ? currentAccountModelDefault(candidate, registry) : null
   const displayModel = accountDefault || currentModel
   const displayProvider = accountDefault ? 'semantier-cloud' : currentProvider
 
