@@ -84,5 +84,28 @@ test('Windows adopts an opted-in legacy pair using a device grant', async ({}, i
     await page.getByRole('button', { name: 'Pause', exact: true }).click()
     await expect(page.getByText('Paused', { exact: true })).toBeVisible()
     expect((await page.evaluate(() => (window as any).hermesDesktop.connections.list())).primary).toBe('local')
+
+    // Simulate an old installation that had explicit sync enabled when it exited.
+    // Close the app before replacing its owned fixture registry so shutdown cannot
+    // rewrite the simulated pre-upgrade state.
+    await app.close()
+    registry.bindings[0] = { ...registry.bindings[0], sealedToken: native.sealed, enabled: true }
+    delete registry.bindings[0].deviceGrant
+    delete registry.bindings[0].deviceStop
+    await fs.writeFile(path.join(stateDir, 'folder-owners.json'), JSON.stringify(registry))
+    const restartName = `legacy-restored-${randomUUID()}.md`
+    await fs.writeFile(path.join(folder, restartName), 'Restored legacy bytes\n')
+    const restarted = await fixture.restart()
+    await expect.poll(async () => {
+      const result = await fetch(origin + '/api/file-sync/files?download=true&path=' + restartName, { headers: { cookie,
+        'X-Semantier-User-Id': account.user_id, 'X-Semantier-Workspace-Id': account.workspace_id } })
+      return result.status === 206 ? result.text() : ''
+    }, { timeout: 90_000 }).toBe('Restored legacy bytes\n')
+    const restored = JSON.parse(await fs.readFile(path.join(stateDir, 'folder-owners.json'), 'utf8'))
+    expect(restored.bindings[0]).toMatchObject({ id, paired: true, enabled: true, deviceGrant: true })
+    const restoredToken = await restarted.app.evaluate(({ safeStorage }, value) => safeStorage.decryptString(Buffer.from(value, 'base64')), restored.bindings[0].sealedToken)
+    expect(restoredToken).toMatch(/^fxd_[A-Za-z0-9_-]{43}$/)
+    expect(restoredToken).not.toBe(old.token)
+    expect((await restarted.page.evaluate(() => (window as any).hermesDesktop.connections.list())).primary).toBe('local')
   } finally { await fixture.close() }
 })
