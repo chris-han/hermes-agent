@@ -1207,6 +1207,7 @@ export interface DesktopRegistryConnection {
 }
 
 export interface DesktopConnectionsRegistry {
+  accountContext?: { origin: string; scope: { userId: string; workspaceId: string; organizationId: string } }
   version: number
   // id of the connection that owns the window/primary backend.
   primary: string

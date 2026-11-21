@@ -15,10 +15,12 @@ import { SemantierPersonalSync } from './semantier-personal-sync'
 
 export function SemantierWorkspaceSettings({
   accountOnly = false,
+  accountOrigin,
   connections,
   onConnect
 }: {
   accountOnly?: boolean
+  accountOrigin?: string
   connections: DesktopRegistryConnection[]
   onConnect: (id: string) => Promise<void> | void
 }) {
@@ -26,15 +28,26 @@ export function SemantierWorkspaceSettings({
   const copy = semantierWorkspaceCopy(locale)
 
   const [origin, setOrigin] = useState(
-    () => connections.find(c => c.transport === 'semantier-workspace-http')?.url || 'https://cloud.semantier.cn'
+    () => accountOrigin || connections.find(c => c.transport === 'semantier-workspace-http')?.url || 'https://cloud.semantier.cn'
   )
 
   const [identity, setIdentity] = useState<WorkspaceIdentity | null>(null)
   const [checking, setChecking] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [accountRevision, setAccountRevision] = useState(0)
   const generation = useRef(0)
+  const accountAction = useRef(false)
   const addressId = useId()
+
+  useEffect(() => {
+    if (accountOnly && accountOrigin) {setOrigin(accountOrigin)}
+  }, [accountOnly, accountOrigin])
+
+  useEffect(() => window.hermesDesktop.workspace?.onAccountChanged?.(() => {
+    void refreshConnectionsRegistry()
+    if (!accountAction.current) {setAccountRevision(value => value + 1)}
+  }), [])
 
   useEffect(() => {
     const current = ++generation.current
@@ -62,11 +75,12 @@ export function SemantierWorkspaceSettings({
     return () => {
       generation.current++
     }
-  }, [origin, copy.forbidden, copy.unavailable])
+  }, [origin, copy.forbidden, copy.unavailable, accountRevision])
 
   const connect = async () => {
     const current = generation.current
     setBusy(true)
+    accountAction.current = true
     setError('')
     let signingIn = false
 
@@ -95,9 +109,14 @@ export function SemantierWorkspaceSettings({
         throw new Error(copy.identityRequired)
       }
 
+      if (accountOnly) {
+        await api.selectAccount(origin, { userId: actual.user.user_id, workspaceId: actual.workspace.id, organizationId: actual.organization_id })
+        if (generation.current !== current) {return}
+        setIdentity(actual)
+        await refreshConnectionsRegistry()
+        return
+      }
       setIdentity(actual)
-
-      if (accountOnly) { return }
       const normalized = new URL(origin).origin
 
       const saved = connections.find(
@@ -129,12 +148,14 @@ export function SemantierWorkspaceSettings({
           ? copy.forbidden : copy.unavailable)
       }
     } finally {
+      accountAction.current = false
       setBusy(false)
     }
   }
 
   const signOut = async () => {
     setBusy(true)
+    accountAction.current = true
     setError('')
 
     try {
@@ -143,6 +164,7 @@ export function SemantierWorkspaceSettings({
     } catch {
       setError(copy.failed)
     } finally {
+      accountAction.current = false
       setBusy(false)
     }
   }

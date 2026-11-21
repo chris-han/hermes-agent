@@ -13,7 +13,7 @@ export const FILEX_PIN = {
   win32: '190305d0e07c882e1304ebbddccc338a805ad00e3413dd48249f8d01f8729ed5'
 } as const
 
-type Identity = { userId: string; workspaceId: string }
+type Identity = { userId: string; workspaceId: string; organizationId?: string }
 type Credential = Identity & { remoteRoot: string; token: string; enginePath: string; version: string }
 type Binding = Identity & {
   id: string
@@ -55,6 +55,7 @@ export class FileSyncSupervisor {
   private generation = 0
   private busy = false
   private closing = false
+  private accountTransitions = 0
   private quitReady = false
   private quitPending: Promise<void> | null = null
   private controller: AbortController | null = null
@@ -78,7 +79,8 @@ export class FileSyncSupervisor {
       if (registry.version !== 1 || !Array.isArray(registry.bindings) || registry.bindings.some((record: Binding) =>
         !record || ['id', 'serverOrigin', 'userId', 'workspaceId', 'canonicalLocalFolder', 'remoteRoot', 'sealedToken'].some(
           key => typeof record[key as keyof Binding] !== 'string' || !record[key as keyof Binding]
-        ) || typeof record.enabled !== 'boolean' || typeof record.paired !== 'boolean' || !path.isAbsolute(record.canonicalLocalFolder)
+        ) || (record.organizationId !== undefined && (typeof record.organizationId !== 'string' || !record.organizationId)) ||
+        typeof record.enabled !== 'boolean' || typeof record.paired !== 'boolean' || !path.isAbsolute(record.canonicalLocalFolder)
       )) {
         throw new Error('Invalid File Sync ownership registry. Preserve it for recovery.')
       }
@@ -126,9 +128,17 @@ export class FileSyncSupervisor {
   }
   async accountChanging(origin: string) {
     normalizeSemantierWorkspaceOrigin(origin) // Validate even while another origin is pending.
-    this.generation++
-    await this.stop()
+    this.accountTransitions++
+    try {
+      await this.pause()
+      const owners = await this.owners()
+      if (owners.some(owner => owner.enabled)) {await this.write(owners.map(owner => ({ ...owner, enabled: false })))}
+    } catch (error) {
+      this.accountChanged()
+      throw error
+    }
   }
+  accountChanged() {this.accountTransitions = Math.max(0, this.accountTransitions - 1)}
   private async stop() {
     if (this.controller?.signal.aborted) {
       this.stopChild?.()
@@ -171,7 +181,8 @@ export class FileSyncSupervisor {
     }
   }
   private sameOwner(record: Binding, origin: string, identity: Identity) {
-    return record.serverOrigin === origin && record.userId === identity.userId && record.workspaceId === identity.workspaceId
+    return record.serverOrigin === origin && record.userId === identity.userId && record.workspaceId === identity.workspaceId &&
+      record.organizationId === identity.organizationId
   }
   async selectedBinding(origin: string, identity: Identity) {
     const generation = this.generation
@@ -243,11 +254,12 @@ export class FileSyncSupervisor {
     if (record) {await this.selectedBinding(record.serverOrigin, record)}
 
     if (record) {
-      await this.enable(record.serverOrigin, record.canonicalLocalFolder)
+      await this.enable(record.serverOrigin, record.canonicalLocalFolder, record)
     }
   }
-  async enable(rawOrigin: string, folder: string, expectedIdentity?: Identity) {
+  async enable(rawOrigin: string, folder: string, expectedIdentity?: Identity, revalidateLegacy = false) {
     if(this.closing){throw new Error('File Sync is closing with the application.')}
+    if(this.accountTransitions){throw new Error('Account change in progress. Reconnect File Sync afterwards.')}
 
     if (this.busy) {
       throw new Error('A File Sync operation is already in progress.')
@@ -271,13 +283,14 @@ export class FileSyncSupervisor {
       const identity = await this.options.identity(origin)
       check()
 
-      if (expectedIdentity && (identity.userId !== expectedIdentity.userId || identity.workspaceId !== expectedIdentity.workspaceId)) {
+      if (expectedIdentity && (identity.userId !== expectedIdentity.userId || identity.workspaceId !== expectedIdentity.workspaceId ||
+          identity.organizationId !== expectedIdentity.organizationId)) {
         throw new Error('The account changed. Reconnect File Sync.')
       }
 
       const owners = await this.owners()
       check()
-      const match = this.matchOwner(owners, origin, identity, canonical)
+      const match = this.matchOwner(owners, origin, identity, canonical, revalidateLegacy)
 
       if (!match && (await fs.readdir(canonical)).length) {
         throw new Error('Choose an empty folder for a new File Sync binding. Existing files are preserved.')
@@ -324,7 +337,7 @@ export class FileSyncSupervisor {
       const current = await this.options.identity(origin)
       check()
 
-      if (current.userId !== record.userId || current.workspaceId !== record.workspaceId) {
+      if (current.userId !== record.userId || current.workspaceId !== record.workspaceId || current.organizationId !== record.organizationId) {
         throw new Error('The account changed before sync started.')
       }
 
@@ -379,7 +392,7 @@ export class FileSyncSupervisor {
     return canonical
   }
 
-  private matchOwner(owners: Binding[], origin: string, identity: Identity, canonical: string) {
+  private matchOwner(owners: Binding[], origin: string, identity: Identity, canonical: string, revalidateLegacy: boolean) {
     if (!identity.userId || !identity.workspaceId) {
       throw new Error('Sign in to your personal Workspace first.')
     }
@@ -391,6 +404,7 @@ export class FileSyncSupervisor {
       (match.serverOrigin !== origin ||
         match.userId !== identity.userId ||
         match.workspaceId !== identity.workspaceId ||
+        (match.organizationId !== identity.organizationId && !(revalidateLegacy && match.organizationId === undefined)) ||
         canonicalKey(match.canonicalLocalFolder) !== canonicalKey(canonical))
     ) {
       throw new Error(

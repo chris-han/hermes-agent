@@ -343,6 +343,12 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     managedDeviceConsent: (origin, scope, deviceId, permissions) => ipcRenderer.invoke('hermes:workspace:managed-device-consent', origin, scope, deviceId, permissions),
     managedDeviceRevoke: (origin, scope, deviceId) => ipcRenderer.invoke('hermes:workspace:managed-device-revoke', origin, scope, deviceId),
     identity: origin => ipcRenderer.invoke('hermes:workspace:identity', origin),
+    selectAccount: (origin, scope) => ipcRenderer.invoke('hermes:workspace:select-account', origin, scope),
+    onAccountChanged: callback => {
+      const listener = () => callback()
+      ipcRenderer.on('hermes:workspace:account-changed', listener)
+      return () => ipcRenderer.removeListener('hermes:workspace:account-changed', listener)
+    },
     login: origin => ipcRenderer.invoke('hermes:workspace:login', origin),
     logout: origin => ipcRenderer.invoke('hermes:workspace:logout', origin),
     ensureWinmanChat: (origin, scope) => ipcRenderer.invoke('hermes:workspace:ensure-winman-chat', origin, scope),

@@ -9062,6 +9062,7 @@ function sanitizeConnectionsRegistry(registry = readDesktopConnectionsRegistry()
     primary: registry.primary,
     launchMode: registry.launchMode,
     lastUsed: registry.lastUsed,
+    accountContext: registry.accountContext,
     secureTokenStorage,
     connections: registry.connections.map(sanitizeRegistryConnection),
     // Surface quarantined-entry NOTICES only (reason + best-effort label) —
@@ -16785,12 +16786,7 @@ async function handleHermesApiRequest(request) {
   return response
 }
 
-const personalFileSync = createFileSyncIpc(senderId => {
-  const route = windowConnectionRoutes.get(senderId)
-  const source = readDesktopConnectionsRegistry().connections.find(item => item.id === route?.connectionId)
-
-  return source?.transport === 'semantier-workspace-http' ? new URL(source.url).origin : null
-})
+const personalFileSync = createFileSyncIpc(() => readDesktopConnectionsRegistry().accountContext ?? null)
 
 const managedDeviceEnrollment=new ManagedDeviceEnrollment({
   client:origin=>semantierWorkspace(origin).client,
@@ -16821,7 +16817,18 @@ const personalCapabilitySync=new PersonalCapabilitySync({
   }
 })
 
+function notifyAccountContextChanged() {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.webContents.isDestroyed()) {win.webContents.send('hermes:workspace:account-changed')}
+  }
+}
+
 registerSemantierWorkspaceIpc((origin, authenticated) => {
+  const registry = readDesktopConnectionsRegistry()
+  if (!authenticated && registry.accountContext?.origin === origin) {
+    writeDesktopConnectionsRegistry({ ...registry, accountContext: undefined })
+  }
+  if (!authenticated) {notifyAccountContextChanged()}
   for (const source of readDesktopConnectionsRegistry().connections) {
     if (source.transport !== 'semantier-workspace-http' || new URL(source.url).origin !== origin) { continue }
     workspaceAccountGenerations.set(source.id, (workspaceAccountGenerations.get(source.id) || 0) + 1)
@@ -16837,7 +16844,10 @@ registerSemantierWorkspaceIpc((origin, authenticated) => {
 
     broadcastConnectionsChanged({ connectionId: source.id, reason: 'account-changed', authenticated })
   }
-}, origin => personalFileSync.accountChanging(origin), managedDeviceEnrollment, personalCapabilitySync)
+}, origin => personalFileSync.accountChanging(origin), managedDeviceEnrollment, personalCapabilitySync, account => {
+  writeDesktopConnectionsRegistry({ ...readDesktopConnectionsRegistry(), accountContext: account })
+  notifyAccountContextChanged()
+}, () => readDesktopConnectionsRegistry().accountContext, () => personalFileSync.accountChanged())
 
 ipcMain.handle('hermes:api', async (event, request) => {
   const ownRoute = windowConnectionRoutes.get(event.sender.id)
@@ -18530,7 +18540,9 @@ app.on('open-url', (event, url) => {
 })
 
 app.whenReady().then(async () => {
-  void personalFileSync.restore().catch(() => { /* Settings exposes reconnection; never reset pair state. */ })
+  if (readDesktopConnectionsRegistry().accountContext) {
+    void personalFileSync.restore().catch(() => { /* Settings exposes reconnection; never reset pair state. */ })
+  }
   journeyObservations = new JourneyObservations(app.getPath('userData'), process.env.SEMANTIER_CLOUD_PUBLIC_ORIGIN ?? '', () => semantierObservations.status().journeyEnabled, (input, init) => electronNet.fetch(input, init), app.getVersion())
   void journeyObservations.firstOpen()
   // Post-update relaunch detection (App Installer arm): when the previous

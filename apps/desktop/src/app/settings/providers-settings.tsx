@@ -544,7 +544,7 @@ export function ProvidersSettings({
     </div>
   )
   const accountSection = window.hermesDesktop?.workspace ? (
-    <SemantierWorkspaceSettings accountOnly connections={registry?.connections ?? []} onConnect={() => {}} />
+    <SemantierWorkspaceSettings accountOnly accountOrigin={registry?.accountContext?.origin} connections={registry?.connections ?? []} onConnect={() => {}} />
   ) : null
 
   if (view === 'custom-endpoints') {

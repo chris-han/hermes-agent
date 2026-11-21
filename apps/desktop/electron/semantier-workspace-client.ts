@@ -17,7 +17,7 @@ export interface WorkspaceScope {
 
 export function assertWorkspaceScope(identity: WorkspaceIdentity, expected: WorkspaceScope): void {
   if (!identity.authenticated || !expected?.userId || !expected.workspaceId || !expected.organizationId ||
-    identity.user?.user_id !== expected.userId || identity.workspace?.id !== expected.workspaceId ||
+    identity.user?.user_id !== expected.userId || identity.user?.workspace_id !== expected.workspaceId || identity.workspace?.id !== expected.workspaceId ||
     identity.organization_id !== expected.organizationId) {
     throw new Error('The Semantier account or workspace changed. Reconnect before continuing.')
   }

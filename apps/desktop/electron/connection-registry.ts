@@ -95,6 +95,8 @@ export interface QuarantinedRegistryEntry {
 export const REGISTRY_QUARANTINE_CAP = 20
 
 export interface ConnectionRegistry {
+  /** Selected account context is a preference; each operation revalidates server identity. */
+  accountContext?: { origin: string; scope: { userId: string; workspaceId: string; organizationId: string } }
   /** Observational installation metadata; never a credential or hardware identity. */
   installationId?: string
   /** Private native key references. Controller validates; never sent to renderer. */
@@ -1418,6 +1420,20 @@ export function normalizeRegistry(raw: unknown): ConnectionRegistry {
 
   if (typeof parsed.installationId === 'string' && /^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(parsed.installationId)) {
     normalized.installationId = parsed.installationId
+  }
+
+  const account = parsed.accountContext as { origin?: unknown; scope?: { userId?: unknown; workspaceId?: unknown; organizationId?: unknown } } | null
+  const scope = account?.scope
+  if (account && typeof account.origin === 'string' && scope &&
+      typeof scope.userId === 'string' && scope.userId.length > 0 && scope.userId.length <= 256 &&
+      typeof scope.workspaceId === 'string' && scope.workspaceId.length > 0 && scope.workspaceId.length <= 256 &&
+      typeof scope.organizationId === 'string' && scope.organizationId.length > 0 && scope.organizationId.length <= 256) {
+    try {
+      normalized.accountContext = {
+        origin: normalizeSemantierWorkspaceOrigin(account.origin),
+        scope: { userId: scope.userId, workspaceId: scope.workspaceId, organizationId: scope.organizationId }
+      }
+    } catch { /* Invalid preferences cannot become account authority. */ }
   }
 
   if (Object.prototype.hasOwnProperty.call(parsed,'personalCapabilities')) {

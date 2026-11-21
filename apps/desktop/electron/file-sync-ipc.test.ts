@@ -2,21 +2,23 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
+import { dialog } from 'electron'
 import { afterEach, expect, it, vi } from 'vitest'
 
-const mock = vi.hoisted(() => ({ handlers: new Map<string, (...args: any[]) => any>(), root: '', user: 'a' }))
+const mock = vi.hoisted(() => ({ handlers: new Map<string, (...args: any[]) => any>(), root: '', user: 'a', org: 'org-a', selectedOrg: 'org-a' }))
 vi.mock('electron', () => ({
-  app: { isPackaged: false, getAppPath: () => mock.root, getPath: () => mock.root },
+  app: { isPackaged: false, getAppPath: () => mock.root, getPath: () => mock.root, getLocale: () => 'en' },
   ipcMain: { handle: (name: string, handler: any) => mock.handlers.set(name, handler) },
-  dialog: { showOpenDialog: vi.fn() },
+  dialog: { showOpenDialog: vi.fn(), showMessageBox: vi.fn() },
   safeStorage: { isEncryptionAvailable: () => true, getSelectedStorageBackend: () => 'secret_service', encryptString: () => Buffer.from('sealed') }
 }))
 vi.mock('./semantier-workspace-ipc', () => ({ workspace: () => ({ client: {
-  identity: async () => ({ authenticated: true, user: { user_id: mock.user, workspace_id: 'w' + mock.user }, workspace: { id: 'w' + mock.user } }),
+  identity: async () => ({ authenticated: true, user: { user_id: mock.user, workspace_id: 'w' + mock.user }, workspace: { id: 'w' + mock.user }, organization_id: mock.org }),
   fileSyncBinding: async () => ({ userId: mock.user, workspaceId: 'w' + mock.user, remoteRoot: 'private://', token: 'secret', enginePath: '/api/file-sync/engine', version: '0.61.1' })
 } }) }))
 import { createFileSyncIpc } from './file-sync-ipc'
 
+const currentAccount = () => ({ origin: 'https://cloud.example', scope: { userId: mock.user, workspaceId: 'w' + mock.user, organizationId: mock.selectedOrg } })
 const supervisors: ReturnType<typeof createFileSyncIpc>[] = []
 afterEach(async () => {
   for (const s of supervisors.splice(0)) { await s.shutdown() }
@@ -24,11 +26,14 @@ afterEach(async () => {
   if (mock.root) { await fs.rm(mock.root, { recursive: true, force: true }) }
   mock.handlers.clear()
   mock.user = 'a'
+  mock.org = 'org-a'
+  mock.selectedOrg = 'org-a'
+  vi.clearAllMocks()
 })
 
 async function setup() {
   mock.root = await fs.mkdtemp(path.join(os.tmpdir(), 'filex-ipc-'))
-  const s = createFileSyncIpc(() => 'https://cloud.example')
+  const s = createFileSyncIpc(currentAccount)
   supervisors.push(s)
   s.options.forbiddenRoots = []
 
@@ -80,14 +85,14 @@ it('reports and resumes the running current folder with a paused historical bind
 it('restores the unique enabled folder and resumes the persisted selection after a paused restart', async () => {
   const { s, current, invoke } = await setup()
   await s.shutdown()
-  const restarted = createFileSyncIpc(() => 'https://cloud.example')
+  const restarted = createFileSyncIpc(currentAccount)
   supervisors.push(restarted)
   Object.assign(restarted.options, s.options)
   await restarted.restore()
   expect(await invoke('status')).toMatchObject({ state: 'Synced', folder: current })
   await invoke('pause')
   await restarted.shutdown()
-  const paused = createFileSyncIpc(() => 'https://cloud.example')
+  const paused = createFileSyncIpc(currentAccount)
   supervisors.push(paused)
   Object.assign(paused.options, s.options)
   expect(await invoke('status')).toEqual({ state: 'Paused', folder: current })
@@ -100,16 +105,73 @@ it('refuses restoration when the authenticated account no longer owns the retain
   await s.shutdown()
   const before = await s.owners()
   mock.user = 'b'
-  const restarted = createFileSyncIpc(() => 'https://cloud.example')
+  const restarted = createFileSyncIpc(currentAccount)
   supervisors.push(restarted)
   Object.assign(restarted.options, s.options)
-  await expect(restarted.restore()).rejects.toThrow('belongs to another account')
+  await expect(restarted.restore()).rejects.toThrow('The account changed')
   expect(await restarted.owners()).toEqual(before)
+})
+
+it('refuses File Sync when current organization differs from the selected account scope', async () => {
+  const { invoke } = await setup()
+  mock.org = 'org-b'
+  await expect(invoke('status')).rejects.toThrow(/account or workspace changed/i)
+})
+
+it('does not expose or resume a folder selected under a different organization', async () => {
+  const { s, invoke } = await setup()
+  await s.accountChanging('https://cloud.example')
+  s.accountChanged()
+  mock.org = 'org-b'
+  mock.selectedOrg = 'org-b'
+  expect(await invoke('status')).toEqual({ state: 'Paused' })
+  await expect(invoke('resume')).rejects.toThrow('Choose a folder')
+})
+
+it('requires explicit folder confirmation to revalidate a legacy binding without an organization', async () => {
+  const { s, current } = await setup()
+  await s.shutdown()
+  const registry = JSON.parse(await fs.readFile(s.registryPath, 'utf8'))
+  registry.bindings.forEach((binding: any) => { delete binding.organizationId })
+  await fs.writeFile(s.registryPath, JSON.stringify(registry))
+  const restarted = createFileSyncIpc(currentAccount)
+  supervisors.push(restarted)
+  Object.assign(restarted.options, s.options)
+  await expect(restarted.restore()).rejects.toThrow('The account changed')
+  vi.mocked(dialog.showOpenDialog).mockResolvedValue({ canceled: false, filePaths: [current] } as never)
+  vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 1 } as never)
+  const choose = mock.handlers.get('hermes:file-sync:choose')!
+  expect(await choose({ sender: { id: 1 } })).toMatchObject({ state: 'Synced', folder: current })
+  expect((await restarted.owners()).find(binding => binding.canonicalLocalFolder === current)?.organizationId).toBe('org-a')
+})
+
+it('does not change bindings when the user declines folder confirmation', async () => {
+  const { s, invoke } = await setup()
+  const candidate = path.join(mock.root, 'candidate')
+  await fs.mkdir(candidate)
+  vi.mocked(dialog.showOpenDialog).mockResolvedValue({ canceled: false, filePaths: [candidate] } as never)
+  vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 0 } as never)
+  const before = await s.owners()
+  await invoke('choose')
+  expect(dialog.showMessageBox).toHaveBeenCalledOnce()
+  expect(await s.owners()).toEqual(before)
+})
+
+it('does not start a folder operation without an explicitly selected account', async () => {
+  mock.root = await fs.mkdtemp(path.join(os.tmpdir(), 'filex-no-account-'))
+  const supervisor = createFileSyncIpc(() => null)
+  supervisors.push(supervisor)
+  const choose = mock.handlers.get('hermes:file-sync:choose')!
+  vi.mocked(dialog.showOpenDialog).mockClear()
+  await expect(choose({ sender: { id: 1 } })).rejects.toThrow('Sign in to your Semantier account')
+  expect(dialog.showOpenDialog).not.toHaveBeenCalled()
+  expect(supervisor.status().state).toBe('Paused')
 })
 
 it('isolates A to B to A, including resume and pause', async () => {
   const { s, current, invoke } = await setup()
   await s.accountChanging('https://cloud.example')
+  s.accountChanged()
   mock.user = 'b'
   expect(await invoke('status')).toEqual({ state: 'Paused' })
   await expect(invoke('resume')).rejects.toThrow(/Choose a folder/)
@@ -119,10 +181,45 @@ it('isolates A to B to A, including resume and pause', async () => {
   await s.enable('https://cloud.example', b)
   expect(await invoke('status')).toMatchObject({ state: 'Synced', folder: b })
   await s.accountChanging('https://cloud.example')
+  s.accountChanged()
   mock.user = 'a'
   expect(await invoke('status')).toEqual({ state: 'Paused', folder: current })
   expect(await invoke('resume')).toMatchObject({ state: 'Synced', folder: current })
   expect(await s.owners()).toHaveLength(3)
+})
+
+it('persists a pause on account change so restart cannot silently resume the old account', async () => {
+  const { s } = await setup()
+  await s.accountChanging('https://cloud.example')
+  s.accountChanged()
+  expect((await s.owners()).every(binding => !binding.enabled)).toBe(true)
+  await s.shutdown()
+  const restarted = createFileSyncIpc(currentAccount)
+  supervisors.push(restarted)
+  Object.assign(restarted.options, s.options)
+  await restarted.restore()
+  expect(restarted.status().state).toBe('Paused')
+})
+
+it('refuses a concurrent resume until the account transition finishes', async () => {
+  const { s, invoke } = await setup()
+  await s.accountChanging('https://cloud.example')
+  await expect(invoke('resume')).rejects.toThrow('Account change in progress')
+  s.accountChanged()
+  expect(await invoke('resume')).toMatchObject({ state: 'Synced' })
+})
+
+it('pauses a retained enabled binding even when account change precedes startup restoration', async () => {
+  const { s } = await setup()
+  await s.shutdown()
+  const restarted = createFileSyncIpc(currentAccount)
+  supervisors.push(restarted)
+  Object.assign(restarted.options, s.options)
+  await restarted.accountChanging('https://cloud.example')
+  restarted.accountChanged()
+  await restarted.restore()
+  expect((await restarted.owners()).every(binding => !binding.enabled)).toBe(true)
+  expect(restarted.status().state).toBe('Paused')
 })
 
 it.each(['ambiguous', 'multiple-enabled', 'wrong-selection', 'missing-selection', 'duplicate-id', 'duplicate-folder', 'invalid-enabled'])('refuses %s registry state without rewriting records', async kind => {
@@ -145,7 +242,7 @@ it.each(['ambiguous', 'multiple-enabled', 'wrong-selection', 'missing-selection'
   if (kind === 'duplicate-id') { registry.bindings[0].id = registry.bindings[1].id }
   await fs.writeFile(s.registryPath, JSON.stringify(registry))
   const before = await fs.readFile(s.registryPath, 'utf8')
-  const restarted = createFileSyncIpc(() => 'https://cloud.example')
+  const restarted = createFileSyncIpc(currentAccount)
   supervisors.push(restarted)
   Object.assign(restarted.options, s.options)
   await expect(invoke('status')).rejects.toThrow(/Ambiguous|Inconsistent|Invalid/)
@@ -169,6 +266,7 @@ it('rejects a status read delayed across an account generation change', async ()
   const rejected = expect(status).rejects.toThrow(/account changed/)
   await started
   await s.accountChanging('https://cloud.example')
+  s.accountChanged()
   mock.user = 'b'
   release()
   await rejected
@@ -212,7 +310,7 @@ it('adopts a legacy unique enabled binding without using historical array order'
   const registry = JSON.parse(await fs.readFile(s.registryPath, 'utf8'))
   delete registry.selectedBindingIds
   await fs.writeFile(s.registryPath, JSON.stringify(registry))
-  const restarted = createFileSyncIpc(() => 'https://cloud.example')
+  const restarted = createFileSyncIpc(currentAccount)
   supervisors.push(restarted)
   Object.assign(restarted.options, s.options)
   await restarted.restore()

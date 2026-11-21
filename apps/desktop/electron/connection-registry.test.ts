@@ -2326,3 +2326,12 @@ test('observational installation ID survives normalization without becoming conn
   assert.deepEqual(registry.connections,normalizeRegistry(null).connections)
   assert.equal(normalizeRegistry({...registry,installationId:'hostname-or-mac'}).installationId,undefined)
 })
+
+test('retains an explicitly selected account separately from the primary runtime', () => {
+  const account = { origin: 'https://cloud.example', scope: { userId: 'u', workspaceId: 'w', organizationId: 'o' } }
+  const base = normalizeRegistry(null)
+  const result = normalizeRegistry({ ...base, accountContext: account })
+  assert.deepEqual(result.accountContext, account)
+  assert.equal(result.primary, base.primary)
+  assert.equal(normalizeRegistry({ ...base, accountContext: { ...account, origin: 'http://example.com' } }).accountContext, undefined)
+})

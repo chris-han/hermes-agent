@@ -19,6 +19,49 @@ it('accepts only the current authenticated server scope', () => {
   expect(() => assertWorkspaceScope({ ...identity, authenticated: false }, scope)).toThrow('changed')
 })
 
+it('selects an account only after two matching authenticated scope checks and stopping sync', async () => {
+  const fetch = vi.fn(async () => Response.json(identity))
+  vi.mocked(session.fromPartition).mockReturnValue({ fetch } as never)
+  vi.mocked(ipcMain.handle).mockClear()
+  const before = vi.fn()
+  const selected = vi.fn()
+  registerSemantierWorkspaceIpc(undefined, before, undefined, undefined, selected)
+  const handler = vi.mocked(ipcMain.handle).mock.calls.find(([name]) => name === 'hermes:workspace:select-account')![1]
+  await handler({} as never, 'https://cloud.example', scope)
+  expect(before).toHaveBeenCalledWith('https://cloud.example')
+  expect(fetch).toHaveBeenCalledTimes(2)
+  expect(selected).toHaveBeenCalledWith({ origin: 'https://cloud.example', scope })
+  fetch.mockReset().mockImplementation(async () => Response.json({ ...identity, organization_id: 'foreign' }))
+  await expect(handler({} as never, 'https://cloud.example', scope)).rejects.toThrow('changed')
+  expect(selected).toHaveBeenCalledTimes(1)
+})
+
+it('does not commit an account whose identity changes while sync is stopping', async () => {
+  const fetch = vi.fn().mockImplementationOnce(async () => Response.json(identity))
+    .mockImplementationOnce(async () => Response.json({ ...identity, organization_id: 'org-b' }))
+  vi.mocked(session.fromPartition).mockReturnValue({ fetch } as never)
+  vi.mocked(ipcMain.handle).mockClear()
+  const selected = vi.fn()
+  const after = vi.fn()
+  registerSemantierWorkspaceIpc(undefined, vi.fn(), undefined, undefined, selected, undefined, after)
+  const handler = vi.mocked(ipcMain.handle).mock.calls.find(([name]) => name === 'hermes:workspace:select-account')![1]
+  await expect(handler({} as never, 'https://cloud.example', scope)).rejects.toThrow('changed')
+  expect(selected).not.toHaveBeenCalled()
+  expect(after).toHaveBeenCalledOnce()
+})
+
+it('rechecking the already selected account does not stop sync', async () => {
+  vi.mocked(session.fromPartition).mockReturnValue({ fetch: vi.fn(async () => Response.json(identity)) } as never)
+  vi.mocked(ipcMain.handle).mockClear()
+  const before = vi.fn()
+  const selected = vi.fn()
+  registerSemantierWorkspaceIpc(undefined, before, undefined, undefined, selected, () => ({ origin: 'https://cloud.example', scope }))
+  const handler = vi.mocked(ipcMain.handle).mock.calls.find(([name]) => name === 'hermes:workspace:select-account')![1]
+  await handler({} as never, 'https://cloud.example', scope)
+  expect(before).not.toHaveBeenCalled()
+  expect(selected).not.toHaveBeenCalled()
+})
+
 
 it('signals account invalidation only after clearing the origin-owned cookie jar', async () => {
   const order: string[] = []

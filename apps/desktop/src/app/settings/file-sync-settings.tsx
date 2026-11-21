@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/i18n'
 import { RefreshCw } from '@/lib/icons'
-import { $connection } from '@/store/session'
+import { $connectionsRegistry } from '@/store/connection-registry-state'
+import { refreshConnectionsRegistry } from '@/store/connections'
 
 import { ListRow, SectionHeading } from './primitives'
 
@@ -13,13 +14,16 @@ type Status = { state: 'Paused' | 'Syncing' | 'Synced' | 'Conflict' | 'Error'; f
 export function FileSyncSettings() {
   const { locale } = useI18n()
   const zh = locale === 'zh'
-  const connection = useStore($connection)
+  const account = useStore($connectionsRegistry)?.accountContext
   const [status, setStatus] = useState<Status>({ state: 'Paused' })
   const generation = useRef(0)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const api = window.hermesDesktop?.fileSync
-  const connected = connection?.transport === 'semantier-workspace-http'
+  const connected = Boolean(account)
+  useEffect(() => window.hermesDesktop?.workspace?.onAccountChanged?.(() => {
+    void refreshConnectionsRegistry()
+  }), [])
   useEffect(() => {
     let live = true
     generation.current++
@@ -46,7 +50,7 @@ export function FileSyncSettings() {
           }
         })
         .catch(() => {
-          if (live && current === request && ownerGeneration === generation.current) {setError(zh ? '请重新连接工作区。' : 'Reconnect your Workspace to see File Sync status.')}
+          if (live && current === request && ownerGeneration === generation.current) {setError(zh ? '请检查 Semantier 账户连接。' : 'Check your Semantier account connection to see File Sync status.')}
         })
         .finally(() => {polling = false})
     }
@@ -58,7 +62,7 @@ export function FileSyncSettings() {
       live = false
       clearInterval(timer)
     }
-  }, [api, connected, connection?.connectionId, connection?.workspaceScope?.userId, connection?.workspaceScope?.workspaceId, connection?.baseUrl, zh])
+  }, [api, connected, account?.origin, account?.scope.userId, account?.scope.workspaceId, account?.scope.organizationId, zh])
 
   async function act(action: 'choose' | 'pause' | 'resume') {
     if (!api) {return}
@@ -89,7 +93,7 @@ export function FileSyncSettings() {
           : 'Choose one personal folder to keep up to date with Workspace → Synced Files.'}
       </p>
       {!connected || !api ? (
-        <p>{zh ? '请先将此窗口连接到 Semantier 工作区。' : 'Connect this window to your Semantier Workspace first.'}</p>
+        <p>{zh ? '请先登录 Semantier 账户。' : 'Sign in to your Semantier account first.'}</p>
       ) : (
         <>
           <ListRow

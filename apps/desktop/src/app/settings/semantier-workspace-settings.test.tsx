@@ -14,14 +14,16 @@ it('signs into the account without selecting a remote runtime', async () => {
     workspace: { id: 'wa' }, organization_id: 'org'
   })
   const save = vi.fn().mockResolvedValue({ connection: { id: 'account-cloud' } })
+  const selectAccount = vi.fn()
   const onConnect = vi.fn()
   Object.defineProperty(window, 'hermesDesktop', {
-    configurable: true, value: { workspace: { identity, login }, connections: { save } }
+    configurable: true, value: { workspace: { identity, login, selectAccount }, connections: { save } }
   })
   render(<SemantierWorkspaceSettings accountOnly connections={[]} onConnect={onConnect} />)
   fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }))
   await waitFor(() => expect(screen.getByText('Signed in')).toBeTruthy())
   expect(login).toHaveBeenCalledWith('https://cloud.semantier.cn')
+  expect(selectAccount).toHaveBeenCalledWith('https://cloud.semantier.cn', { userId: 'a', workspaceId: 'wa', organizationId: 'org' })
   expect(onConnect).not.toHaveBeenCalled()
 })
 

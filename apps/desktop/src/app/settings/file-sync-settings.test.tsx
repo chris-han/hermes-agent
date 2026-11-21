@@ -1,33 +1,44 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 
+import { $connectionsRegistry } from '@/store/connection-registry-state'
 import { $connection } from '@/store/session'
 
 import { FileSyncSettings } from './file-sync-settings'
 const original = window.hermesDesktop
 const connection = $connection.get()
+const registry = $connectionsRegistry.get()
 afterEach(() => {
   cleanup()
   vi.useRealTimers()
   window.hermesDesktop = original
   $connection.set(connection)
+  $connectionsRegistry.set(registry)
 })
 
 function connect(userId: string) {
-  $connection.set({
-    mode: 'remote',
-    baseUrl: 'https://cloud.example',
-    connectionId: 'cloud',
-    transport: 'semantier-workspace-http',
-    workspaceScope: { userId, workspaceId: 'w-' + userId, organizationId: 'org' }
-  } as never)
+  $connection.set({ mode: 'local', connectionId: 'local' } as never)
+  $connectionsRegistry.set({ version: 2, primary: 'local', secureTokenStorage: true, connections: [],
+    accountContext: { origin: 'https://cloud.example', scope: { userId, workspaceId: 'w-' + userId, organizationId: 'org' } } })
 }
 
 it('shows a recoverable state without a connected personal Workspace', () => {
   $connection.set(null as never)
+  $connectionsRegistry.set(null)
   render(<FileSyncSettings />)
-  expect(screen.getByText('Connect this window to your Semantier Workspace first.')).toBeTruthy()
+  expect(screen.getByText('Sign in to your Semantier account first.')).toBeTruthy()
   expect(screen.queryByRole('button', { name: 'Choose and enable' })).toBeNull()
+})
+
+it('keeps the account folder visible when the agent runtime changes', async () => {
+  const status = vi.fn().mockResolvedValue({ state: 'Paused', folder: 'selected-folder' })
+  window.hermesDesktop = { ...original, fileSync: { status, choose: vi.fn(), pause: vi.fn(), resume: vi.fn() } }
+  connect('a')
+  render(<FileSyncSettings />)
+  expect(await screen.findByText('selected-folder')).toBeTruthy()
+  act(() => $connection.set({ mode: 'remote', connectionId: 'other' } as never))
+  expect(screen.getByText('selected-folder')).toBeTruthy()
+  expect(status).toHaveBeenCalledTimes(1)
 })
 it('ignores a completed folder operation from the previous account', async () => {
   let finish: (value: any) => void = () => {}
@@ -73,7 +84,7 @@ it('clears a failed status poll after recovery and retains current engine errors
   connect('a')
   render(<FileSyncSettings />)
   await act(async () => {})
-  expect(screen.getByRole('alert').textContent).toContain('Reconnect your Workspace')
+  expect(screen.getByRole('alert').textContent).toContain('Check your Semantier account connection')
   await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
   expect(screen.getByText('Synced')).toBeTruthy()
   expect(screen.queryByRole('alert')).toBeNull()
@@ -98,9 +109,9 @@ it('does not let a previous account poll clear the current account error', async
   connect('a')
   render(<FileSyncSettings />)
   await act(async () => { connect('b') })
-  expect(screen.getByRole('alert').textContent).toContain('Reconnect your Workspace')
+  expect(screen.getByRole('alert').textContent).toContain('Check your Semantier account connection')
   await act(async () => { finish({ state: 'Synced', folder: 'A-private-folder' }) })
-  expect(screen.getByRole('alert').textContent).toContain('Reconnect your Workspace')
+  expect(screen.getByRole('alert').textContent).toContain('Check your Semantier account connection')
   expect(screen.queryByText('A-private-folder')).toBeNull()
 })
 
@@ -204,7 +215,7 @@ it('surfaces a slow failed poll and recovers after it settles', async () => {
   render(<FileSyncSettings />)
   await act(async () => { await vi.advanceTimersByTimeAsync(8000) })
   await act(async () => { fail(new Error('slow identity timeout')) })
-  expect(screen.getByRole('alert').textContent).toContain('Reconnect your Workspace')
+  expect(screen.getByRole('alert').textContent).toContain('Check your Semantier account connection')
   expect(status).toHaveBeenCalledTimes(1)
 
   status.mockResolvedValue({ state: 'Synced', folder: 'current-folder' })
