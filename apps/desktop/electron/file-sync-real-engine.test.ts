@@ -94,6 +94,56 @@ it.skipIf(!fixture)(
     const secondDevice = new FileSyncSupervisor({ ...options, stateDir: path.join(root, 'second-private') })
 
     try {
+      if (process.env.FILEX_DEVICE_SUPERVISOR === '1') {
+        const legacyFolder = path.join(root, 'legacy-documents')
+        const legacyState = path.join(root, 'legacy-private')
+        await fs.mkdir(legacyFolder)
+        const oldResponse = await request('/api/file-sync/binding', { method: 'POST',
+          headers: { Origin: origin, 'x-semantier-csrf': '1' } })
+        expect(oldResponse.status).toBe(200)
+        const oldCredential = await oldResponse.json()
+        const legacy = new FileSyncSupervisor({ ...options, stateDir: legacyState, binding: async () => oldCredential })
+        let upgraded: FileSyncSupervisor | undefined
+        try {
+          await legacy.enable(origin, legacyFolder)
+          const legacyName = 'legacy-' + randomUUID() + '.md'
+          await fs.writeFile(path.join(legacyFolder, legacyName), 'Legacy fixture bytes\n')
+          await expect.poll(async () => {
+            const response = await request('/api/file-sync/files?download=true&path=' + legacyName)
+            return response.status === 206 ? response.text() : ''
+          }, { timeout: 20000 }).toBe('Legacy fixture bytes\n')
+          const old = (await legacy.owners())[0]
+          await legacy.shutdown()
+          let newToken = ''
+          const tokens: string[] = []
+          upgraded = new FileSyncSupervisor({ ...options, stateDir: legacyState, binding: async () => {
+            const value = await options.binding()
+            newToken = value.token
+            return value
+          } })
+          const realRun = (upgraded as any).run.bind(upgraded)
+          upgraded.options.run = async (...args) => {
+            tokens.push(args[1].FILEX_TOKEN || '')
+            return realRun(...args)
+          }
+          await upgraded.restore()
+          expect((await upgraded.owners())[0]).toMatchObject({ id: old.id, paired: true, enabled: true, deviceGrant: true })
+          expect(newToken).toMatch(/^fxd_/)
+          expect(tokens.length).toBeGreaterThan(0)
+          expect(tokens.every(token => token === newToken)).toBe(true)
+          const newName = 'upgraded-' + randomUUID() + '.md'
+          await fs.writeFile(path.join(legacyFolder, newName), 'New device grant bytes\n')
+          await expect.poll(async () => {
+            const response = await request('/api/file-sync/files?download=true&path=' + newName)
+            return response.status === 206 ? response.text() : ''
+          }, { timeout: 20000 }).toBe('New device grant bytes\n')
+          await upgraded.pause()
+          expect(await fs.readFile(path.join(legacyFolder, legacyName), 'utf8')).toBe('Legacy fixture bytes\n')
+        } finally {
+          await upgraded?.shutdown()
+          await legacy.shutdown()
+        }
+      }
       const selected = await options.identity()
       const expectedScope = { user_id: selected.userId, workspace_id: selected.workspaceId,
         organization_id: selected.organizationId }
