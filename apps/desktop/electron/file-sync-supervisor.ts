@@ -60,6 +60,7 @@ export class FileSyncSupervisor {
   private quitPending: Promise<void> | null = null
   private controller: AbortController | null = null
   private running: Promise<unknown> | null = null
+  private failureStop: Promise<void> | null = null
   private current: Binding | null = null
   private stopChild: (() => void) | null = null
   private view: FileSyncStatus = { state: 'Paused' }
@@ -167,11 +168,13 @@ export class FileSyncSupervisor {
     this.view = { state: 'Paused', folder: this.current?.canonicalLocalFolder }
   }
   async shutdown() {
+    if (this.failureStop) {await this.failureStop}
     this.closing = true
     this.generation++
     await this.stop()
   }
   async pause() {
+    if (this.failureStop) {await this.failureStop}
     this.generation++
     await this.stop()
 
@@ -260,6 +263,7 @@ export class FileSyncSupervisor {
   async enable(rawOrigin: string, folder: string, expectedIdentity?: Identity, revalidateLegacy = false, restoringId?: string) {
     if(this.closing){throw new Error('File Sync is closing with the application.')}
     if(this.accountTransitions){throw new Error('Account change in progress. Reconnect File Sync afterwards.')}
+    if(this.failureStop){throw new Error('File Sync is stopping. Resume after it has stopped.')}
 
     if (this.busy) {
       throw new Error('A File Sync operation is already in progress.')
@@ -544,7 +548,9 @@ export class FileSyncSupervisor {
       return
     }
 
-    if (event.event === 'pass') {
+    if (event.event === 'error' && event.code === 'pass.failed') {
+      this.stopFailedWatch(generation, canonical)
+    } else if (event.event === 'pass') {
       this.view = {
         state: event.params?.failed ? 'Error' : event.params?.conflicts || event.params?.held ? 'Conflict' : 'Synced',
         folder: canonical
@@ -558,6 +564,27 @@ export class FileSyncSupervisor {
     } else if (event.event === 'progress' && this.view.state !== 'Conflict') {
       this.view = { state: 'Syncing', folder: canonical }
     }
+  }
+
+  private stopFailedWatch(generation: number, canonical: string) {
+    if (this.generation !== generation || this.failureStop) {return}
+    const failedGeneration = ++this.generation
+    const recordId = this.current?.id
+    this.view = { state: 'Error', folder: canonical, message: 'File Sync needs reconnection. Your files are preserved.' }
+    this.failureStop = Promise.resolve().then(async () => {
+      await this.stop()
+      const owners = await this.owners()
+      if (this.generation === failedGeneration && recordId) {
+        await this.write(owners.map(owner => owner.id === recordId ? { ...owner, enabled: false } : owner))
+      }
+      if (this.generation === failedGeneration) {
+        this.view = { state: 'Error', folder: canonical, message: 'File Sync needs reconnection. Your files are preserved.' }
+      }
+    }).catch(() => {
+      if (this.generation === failedGeneration) {
+        this.view = { state: 'Error', folder: canonical, message: 'File Sync could not stop safely. Your files are preserved.' }
+      }
+    }).finally(() => {this.failureStop = null})
   }
 
   holdQuit(event: { preventDefault: () => void }, reenter: () => void, failed: () => void) {

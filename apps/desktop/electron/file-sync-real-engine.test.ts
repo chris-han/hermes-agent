@@ -134,6 +134,25 @@ it.skipIf(!fixture)(
       expect(listing.status).toBe(200)
       expect((await listing.json()).files.map((file: { name: string }) => file.name)).not.toContain(secondOnly)
       expect(await fs.readFile(path.join(secondFolder, secondOnly), 'utf8')).toBe('Must stay on second device\n')
+      const gate = async (action: string) => {
+        const response = await request('/__fixture/filex-gate', { method: 'POST',
+          headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action }) })
+        expect(response.status).toBe(200)
+      }
+      const afterOutage = 'offline-' + randomUUID() + '.md'
+      await gate('offline')
+      await fs.writeFile(path.join(folder, afterOutage), 'Explicit reconnect required\n')
+      await expect.poll(async () => (await supervisor.owners())[0].enabled, { timeout: 30000 }).toBe(false)
+      expect(supervisor.status().state).toBe('Error')
+      await gate('online')
+      await new Promise(resolve => setTimeout(resolve, 6500))
+      const beforeResume = await request('/api/file-sync/files?download=true&path=' + afterOutage)
+      expect(beforeResume.status).not.toBe(206)
+      await supervisor.enable(origin, folder)
+      await expect.poll(async () => {
+        const response = await request('/api/file-sync/files?download=true&path=' + afterOutage)
+        return response.status === 206 ? response.text() : ''
+      }, { timeout: 20000 }).toBe('Explicit reconnect required\n')
       expect(await setWinman(false)).toMatchObject({ desired: { enabled: false }, execution: 'unavailable' })
       expect((await supervisor.owners())[0].enabled).toBe(true)
       expect(await admitWinman('files-on-winman-off')).toEqual({ status: 'denied', admissions: 2 })

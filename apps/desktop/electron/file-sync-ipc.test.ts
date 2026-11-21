@@ -304,6 +304,18 @@ it('reports real Error, Conflict, Syncing and Paused states for the selected fol
   expect(await invoke('status')).toEqual({ state: 'Paused', folder: current })
 })
 
+it('stops and persists a paused binding after a whole sync pass fails', async () => {
+  const { s, current, invoke, emit } = await setup()
+  emit({ event: 'error', code: 'pass.failed' })
+  await expect.poll(async () => (await s.owners()).find(owner => owner.canonicalLocalFolder === current)?.enabled).toBe(false)
+  expect(await invoke('status')).toMatchObject({ state: 'Error', folder: current })
+  const restarted = createFileSyncIpc(currentAccount)
+  supervisors.push(restarted)
+  Object.assign(restarted.options, s.options)
+  await restarted.restore()
+  expect((await restarted.owners()).find(owner => owner.canonicalLocalFolder === current)?.enabled).toBe(false)
+})
+
 it('adopts a legacy unique enabled binding without using historical array order', async () => {
   const { s, current, invoke } = await setup()
   await s.shutdown()

@@ -74,6 +74,28 @@ test('explicit File Sync in Windows Electron uses the selected account and local
         'X-Semantier-User-Id': account.user_id, 'X-Semantier-Workspace-Id': account.workspace_id } })
       return response.status === 206 ? response.text() : ''
     }, { timeout: 40_000 }).toBe('Windows fixture upload\n')
+    if (process.env.FILEX_OUTAGE_FIXTURE === '1') {
+      const gate = async (action: string) => {
+        const response = await fetch(origin + '/__fixture/filex-gate', { method: 'POST',
+          headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ action }) })
+        expect(response.status).toBe(200)
+      }
+      const offlineName = `native-offline-${randomUUID()}.md`
+      await gate('offline')
+      fs.writeFileSync(path.join(folder, offlineName), 'Explicit Windows resume\n')
+      await expect.poll(() => page.evaluate(() => (window as any).hermesDesktop.fileSync.status()),
+        { timeout: 40_000 }).toMatchObject({ state: 'Error' })
+      await gate('online')
+      await new Promise(resolve => setTimeout(resolve, 6500))
+      const offlineRead = () => fetch(origin + '/api/file-sync/files?download=true&path=' + offlineName, { headers: { cookie,
+        'X-Semantier-User-Id': account.user_id, 'X-Semantier-Workspace-Id': account.workspace_id } })
+      expect((await offlineRead()).status).not.toBe(206)
+      await page.getByRole('button', { name: 'Resume', exact: true }).click()
+      await expect.poll(async () => {
+        const response = await offlineRead()
+        return response.status === 206 ? response.text() : ''
+      }, { timeout: 40_000 }).toBe('Explicit Windows resume\n')
+    }
     await page.getByRole('button', { name: 'Model service', exact: true }).click()
     await page.getByRole('button', { name: 'Accounts', exact: true }).click()
     await page.getByRole('button', { name: 'Turn preference off', exact: true }).click()
