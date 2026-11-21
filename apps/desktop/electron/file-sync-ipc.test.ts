@@ -10,15 +10,27 @@ vi.mock('electron', () => ({
   app: { isPackaged: false, getAppPath: () => mock.root, getPath: () => mock.root, getLocale: () => 'en' },
   ipcMain: { handle: (name: string, handler: any) => mock.handlers.set(name, handler) },
   dialog: { showOpenDialog: vi.fn(), showMessageBox: vi.fn() },
-  safeStorage: { isEncryptionAvailable: () => true, getSelectedStorageBackend: () => 'secret_service', encryptString: () => Buffer.from('sealed') }
+  safeStorage: { isEncryptionAvailable: () => true, getSelectedStorageBackend: () => 'secret_service',
+    encryptString: (value: string) => Buffer.from('sealed:' + value), decryptString: (value: Buffer) => value.toString().slice(7) }
 }))
 vi.mock('./semantier-workspace-ipc', () => ({ workspace: () => ({ client: {
   identity: async () => ({ authenticated: true, user: { user_id: mock.user, workspace_id: 'w' + mock.user }, workspace: { id: 'w' + mock.user }, organization_id: mock.org }),
-  fileSyncBinding: async () => ({ userId: mock.user, workspaceId: 'w' + mock.user, remoteRoot: 'private://', token: 'secret', enginePath: '/api/file-sync/engine', version: '0.61.1' })
+  fileSyncBinding: async () => ({ userId: mock.user, workspaceId: 'w' + mock.user, remoteRoot: 'private://', token: 'secret', enginePath: '/api/file-sync/engine', version: '0.61.1' }),
+  fileSyncDeviceBinding: async () => ({ userId: mock.user, workspaceId: 'w' + mock.user, remoteRoot: 'private://', token: 'fxd_' + 'p'.repeat(43), enginePath: '/api/file-sync/engine', version: '0.61.1' }),
+  fileSyncDeviceStop: async () => 'STOPPED'
 } }) }))
 import { createFileSyncIpc } from './file-sync-ipc'
 
 const currentAccount = () => ({ origin: 'https://cloud.example', scope: { userId: mock.user, workspaceId: 'w' + mock.user, organizationId: mock.selectedOrg } })
+
+it('uses a protected device grant and its bearer-only stop owner', async () => {
+  mock.root = await fs.mkdtemp(path.join(os.tmpdir(), 'filex-ipc-device-'))
+  const supervisor = createFileSyncIpc(currentAccount)
+  const credential = await supervisor.options.binding('https://cloud.example')
+  expect(credential.token).toMatch(/^fxd_/)
+  expect(supervisor.options.unseal?.(supervisor.options.seal(credential.token))).toBe(credential.token)
+  expect(await supervisor.options.stopDevice?.('https://cloud.example', credential.token)).toBe('STOPPED')
+})
 const supervisors: ReturnType<typeof createFileSyncIpc>[] = []
 afterEach(async () => {
   for (const s of supervisors.splice(0)) { await s.shutdown() }
@@ -286,9 +298,12 @@ it('rejects resume when authentication changes after selection but before enable
 
     return record
   })
-  const before = await fs.readFile(s.registryPath, 'utf8')
+  const before = await s.owners()
   await expect(invoke('resume')).rejects.toThrow(/account changed/)
-  expect(await fs.readFile(s.registryPath, 'utf8')).toBe(before)
+  const after = await s.owners()
+  expect(after.map(owner => owner.id)).toEqual(before.map(owner => owner.id))
+  expect(after.find(owner => owner.enabled)).toBeUndefined()
+  expect(after.find(owner => owner.canonicalLocalFolder === s.status().folder)).toMatchObject({ deviceStop: 'STOPPED' })
 })
 
 it('reports real Error, Conflict, Syncing and Paused states for the selected folder', async () => {

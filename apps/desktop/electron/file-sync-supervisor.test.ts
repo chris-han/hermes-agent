@@ -546,3 +546,20 @@ it('stops the local watcher even if the device stop fence cannot be written', as
     await supervisor.pause()
   }
 })
+
+it('retires an enabled device grant if account change precedes restoration', async () => {
+  const { folder, supervisor } = await setup()
+  const token = 'fxd_' + 'q'.repeat(43)
+  let stops = 0
+  supervisor.options.binding = async () => ({ userId: 'a', workspaceId: 'wa', remoteRoot: 'private://', token, enginePath: '/api/file-sync/engine', version: '0.61.1' })
+  supervisor.options.seal = value => 'sealed:' + value
+  supervisor.options.unseal = value => value.slice(7)
+  supervisor.options.stopDevice = async () => { stops++; return 'PENDING' }
+  await supervisor.enable('https://cloud.example', folder)
+  const restarted = new FileSyncSupervisor(supervisor.options)
+  await restarted.accountChanging('https://cloud.example')
+  restarted.accountChanged()
+  expect(stops).toBe(1)
+  expect((await restarted.owners())[0]).toMatchObject({ enabled: false, deviceStop: 'PENDING' })
+  await supervisor.pause()
+})

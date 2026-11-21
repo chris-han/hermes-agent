@@ -59,6 +59,7 @@ export class FileSyncSupervisor {
   private generation = 0
   private busy = false
   private closing = false
+  private shutdownComplete = false
   private accountTransitions = 0
   private quitReady = false
   private quitPending: Promise<void> | null = null
@@ -141,7 +142,15 @@ export class FileSyncSupervisor {
     this.accountTransitions++
     try {
       await this.pause()
-      const owners = await this.owners()
+      let owners = await this.owners()
+      const enabled = owners.filter(owner => owner.enabled)
+      if (enabled.length > 1) {throw new Error('Inconsistent File Sync ownership registry. Preserve it for recovery.')}
+      const retained = enabled[0]
+      if (retained?.deviceGrant && retained.deviceStop !== 'STOPPED') {
+        this.current = retained
+        await this.stopAndPersist()
+        owners = await this.owners()
+      }
       if (owners.some(owner => owner.enabled)) {await this.write(owners.map(owner => ({ ...owner, enabled: false })))}
     } catch (error) {
       this.accountChanged()
@@ -177,6 +186,7 @@ export class FileSyncSupervisor {
     this.view = { state: 'Paused', folder: this.current?.canonicalLocalFolder }
   }
   async shutdown() {
+    if (this.shutdownComplete) {return}
     if (this.failureStop) {await this.failureStop}
     this.closing = true
     if (this.current?.deviceGrant) {
@@ -194,6 +204,7 @@ export class FileSyncSupervisor {
       this.generation++
       await this.stop()
     }
+    this.shutdownComplete = true
   }
   async pause() {
     if (this.failureStop) {await this.failureStop}

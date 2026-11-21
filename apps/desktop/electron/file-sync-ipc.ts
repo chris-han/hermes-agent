@@ -36,7 +36,8 @@ export function createFileSyncIpc(accountForDevice: () => FileSyncAccount | null
     binary: path.join(assets, process.platform === 'win32' ? 'filex.exe' : 'filex'),
     helper: path.join(assets, 'filex-child.mjs'),
     identity,
-    binding: origin => workspace(origin).client.fileSyncBinding(),
+    binding: origin => workspace(origin).client.fileSyncDeviceBinding(),
+    stopDevice: (origin, token) => workspace(origin).client.fileSyncDeviceStop(token),
     seal: token => {
       if (
         !safeStorage.isEncryptionAvailable() ||
@@ -45,6 +46,15 @@ export function createFileSyncIpc(accountForDevice: () => FileSyncAccount | null
         {throw new Error('OS credential protection is unavailable. Unlock your keychain and retry.')}
 
       return safeStorage.encryptString(token).toString('base64')
+    },
+    unseal: token => {
+      if (
+        !safeStorage.isEncryptionAvailable() ||
+        (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text')
+      )
+        {throw new Error('OS credential protection is unavailable. Unlock your keychain and retry.')}
+
+      return safeStorage.decryptString(Buffer.from(token, 'base64'))
     },
     forbiddenRoots: [app.getPath('userData'), process.env.HERMES_HOME || path.join(app.getPath('home'), '.hermes')]
   })

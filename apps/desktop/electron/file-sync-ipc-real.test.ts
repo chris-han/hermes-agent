@@ -8,7 +8,7 @@ import { expect, it, vi } from 'vitest'
 
 const mock = vi.hoisted(() => ({
   handlers: new Map<string, (...args: any[]) => any>(), root: '', folder: '',
-  client: null as any, seal: (_value: string) => Buffer.alloc(0),
+  client: null as any, seal: (_value: string) => Buffer.alloc(0), unseal: (_value: Buffer): string => '',
   picker: async () => ({ canceled: false, filePaths: [mock.folder] })
 }))
 vi.mock('electron', () => ({
@@ -17,7 +17,7 @@ vi.mock('electron', () => ({
   dialog: { showOpenDialog: () => mock.picker(),
     showMessageBox: async () => ({ response: 1 }) },
   safeStorage: { isEncryptionAvailable: () => true, getSelectedStorageBackend: () => 'secret_service',
-    encryptString: (value: string) => mock.seal(value) }
+    encryptString: (value: string) => mock.seal(value), decryptString: (value: Buffer) => mock.unseal(value) }
 }))
 vi.mock('./semantier-workspace-ipc', () => ({ workspace: () => ({ client: mock.client }) }))
 
@@ -36,6 +36,11 @@ it.skipIf(!fixture)('uses Desktop File Sync IPC with real account and FileX owne
   mock.seal = value => {
     const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', key, iv)
     return Buffer.concat([iv, cipher.update(value), cipher.final(), cipher.getAuthTag()])
+  }
+  mock.unseal = bytes => {
+    const decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12))
+    decipher.setAuthTag(bytes.subarray(-16))
+    return Buffer.concat([decipher.update(bytes.subarray(12, -16)), decipher.final()]).toString()
   }
   let cookie = ''
   async function login(user: string) {
@@ -61,16 +66,6 @@ it.skipIf(!fixture)('uses Desktop File Sync IPC with real account and FileX owne
   let account = { origin, scope: { userId: identity.user.user_id, workspaceId: identity.workspace.id,
     organizationId: identity.organization_id } }
   const supervisor = createFileSyncIpc(() => account)
-  if (process.env.FILEX_DEVICE_SUPERVISOR === '1') {
-    supervisor.options.binding = () => mock.client.fileSyncDeviceBinding()
-    supervisor.options.stopDevice = (_origin, token) => mock.client.fileSyncDeviceStop(token)
-    supervisor.options.unseal = value => {
-      const bytes = Buffer.from(value, 'base64')
-      const decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12))
-      decipher.setAuthTag(bytes.subarray(-16))
-      return Buffer.concat([decipher.update(bytes.subarray(12, -16)), decipher.final()]).toString()
-    }
-  }
   supervisor.options.binary = process.env.FILEX_TEST_BINARY!
   supervisor.options.helper = fileURLToPath(new URL('./filex-child.mjs', import.meta.url))
   const invoke = (name: string) => mock.handlers.get('hermes:file-sync:' + name)!({ sender: { id: 1 } })
