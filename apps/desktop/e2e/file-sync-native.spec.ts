@@ -43,6 +43,14 @@ test('explicit File Sync in Windows Electron uses the selected account and local
     await popup.getByLabel('Password').fill(account.password)
     await popup.getByRole('button', { name: 'Sign in fixture', exact: true }).click()
     await expect(page.getByText('Fixture', { exact: true })).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByText('Preference off.', { exact: false })).toBeVisible({ timeout: 20_000 })
+    await page.getByRole('button', { name: 'File Sync', exact: true }).click()
+    await expect(page.getByText('No folder selected', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Model service', exact: true }).click()
+    await page.getByRole('button', { name: 'Accounts', exact: true }).click()
+    await page.getByRole('button', { name: 'Request enablement', exact: true }).click()
+    await page.getByRole('button', { name: 'Confirm request', exact: true }).click()
+    await expect(page.getByText('Enablement requested.', { exact: false })).toBeVisible({ timeout: 20_000 })
     await page.getByRole('button', { name: 'File Sync', exact: true }).click()
     await expect(page.getByText('No folder selected', { exact: true })).toBeVisible()
     await app.evaluate(({ dialog }, selected) => {
@@ -61,6 +69,19 @@ test('explicit File Sync in Windows Electron uses the selected account and local
         'X-Semantier-User-Id': account.user_id, 'X-Semantier-Workspace-Id': account.workspace_id } })
       return response.status === 206 ? response.text() : ''
     }, { timeout: 40_000 }).toBe('Windows fixture upload\n')
+    await page.getByRole('button', { name: 'Model service', exact: true }).click()
+    await page.getByRole('button', { name: 'Accounts', exact: true }).click()
+    await page.getByRole('button', { name: 'Turn preference off', exact: true }).click()
+    await expect(page.getByText('Preference off.', { exact: false })).toBeVisible({ timeout: 20_000 })
+    await page.getByRole('button', { name: 'File Sync', exact: true }).click()
+    await expect(page.getByText(await fs.promises.realpath(folder), { exact: true })).toBeVisible()
+    const afterOff = `native-off-${randomUUID()}.md`
+    fs.writeFileSync(path.join(folder, afterOff), 'File Sync remains active\n')
+    await expect.poll(async () => {
+      const response = await fetch(origin + '/api/file-sync/files?download=true&path=' + afterOff, { headers: { cookie,
+        'X-Semantier-User-Id': account.user_id, 'X-Semantier-Workspace-Id': account.workspace_id } })
+      return response.status === 206 ? response.text() : ''
+    }, { timeout: 40_000 }).toBe('File Sync remains active\n')
     await page.getByRole('button', { name: 'Pause', exact: true }).click()
     await expect(page.getByText('Paused', { exact: true })).toBeVisible()
     expect((await page.evaluate(() => (window as any).hermesDesktop.connections.list())).primary).toBe(before.primary)
