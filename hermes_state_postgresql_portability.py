@@ -151,9 +151,20 @@ class PostgreSQLPortabilityMixin(SessionPortabilityMixin):
                 raise ValueError('strict import requires unique session IDs')
             if any(item['session'].get('parent_session_id') not in ids | {None, ''} for item in normalized):
                 raise ValueError('strict import requires every parent in the same payload')
+            message_uids = set()
+            for item in normalized:
+                for message in item['messages']:
+                    uid = message.get('message_uid')
+                    if not isinstance(uid, str) or not uid.strip() or uid in message_uids:
+                        raise ValueError('strict import requires unique, nonblank message UIDs')
+                    message_uids.add(uid)
         imported,skipped,parents=[],[],[]
         with self._transaction() as conn:
             self._lock_conversation(conn,'__history_import__')
+            if require_complete and message_uids and conn.execute(sql.SQL(
+                    'SELECT 1 FROM {} WHERE message_uid=ANY(%s) LIMIT 1').format(self.table('messages')),
+                    (sorted(message_uids),)).fetchone() is not None:
+                raise ValueError('strict import destination message UID collision')
             for item in normalized:
                 raw=item['session'];sid=raw['id']
                 if self._session_on_conn(conn,sid):
