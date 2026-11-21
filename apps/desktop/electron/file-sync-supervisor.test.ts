@@ -563,3 +563,18 @@ it('retires an enabled device grant if account change precedes restoration', asy
   expect((await restarted.owners())[0]).toMatchObject({ enabled: false, deviceStop: 'PENDING' })
   await supervisor.pause()
 })
+
+it('retains a confirmed stop across shutdown if the account binding is subsequently revoked', async () => {
+  const { folder, supervisor } = await setup()
+  const token = 'fxd_' + 'r'.repeat(43)
+  let calls = 0
+  supervisor.options.binding = async () => ({ userId: 'a', workspaceId: 'wa', remoteRoot: 'private://', token, enginePath: '/api/file-sync/engine', version: '0.61.1' })
+  supervisor.options.seal = value => 'sealed:' + value
+  supervisor.options.unseal = value => value.slice(7)
+  supervisor.options.stopDevice = async () => { if (++calls > 1) {throw new Error('revoked')} return 'STOPPED' }
+  await supervisor.enable('https://cloud.example', folder)
+  await supervisor.pause()
+  await supervisor.shutdown()
+  expect(calls).toBe(1)
+  expect((await supervisor.owners())[0]).toMatchObject({ enabled: false, deviceStop: 'STOPPED' })
+})

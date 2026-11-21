@@ -223,6 +223,10 @@ export class FileSyncSupervisor {
   }
   private async stopAndPersistOnce() {
     const current = this.current
+    if (current?.deviceGrant && !current.enabled && current.deviceStop === 'STOPPED') {
+      await this.stop()
+      return
+    }
     if (current?.deviceGrant) {
       try {
         const owners = await this.owners()
