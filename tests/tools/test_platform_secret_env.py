@@ -192,10 +192,15 @@ def test_common_popen_child_excludes_custody_even_with_explicit_env(child_env, p
     assert observed['MY_APP_KEY'] == 'workspace-byok'
 
 
-def test_scoped_native_worker_cannot_inherit_launch_credentials(child_env, platform_names, monkeypatch):
+@pytest.mark.parametrize("exported_map", [True, False])
+def test_scoped_native_worker_cannot_inherit_launch_credentials(child_env, platform_names, monkeypatch, exported_map):
     from types import SimpleNamespace
     from gateway.session_managed_worker import _worker_env
 
+    monkeypatch.setenv("SEMANTIER_ENVIRONMENT", "development")
+    monkeypatch.setenv("HERMES_STATE_BACKEND", "postgresql")
+    if not exported_map:
+        monkeypatch.delenv("SEMANTIER_SESSIONDB_DEV_CREDENTIAL_MAP")
     monkeypatch.setattr("agent.secret_scope.is_multiplex_active", lambda: False)
     monkeypatch.setattr("tools.environments.local._is_routed_home", lambda home: False)
     observed = observe_child(_worker_env(SimpleNamespace(profile_id=str(child_env))), platform_names)

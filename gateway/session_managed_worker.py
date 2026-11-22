@@ -399,7 +399,11 @@ def _worker_env(authority):
     from tools.environments.local import _is_routed_home
     from tools.environments.local_env_policy import strip_platform_secrets
 
-    scoped = "SEMANTIER_SESSIONDB_DEV_CREDENTIAL_MAP" in os.environ
+    scoped = (
+        "SEMANTIER_SESSIONDB_DEV_CREDENTIAL_MAP" in os.environ
+        or (os.environ.get("SEMANTIER_ENVIRONMENT") == "development"
+            and os.environ.get("HERMES_STATE_BACKEND", "").strip().lower() == "postgresql")
+    )
     fallback = strip_platform_secrets(os.environ) if scoped else None
     home = Path(str(authority.profile_id))
     if not home.is_absolute():
