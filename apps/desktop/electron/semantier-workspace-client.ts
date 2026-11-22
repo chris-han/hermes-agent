@@ -143,6 +143,48 @@ export function normalizeSemantierWorkspaceOrigin(origin: string): string {
   return base.origin
 }
 
+export type WorkspaceProjectPin = { artifact_kind: string; artifact_ref: string; artifact_hash: string }
+
+export type WorkspaceProject = { project_ref: string; graph: WorkspaceProjectPin }
+
+export type WorkspaceProjectDraft = {
+  goal: string
+  question: string
+  claim: string
+  rationale: string
+}
+
+export type WorkspaceProjectHead = WorkspaceProjectDraft & {
+  artifact_ref: string
+  artifact_hash: string
+  revision: number
+  parent: WorkspaceProjectPin | null
+  note: WorkspaceProjectPin
+  graph: WorkspaceProjectPin
+  evidence: WorkspaceProjectPin[]
+  decision: WorkspaceProjectPin
+}
+
+export type WorkspaceProjectContinuation = {
+  project: WorkspaceProject
+  head: WorkspaceProjectHead | null
+  working_context: { context_graph: WorkspaceProjectPin; evidence: WorkspaceProjectPin[]; task_goal: string }
+}
+
+export type WorkspaceProjectCommit = WorkspaceProjectDraft & {
+  request_id: string
+  expected_head: WorkspaceProjectPin | null
+  note: WorkspaceProjectPin
+}
+
+const PROJECTS_PATH = '/api/workbench/projects'
+
+function projectPath(ref: string): string {
+  if (!/^project:[a-f0-9]{32}$/.test(ref)) {throw new Error('Invalid Project reference.')}
+
+  return PROJECTS_PATH + '/' + encodeURIComponent(ref)
+}
+
 export function createSemantierWorkspaceClient(origin: string, fetchSession: (input: string, init?: RequestInit) => Promise<Response>) {
   const base = new URL(normalizeSemantierWorkspaceOrigin(origin))
 
@@ -158,6 +200,12 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
     })
 
     if (!response.ok) {
+      if (response.status === 409 && path.startsWith(PROJECTS_PATH + '/')) {
+        const error = await response.json().catch(() => null)
+
+        if (error?.detail === 'PROJECT_HEAD_CONFLICT') {throw new Error('PROJECT_HEAD_CONFLICT')}
+      }
+
       let managedDeviceCode: string | undefined
 
       if (path.startsWith('/api/cloud-provider/device/managed')) {
@@ -179,6 +227,23 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
   }
 
   return {
+    async projects(): Promise<WorkspaceProject[]> {
+      return (await request(PROJECTS_PATH)).json()
+    },
+    async createProject(graph: WorkspaceProjectPin, consent: true): Promise<WorkspaceProject> {
+      return (await request(PROJECTS_PATH, { graph, consent })).json()
+    },
+    async continueProject(projectRef: string): Promise<WorkspaceProjectContinuation> {
+      return (await request(projectPath(projectRef))).json()
+    },
+    async commitProject(projectRef: string, decision: WorkspaceProjectCommit): Promise<WorkspaceProjectHead> {
+      return (await request(projectPath(projectRef) + '/heads', decision)).json()
+    },
+    async replayProject(projectRef: string, head: WorkspaceProjectPin): Promise<{ head: WorkspaceProjectHead }> {
+      const path = projectPath(projectRef) + '/heads/' + encodeURIComponent(head.artifact_ref)
+
+      return (await request(path + '?hash=' + encodeURIComponent(head.artifact_hash))).json()
+    },
     async personalSources() {
       return (await request('/api/personal-capabilities/skills/list', {})).json()
     },

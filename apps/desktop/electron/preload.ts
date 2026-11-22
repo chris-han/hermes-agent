@@ -332,6 +332,11 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     resume:()=>ipcRenderer.invoke('hermes:file-sync:resume'),
   },
   workspace: {
+    projects: (origin, scope) => ipcRenderer.invoke('hermes:workspace:projects', origin, scope),
+    createProject: (origin, scope, graph, consent) => ipcRenderer.invoke('hermes:workspace:create-project', origin, scope, graph, consent),
+    continueProject: (origin, scope, ref) => ipcRenderer.invoke('hermes:workspace:continue-project', origin, scope, ref),
+    commitProject: (origin, scope, ref, decision) => ipcRenderer.invoke('hermes:workspace:commit-project', origin, scope, ref, decision),
+    replayProject: (origin, scope, ref, head) => ipcRenderer.invoke('hermes:workspace:replay-project', origin, scope, ref, head),
     personalPreview:(origin,scope,skillId)=>ipcRenderer.invoke('hermes:workspace:personal-preview',origin,scope,skillId),
     personalSources:(origin,scope)=>ipcRenderer.invoke('hermes:workspace:personal-sources',origin,scope),
     personalShare:(origin,scope,selected,context)=>ipcRenderer.invoke('hermes:workspace:personal-share',origin,scope,selected,context),

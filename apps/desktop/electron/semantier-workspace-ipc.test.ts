@@ -239,3 +239,17 @@ it('discards a device inventory received during an account switch', async () => 
   await expect(handler({} as never,'https://cloud.example',scope)).rejects.toThrow('changed')
   expect(fetch).toHaveBeenCalledTimes(3)
 })
+
+it('withholds a Project continuation response after the Workspace account changes', async () => {
+  const fetch = vi.fn().mockResolvedValueOnce(Response.json(identity))
+    .mockResolvedValueOnce(Response.json({ project: { project_ref: 'private' } }))
+    .mockResolvedValueOnce(Response.json({ ...identity, organization_id: 'org-b' }))
+
+  vi.mocked(session.fromPartition).mockReturnValue({ fetch } as never)
+  vi.mocked(ipcMain.handle).mockClear()
+  registerSemantierWorkspaceIpc()
+  const handler = vi.mocked(ipcMain.handle).mock.calls.find(([name]) => name === 'hermes:workspace:continue-project')![1]
+
+  await expect(handler({} as never, 'https://cloud.example', scope, 'project:' + 'a'.repeat(32))).rejects.toThrow('changed')
+  expect(fetch).toHaveBeenCalledTimes(3)
+})
