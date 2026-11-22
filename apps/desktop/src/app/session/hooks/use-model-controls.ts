@@ -3,7 +3,7 @@ import { type QueryClient } from '@tanstack/react-query'
 import { useCallback, useRef } from 'react'
 
 import type { ModelSelection } from '@/app/shell/model-menu-panel'
-import { getGlobalModelInfo } from '@/hermes'
+import { getGlobalModelInfo, getRecommendedDefaultModel } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { isBusySessionModelSwitch } from '@/lib/gateway-rpc'
 import { surfaceModelSwitchConfirm } from '@/lib/guarded-model-switch'
@@ -13,6 +13,7 @@ import {
   modelOptionsQueryKey,
   requestModelOptions
 } from '@/lib/model-options'
+import { setMainModelAssignment } from '@/store/model-assignment'
 import { notifyError } from '@/store/notifications'
 import { $activeGatewayProfile } from '@/store/profile'
 import {
@@ -77,12 +78,14 @@ export function useModelControls({
         return { ...prev, provider, model, providers }
       }
 
-      queryClient.setQueryData<ModelOptionsResult>(modelOptionsQueryKey(profile, sessionId, ownerConnectionId), patch,
-        { updatedAt: 0 })
+      queryClient.setQueryData<ModelOptionsResult>(modelOptionsQueryKey(profile, sessionId, ownerConnectionId), patch, {
+        updatedAt: 0
+      })
 
       if (includeGlobal) {
-        queryClient.setQueryData<ModelOptionsResult>(modelOptionsQueryKey(profile, null, ownerConnectionId), patch,
-          { updatedAt: 0 })
+        queryClient.setQueryData<ModelOptionsResult>(modelOptionsQueryKey(profile, null, ownerConnectionId), patch, {
+          updatedAt: 0
+        })
       }
     },
     [cacheOwnerConnectionId, cacheProfile, queryClient]
@@ -129,6 +132,7 @@ export function useModelControls({
 
       const profileRefreshEpoch = profileRefreshEpochRef.current
       const profile = $activeGatewayProfile.get()
+      const owner = latestOwner.current
 
       try {
         if ($activeSessionId.get()) {
@@ -198,34 +202,80 @@ export function useModelControls({
 
         const result = await getGlobalModelInfo(profile)
 
-        if (
-          profileRefreshEpochRef.current !== profileRefreshEpoch ||
-          $activeSessionId.get() ||
-          getComposerSelectionGeneration() !== selectionGeneration ||
-          (manualPick() &&
+        const current = () =>
+          profileRefreshEpochRef.current === profileRefreshEpoch &&
+          latestOwner.current === owner &&
+          $activeGatewayProfile.get() === profile &&
+          !$activeSessionId.get() &&
+          getComposerSelectionGeneration() === selectionGeneration &&
+          !(
+            manualPick() &&
             !force &&
             !reseedStaleMoa &&
-            !customDefaultSupersedesPick($currentProvider.get(), result.provider ?? ''))
-        ) {
+            !customDefaultSupersedesPick($currentProvider.get(), result.provider ?? '')
+          )
+
+        if (!current()) {
           return
         }
 
-        if (typeof result.model === 'string') {
-          setCurrentModel(result.model)
+        let model = result.model
+        let provider = result.provider
+
+        // Cloud Billing stores the account default independently of the
+        // local Hermes profile. Reconcile the verified account preference into
+        // the actual next-session configuration, not merely the pill label.
+        // The cloud_profile marker also covers a legacy Cloud route saved as
+        // provider=custom. Never touch a live session or a manual composer pick.
+        if (provider === 'semantier-cloud' || result.cloud_profile) {
+          try {
+            const recommended = await getRecommendedDefaultModel('semantier-cloud', profile)
+
+            if (!current()) {
+              return
+            }
+
+            if (recommended.model && recommended.model !== model) {
+              const saved = await setMainModelAssignment(
+                { provider: 'semantier-cloud', model: recommended.model },
+                profile,
+                { skipConfirmPrompt: true }
+              )
+
+              if (!current()) {
+                return
+              }
+
+              model = saved.model ?? recommended.model
+              provider = saved.provider ?? provider
+              updateModelOptionsCache(null, provider, model, false, cacheProfile || profile, cacheOwnerConnectionId)
+            }
+          } catch {
+            // No verified Cloud preference or a rejected write must never
+            // make the UI claim a new default that the gateway did not save.
+          }
         }
 
-        if (typeof result.provider === 'string') {
-          setCurrentProvider(result.provider)
+        if (!current()) {
+          return
         }
 
-        if (typeof result.model === 'string' || typeof result.provider === 'string') {
+        if (typeof model === 'string') {
+          setCurrentModel(model)
+        }
+
+        if (typeof provider === 'string') {
+          setCurrentProvider(provider)
+        }
+
+        if (typeof model === 'string' || typeof provider === 'string') {
           setCurrentModelSource('default')
         }
       } catch {
         // The delayed session.info event still updates this once the agent is ready.
       }
     },
-    [cacheOwnerConnectionId, cacheProfile, queryClient, requestGateway]
+    [cacheOwnerConnectionId, cacheProfile, queryClient, requestGateway, updateModelOptionsCache]
   )
 
   // Drop a sticky composer pick so new chats follow Settings → Model again,
@@ -299,11 +349,15 @@ export function useModelControls({
         updateModelOptionsCache(liveSessionId, provider, model, touchesPrimary && !liveSessionId, liveGatewayProfile)
       }
 
-      const stillOwnsSelection = () => latestOwner.current === capturedOwner &&
-        (!touchesPrimary || ($activeGatewayProfile.get() === capturedProfile && $activeSessionId.get() === primaryRuntimeId))
+      const stillOwnsSelection = () =>
+        latestOwner.current === capturedOwner &&
+        (!touchesPrimary ||
+          ($activeGatewayProfile.get() === capturedProfile && $activeSessionId.get() === primaryRuntimeId))
 
       const rollbackSelection = () => {
-        if (!stillOwnsSelection()) { return }
+        if (!stillOwnsSelection()) {
+          return
+        }
 
         if (liveSessionId) {
           sessionTileDelegate()?.updateSession(liveSessionId, state => ({
@@ -362,7 +416,9 @@ export function useModelControls({
       try {
         const result = await requestSwitch()
 
-        if (!stillOwnsSelection()) { return false }
+        if (!stillOwnsSelection()) {
+          return false
+        }
 
         if (result?.confirm_required) {
           rollbackSelection()
@@ -379,8 +435,9 @@ export function useModelControls({
             // dialog is open. Answering it must not clobber the newer choice:
             // bail (with a notice) if the live state no longer matches the
             // snapshot this prompt was created for.
-            isStale: () => !stillOwnsSelection() || (
-              touchesPrimary
+            isStale: () =>
+              !stillOwnsSelection() ||
+              (touchesPrimary
                 ? $activeSessionId.get() !== liveSessionId ||
                   $currentModel.get() !== prevModel ||
                   $currentProvider.get() !== prevProvider ||
@@ -406,7 +463,9 @@ export function useModelControls({
 
         return true
       } catch (err) {
-        if (!stillOwnsSelection()) { return false }
+        if (!stillOwnsSelection()) {
+          return false
+        }
 
         // An OLDER gateway refuses a mid-turn switch outright (4009) instead of
         // deferring it. Don't punish the user for a backend they haven't

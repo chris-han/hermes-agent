@@ -3,9 +3,10 @@ import { act, cleanup, render, renderHook, waitFor } from '@testing-library/reac
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { PRIMARY_SESSION_VIEW } from '@/app/chat/session-view'
-import { getGlobalModelInfo } from '@/hermes'
+import { getGlobalModelInfo, getRecommendedDefaultModel } from '@/hermes'
 import { createClientSessionState } from '@/lib/chat-runtime'
 import { modelOptionsQueryKey } from '@/lib/model-options'
+import { setMainModelAssignment } from '@/store/model-assignment'
 import { $activeGatewayProfile } from '@/store/profile'
 import {
   $activeSessionId,
@@ -33,8 +34,13 @@ const dismissNotification = vi.fn()
 
 vi.mock('@/hermes', () => ({
   getGlobalModelInfo: vi.fn(),
+  getRecommendedDefaultModel: vi.fn(),
   setApiRequestProfile: vi.fn(),
   setGlobalModel: (...args: Parameters<typeof setGlobalModel>) => setGlobalModel(...args)
+}))
+
+vi.mock('@/store/model-assignment', () => ({
+  setMainModelAssignment: vi.fn()
 }))
 
 vi.mock('@/store/session-states', async importOriginal => {
@@ -93,6 +99,8 @@ describe('useModelControls', () => {
     tile.delegate = null
     confirmMock.mockReset()
     notifyError.mockReset()
+    vi.mocked(getRecommendedDefaultModel).mockReset()
+    vi.mocked(setMainModelAssignment).mockReset()
     $activeGatewayProfile.set('default')
     $activeSessionId.set(null)
     setCurrentModel('')
@@ -140,9 +148,16 @@ describe('useModelControls', () => {
     const requestGateway = vi.fn(() => response.promise)
     const client = new QueryClient()
 
-    const { result, rerender } = renderHook(({ owner }) => useModelControls({
-      queryClient: client, requestGateway, cacheOwnerConnectionId: owner, cacheProfile: 'default'
-    }), { initialProps: { owner: 'source-a' } })
+    const { result, rerender } = renderHook(
+      ({ owner }) =>
+        useModelControls({
+          queryClient: client,
+          requestGateway,
+          cacheOwnerConnectionId: owner,
+          cacheProfile: 'default'
+        }),
+      { initialProps: { owner: 'source-a' } }
+    )
 
     const pending = result.current.selectModel({ model: 'new-a', provider: 'provider-a' })
     rerender({ owner: 'source-b' })
@@ -645,6 +660,130 @@ describe('useModelControls', () => {
     // A profile swap forces a reseed to the new profile's default.
     await result.current.refreshCurrentModel(true)
     expect($currentModel.get()).toBe('openai/gpt-5.5')
+  })
+
+  it('syncs the authenticated Cloud account default into the actual next-chat profile', async () => {
+    vi.mocked(getGlobalModelInfo)
+      .mockResolvedValueOnce({ provider: 'semantier-cloud', model: 'qwen3.5-plus' })
+      .mockResolvedValue({ provider: 'semantier-cloud', model: 'deepseek-v4' })
+    vi.mocked(getRecommendedDefaultModel).mockResolvedValue({
+      provider: 'semantier-cloud',
+      model: 'deepseek-v4',
+      free_tier: null
+    })
+    vi.mocked(setMainModelAssignment).mockResolvedValue({
+      ok: true,
+      provider: 'semantier-cloud',
+      model: 'deepseek-v4'
+    })
+
+    const { result } = renderHook(() => useModelControls({ queryClient: new QueryClient(), requestGateway: vi.fn() }))
+
+    await act(() => result.current.refreshCurrentModel())
+
+    expect(getRecommendedDefaultModel).toHaveBeenCalledWith('semantier-cloud', 'default')
+    expect(setMainModelAssignment).toHaveBeenCalledWith(
+      { provider: 'semantier-cloud', model: 'deepseek-v4' },
+      'default',
+      { skipConfirmPrompt: true }
+    )
+    expect($currentModel.get()).toBe('deepseek-v4')
+    expect($currentProvider.get()).toBe('semantier-cloud')
+    expect(getCurrentModelSource()).toBe('default')
+
+    await act(() => result.current.refreshCurrentModel())
+    expect(setMainModelAssignment).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses the Cloud account default for an older provider=custom Cloud route', async () => {
+    vi.mocked(getGlobalModelInfo).mockResolvedValue({
+      provider: 'custom',
+      model: 'qwen3.5-plus',
+      cloud_profile: { id: 'qwen3.5-plus' }
+    })
+    vi.mocked(getRecommendedDefaultModel).mockResolvedValue({
+      provider: 'semantier-cloud',
+      model: 'deepseek-v4',
+      free_tier: null
+    })
+    vi.mocked(setMainModelAssignment).mockResolvedValue({
+      ok: true,
+      provider: 'custom',
+      model: 'deepseek-v4'
+    })
+
+    const { result } = renderHook(() => useModelControls({ queryClient: new QueryClient(), requestGateway: vi.fn() }))
+
+    await act(() => result.current.refreshCurrentModel())
+    expect($currentModel.get()).toBe('deepseek-v4')
+    expect($currentProvider.get()).toBe('custom')
+    expect(getCurrentModelSource()).toBe('default')
+  })
+
+  it('does not falsely paint a rejected Cloud default sync', async () => {
+    vi.mocked(getGlobalModelInfo).mockResolvedValue({ provider: 'semantier-cloud', model: 'qwen3.5-plus' })
+    vi.mocked(getRecommendedDefaultModel).mockResolvedValue({
+      provider: 'semantier-cloud',
+      model: 'deepseek-v4',
+      free_tier: null
+    })
+    vi.mocked(setMainModelAssignment).mockRejectedValue(new Error('Cloud model no longer available'))
+
+    const { result } = renderHook(() => useModelControls({ queryClient: new QueryClient(), requestGateway: vi.fn() }))
+
+    await act(() => result.current.refreshCurrentModel())
+    expect($currentModel.get()).toBe('qwen3.5-plus')
+    expect(getCurrentModelSource()).toBe('default')
+  })
+
+  it('never syncs a Cloud account default over a live session or a manual composer choice', async () => {
+    vi.mocked(getGlobalModelInfo).mockResolvedValue({ provider: 'semantier-cloud', model: 'qwen3.5-plus' })
+    vi.mocked(getRecommendedDefaultModel).mockResolvedValue({
+      provider: 'semantier-cloud',
+      model: 'deepseek-v4',
+      free_tier: null
+    })
+
+    const { result } = renderHook(() => useModelControls({ queryClient: new QueryClient(), requestGateway: vi.fn() }))
+    setCurrentProvider('semantier-cloud')
+    setCurrentModel('explicit-manual-model')
+    setCurrentModelSource('manual')
+    await act(() => result.current.refreshCurrentModel())
+    expect($currentModel.get()).toBe('explicit-manual-model')
+    expect(getRecommendedDefaultModel).not.toHaveBeenCalled()
+
+    $activeSessionId.set('live-session')
+    setCurrentModelSource('default')
+    await act(() => result.current.refreshCurrentModel())
+    expect($currentModel.get()).toBe('explicit-manual-model')
+    expect(setMainModelAssignment).not.toHaveBeenCalled()
+  })
+
+  it('discards an outdated Cloud preference response after the user picks another model', async () => {
+    vi.mocked(getGlobalModelInfo).mockResolvedValue({ provider: 'semantier-cloud', model: 'qwen3.5-plus' })
+    const remoteDefault = deferred<Awaited<ReturnType<typeof getRecommendedDefaultModel>>>()
+    vi.mocked(getRecommendedDefaultModel).mockReturnValueOnce(remoteDefault.promise)
+
+    const { result } = renderHook(() => useModelControls({ queryClient: new QueryClient(), requestGateway: vi.fn() }))
+    const pending = result.current.refreshCurrentModel()
+    await waitFor(() => expect(getRecommendedDefaultModel).toHaveBeenCalled())
+    setCurrentModel('manual-wins')
+    setCurrentProvider('semantier-cloud')
+    setCurrentModelSource('manual')
+    // Same intent token used by the picker.
+
+    const manual = result.current.selectModel({
+      model: 'manual-wins',
+      provider: 'semantier-cloud'
+    })
+
+    await manual
+    remoteDefault.resolve({ provider: 'semantier-cloud', model: 'deepseek-v4', free_tier: null })
+    await pending
+
+    expect(setMainModelAssignment).not.toHaveBeenCalled()
+    expect($currentModel.get()).toBe('manual-wins')
+    expect(getCurrentModelSource()).toBe('manual')
   })
 
   it('reads a forced profile reseed from that concrete profile', async () => {

@@ -525,6 +525,8 @@ export interface HermesConfig {
 export type HermesConfigRecord = Record<string, unknown>
 
 export interface ModelInfoResponse {
+  /** Verified Cloud route metadata; present even when older config says provider=custom. */
+  cloud_profile?: Record<string, unknown>
   auto_context_length?: number
   capabilities?: Record<string, unknown>
   config_context_length?: number

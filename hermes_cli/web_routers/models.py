@@ -216,6 +216,41 @@ def get_recommended_default_model(provider: str = "", profile: Optional[str] = N
     Nous; ``model`` may be empty (caller degrades gracefully)."""
     slug = (provider or "").strip().lower()
 
+    if slug == "semantier-cloud":
+        # This account's persisted Cloud preference, not the local Hermes
+        # curated-list heuristic, owns the next-chat default. The authenticated
+        # Cloud catalog already projects the preference and accessible models
+        # for the credential's user/account scope.
+        try:
+            from agent.semantier_gateway import cloud_catalog, gateway_settings
+
+            with _config_profile_scope(profile):
+                payload = cloud_catalog(refresh=True, settings=gateway_settings(allow_unselected=True))
+            offered = {
+                row["id"]: row.get("account_id")
+                for row in payload.get("data", [])
+                if isinstance(row, dict) and isinstance(row.get("id"), str)
+                and row.get("modality", "chat") == "chat"
+            }
+            # Billing displays an explicit Workspace main assignment ahead of
+            # the personal account preference. Honor that same effective
+            # choice, but only when the assignment belongs to the offered
+            # account; never allow a different account's pin to win.
+            main = (payload.get("assignments") or {}).get("main") or {}
+            assigned = main.get("model") if isinstance(main, dict) else None
+            assigned_account = offered.get(assigned)
+            if assigned_account and main.get("account_id") == assigned_account:
+                chosen = assigned
+            else:
+                chosen = payload.get("recommended_default_model")
+            model = chosen if isinstance(chosen, str) and chosen in offered else ""
+            return {"provider": slug, "model": model, "free_tier": None}
+        except HTTPException:
+            raise
+        except Exception:
+            _log.warning("Cloud default sync unavailable; retaining local model", exc_info=True)
+            return {"provider": slug, "model": "", "free_tier": None}
+
     if slug == "nous":
         try:
             # The tier, Portal URL and recommendation caches are all per profile home.

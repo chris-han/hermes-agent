@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { I18nProvider } from '@/i18n'
 import { $goalsBySession, type SessionGoal } from '@/store/goals'
+import { $sharedMetricsConsent } from '@/store/shared-metrics'
 
 import { ComposerStatusStack } from './index'
 
@@ -43,6 +44,19 @@ describe('ComposerStatusStack goal indicator', () => {
   afterEach(() => {
     cleanup()
     $goalsBySession.set({})
+    $sharedMetricsConsent.set(null)
+  })
+
+  it.each([false, true])('hides the shared-metrics offer by default, including recipient re-ask=%s', reask => {
+    $sharedMetricsConsent.set({ enabled: false, send: false, decided: false, reask })
+
+    const view = renderStack()
+
+    expect(screen.queryByText('Share usage stats?')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Share with Semantier' })).toBeNull()
+    expect(view.container.firstChild).toBeNull()
+    // Dismissing the banner must not mutate consent or silently opt in.
+    expect($sharedMetricsConsent.get()).toMatchObject({ enabled: false, send: false, decided: false })
   })
 
   it('shows an active goal with its title', () => {
