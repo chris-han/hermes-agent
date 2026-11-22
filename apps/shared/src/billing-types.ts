@@ -421,7 +421,7 @@ export interface SemantierBillingV2Response {
     manual_renewal: true
   }
   credits: { allowance: SemantierMoney; purchased: SemantierMoney; held: SemantierMoney; available: SemantierMoney | null }
-  usage: { known_cost: SemantierMoney; period: 'lifetime' }
+  usage: { known_cost: SemantierMoney | null; period: 'lifetime' }
   capabilities: {
     can_read_usage: boolean
     can_manage_billing: boolean

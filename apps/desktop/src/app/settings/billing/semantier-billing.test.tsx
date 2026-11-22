@@ -44,11 +44,13 @@ it('renders actual rights separately and opens an account task with independent 
   expect($previewTabs.get().at(-1)?.target.url).toBe('https://billing.example/pricing?organization_id=org-a&account_id=account-a&entry=windows')
 })
 
-it('renders unavailable customer-cloud credit without a crash or invented zero balance', () => {
+it('renders unavailable customer-cloud credit and cost without inventing zero', () => {
   render(<SemantierBilling state={{ ...state,
-    credits: { ...state.credits, available: null } }} />)
+    credits: { ...state.credits, available: null }, usage: { ...state.usage, known_cost: null } }} />)
   expect(screen.getByText('Professional')).toBeTruthy()
   expect(screen.getByText('CNY 1.00')).toBeTruthy()
+  expect(screen.getByText('Known cost · Lifetime')).toBeTruthy()
+  expect(screen.queryByText('CNY 0.25')).toBeNull()
   expect(screen.queryByText('CNY 0.00')).toBeNull()
   expect(screen.getByRole('button', { name: 'Orders' })).toBeTruthy()
 })
