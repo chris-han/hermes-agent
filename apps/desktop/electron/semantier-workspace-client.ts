@@ -23,6 +23,20 @@ export function assertWorkspaceScope(identity: WorkspaceIdentity, expected: Work
   }
 }
 
+export interface WinmanCapability {
+  desired: { enabled: boolean; revision: number }
+  execution: 'disabled' | 'ready' | 'unavailable'
+}
+
+export interface PersistentFollowup {
+  id: string
+  title: string
+  scheduled_at: string
+  phase: string
+  receipt: string | null
+  conversation: string
+}
+
 /** Public registration data only. Private device keys remain native-process owned. */
 export type ManagedDevicePermission = 'skills:sync' | 'knowledge:sync' | 'plugin:execute'
 export interface ManagedDeviceChallengeCommand {
@@ -146,13 +160,17 @@ export function normalizeSemantierWorkspaceOrigin(origin: string): string {
 export function createSemantierWorkspaceClient(origin: string, fetchSession: (input: string, init?: RequestInit) => Promise<Response>) {
   const base = new URL(normalizeSemantierWorkspaceOrigin(origin))
 
-  async function request(path: string, body?: Record<string, unknown>, method = 'POST', signal?: AbortSignal) {
+  async function request(path: string, body?: Record<string, unknown>, method = 'POST', signal?: AbortSignal, scope?: WorkspaceScope) {
     const response = await fetchSession(new URL(path, base.origin).href, {
       method: body ? method : 'GET',
       credentials: 'include',
       cache: 'no-store',
       redirect: 'error',
-      headers: body ? { 'Content-Type': 'application/json', Origin:base.origin, 'X-Semantier-CSRF':'1' } : undefined,
+      headers: {
+        ...(body ? { 'Content-Type': 'application/json', Origin:base.origin, 'X-Semantier-CSRF':'1' } : {}),
+        ...(scope ? { 'X-Semantier-User-Id': scope.userId, 'X-Semantier-Workspace-Id': scope.workspaceId,
+          'X-Semantier-Organization-Id': scope.organizationId } : {})
+      },
       body: body ? JSON.stringify(body) : undefined,
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(body ? 120_000 : 15_000)]) : AbortSignal.timeout(body ? 120_000 : 15_000)
     })
@@ -179,6 +197,26 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
   }
 
   return {
+    async winmanCapability(scope: WorkspaceScope, enabled?: boolean): Promise<WinmanCapability> {
+      return (await request('/api/winman/capability', enabled === undefined ? undefined : { enabled },
+        'PUT', undefined, scope)).json()
+    },
+    async persistentFollowups(scope: WorkspaceScope): Promise<{ items: PersistentFollowup[] }> {
+      try {
+        return await (await request('/api/winman/persistent-work', undefined, 'GET', undefined, scope)).json()
+      } catch (error) {
+        if ((error as {statusCode?: number}).statusCode === 404) { return { items: [] } }
+        throw error
+      }
+    },
+    async persistentReminder(item: PersistentFollowup): Promise<string | null> {
+      const path = '/api/sessions/' + encodeURIComponent(item.conversation) + '/messages'
+      const history = await (await request(path)).json()
+      if (history.session_id !== item.conversation) { return null }
+      const row = history.messages?.find((message: {id: string | number; role: string}) =>
+        String(message.id) === item.receipt && message.role === 'assistant')
+      return typeof row?.content === 'string' ? row.content : null
+    },
     async personalSources() {
       return (await request('/api/personal-capabilities/skills/list', {})).json()
     },
@@ -355,12 +393,34 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
 
       return result
     },
+    async explicitWork(sessionKey: string, message: string, requestIdentity: string, scope: WorkspaceScope, signal?: AbortSignal) {
+      const path = '/api/sessions/' + encodeURIComponent(sessionKey) + '/chat'
+      const response = await (await request(path, { message, requestIdentity }, 'POST', signal, scope)).json()
+      if (!response.ok || response.session_id !== sessionKey) {
+        throw new Error('Persistent work action did not complete in the original Main conversation.')
+      }
+    },
     async history(sessionKey: string, afterId?: string): Promise<WorkspaceHistory> {
       if (afterId !== undefined && !/^\d+$/.test(afterId)) { throw new Error('Invalid message cursor.') }
       const query = new URLSearchParams({ sessionKey })
 
       if (afterId !== undefined) { query.set('afterId', afterId) }
-      const result: WorkspaceHistory = await (await request(`/api/history?${query}`)).json()
+      let result: WorkspaceHistory
+      try {
+        result = await (await request(`/api/history?${query}`)).json()
+      } catch (error) {
+        if ((error as { statusCode?: number }).statusCode !== 404) { throw error }
+        const nativeQuery = afterId === undefined ? '' : '?after_id=' + encodeURIComponent(afterId)
+        const snapshot = await (await request(
+          '/api/sessions/' + encodeURIComponent(sessionKey) + '/messages' + nativeQuery
+        )).json()
+        result = {
+          sessionId: snapshot.session_id, hasMore: snapshot.pagination?.has_more,
+          nextCursor: snapshot.pagination?.next_cursor,
+          messages: snapshot.messages.map((row: { id: number; role: string; content: unknown; metadata?: Record<string, unknown> }) =>
+            ({ messageId: String(row.id), role: row.role, content: row.content, metadata: row.metadata }))
+        }
+      }
 
       // A foreign/missing Workspace history may deliberately be an empty 200.
       // Never adopt its "new" placeholder as the requested durable session.
@@ -473,13 +533,17 @@ export async function workspaceDesktopRead(
     const { sessions } = await client.sessions()
 
     return sessions.map(item => {
-      const row = item as typeof item & { createdAt?: number; updatedAt?: number; status?: string; model?: string; platform?: string }
+      const row = item as typeof item & {
+        createdAt?: number; updatedAt?: number; status?: string; model?: string; platform?: string
+        session_key?: string; started_at?: number; last_active?: number; is_active?: boolean; source?: string
+      }
 
       return {
-        ...row, id: row.key, profile: 'default',
-        started_at: row.createdAt === undefined ? undefined : row.createdAt / 1000,
-        last_active: row.updatedAt === undefined ? undefined : row.updatedAt / 1000,
-        is_active: row.status === 'running', source: row.platform
+        ...row, id: row.key || row.session_key, profile: 'default',
+        started_at: row.createdAt === undefined ? row.started_at : row.createdAt / 1000,
+        last_active: row.updatedAt === undefined ? row.last_active : row.updatedAt / 1000,
+        is_active: row.status === undefined ? row.is_active : row.status === 'running',
+        source: row.source || row.platform
       }
     })
   }

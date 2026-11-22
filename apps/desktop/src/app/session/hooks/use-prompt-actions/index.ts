@@ -26,11 +26,13 @@ import {
 import { serverOwnsComposerQueue } from '@/store/composer-queue'
 import { resetSessionBackground } from '@/store/composer-status'
 import { confirm } from '@/store/confirm'
+import { $connectionsRegistry } from '@/store/connection-registry-state'
 import { clearNotifications, notify, notifyError } from '@/store/notifications'
 import { clearPreviewArtifacts } from '@/store/preview-status'
 import { clearAllPrompts } from '@/store/prompts'
 import {
   $busy,
+  $connection,
   $currentCwd,
   $messages,
   $terminalBackend,
@@ -689,6 +691,14 @@ export function usePromptActions({
           })
 
           return false
+        }
+
+        const owner = options?.destination?.owner
+        const connectionId = owner && typeof owner === 'object' ? owner.connectionId : $connection.get()?.connectionId
+        const workspace = $connectionsRegistry.get()?.connections.find(connection => connection.id === connectionId)
+
+        if (workspace?.transport === 'semantier-workspace-http' && /^\/followup(?:\s|$)/.test(visibleText)) {
+          return await submitPromptText(visibleText, options)
         }
 
         triggerHaptic('selection')

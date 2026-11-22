@@ -345,6 +345,12 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     identity: origin => ipcRenderer.invoke('hermes:workspace:identity', origin),
     login: origin => ipcRenderer.invoke('hermes:workspace:login', origin),
     logout: origin => ipcRenderer.invoke('hermes:workspace:logout', origin),
+    winmanCapability: (origin, scope, enabled) =>
+      ipcRenderer.invoke('hermes:workspace:winman-capability', origin, scope, enabled),
+    persistentFollowups: (origin, scope) =>
+      ipcRenderer.invoke('hermes:workspace:persistent-followups', origin, scope),
+    persistentReminder: (origin, scope, workId) =>
+      ipcRenderer.invoke('hermes:workspace:persistent-reminder', origin, scope, workId),
     ensureWinmanChat: (origin, scope) => ipcRenderer.invoke('hermes:workspace:ensure-winman-chat', origin, scope),
     createSession: (origin, scope, label, requestIdentity) => ipcRenderer.invoke('hermes:workspace:create-session', origin, scope, label, requestIdentity),
     sessions: (origin, scope) => ipcRenderer.invoke('hermes:workspace:sessions', origin, scope),

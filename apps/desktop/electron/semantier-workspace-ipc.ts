@@ -4,7 +4,7 @@ import { BrowserWindow, ipcMain, session } from 'electron'
 
 import type {ManagedDeviceEnrollment} from './managed-device-enrollment'
 import type {PersonalCapabilitySync,PersonalPin,PersonalSnapshot} from './personal-capability-sync'
-import { assertWorkspaceScope, createSemantierWorkspaceClient, type ManagedDeviceInventory, type ManagedDevicePermission, requireNativeCompletion, requireWorkspaceCompletion, WORKSPACE_USER_STOP_ERROR, type WorkspaceHistory, type WorkspaceIdentity, type WorkspaceMainContext, type WorkspaceNativeCancellation, type WorkspaceNativeSnapshot, type WorkspaceNativeSubmission, type WorkspaceScope, type WorkspaceWinmanProfile } from './semantier-workspace-client'
+import { assertWorkspaceScope, createSemantierWorkspaceClient, type ManagedDeviceInventory, type ManagedDevicePermission, requireNativeCompletion, requireWorkspaceCompletion, WORKSPACE_USER_STOP_ERROR, type WorkspaceHistory, type WorkspaceIdentity, type WorkspaceMainContext, type WorkspaceNativeCancellation, type WorkspaceNativeSnapshot, type WorkspaceNativeSubmission, type WorkspaceScope, type WorkspaceWinmanProfile, type WinmanCapability, type PersistentFollowup } from './semantier-workspace-client'
 
 export { assertWorkspaceScope } from './semantier-workspace-client'
 export type { WorkspaceScope } from './semantier-workspace-client'
@@ -24,6 +24,9 @@ export interface DesktopWorkspaceApi {
   identity: (origin: string) => Promise<WorkspaceIdentity>
   login: (origin: string) => Promise<WorkspaceIdentity>
   logout: (origin: string) => Promise<void>
+  winmanCapability: (origin: string, scope: WorkspaceScope, enabled?: boolean) => Promise<WinmanCapability>
+  persistentFollowups: (origin: string, scope: WorkspaceScope) => Promise<{ items: PersistentFollowup[] }>
+  persistentReminder: (origin: string, scope: WorkspaceScope, workId: string) => Promise<string | null>
   ensureWinmanChat: (origin: string, scope: WorkspaceScope) => Promise<WorkspaceWinmanProfile>
   createSession: (origin: string, scope: WorkspaceScope, label: string, requestIdentity: string) => Promise<WorkspaceHistory>
   sessions: (origin: string, scope: WorkspaceScope) => Promise<{ sessions: Array<{ key: string; title?: string }> }>
@@ -175,6 +178,30 @@ return personal}
       if (!win.isDestroyed()) { win.close() }
     }
   })
+  ipcMain.handle('hermes:workspace:winman-capability', async (_event, origin: string, scope: WorkspaceScope, enabled?: boolean) => {
+    const { client } = workspace(origin)
+    assertWorkspaceScope(await client.identity(), scope)
+    const result = await client.winmanCapability(scope, enabled)
+    assertWorkspaceScope(await client.identity(), scope)
+    return result
+  })
+  ipcMain.handle('hermes:workspace:persistent-followups', async (_event, origin: string, scope: WorkspaceScope) => {
+    const { client } = workspace(origin)
+    assertWorkspaceScope(await client.identity(), scope)
+    const result = await client.persistentFollowups(scope)
+    assertWorkspaceScope(await client.identity(), scope)
+    return result
+  })
+  ipcMain.handle('hermes:workspace:persistent-reminder', async (_event, origin: string, scope: WorkspaceScope, workId: string) => {
+    const { client } = workspace(origin)
+    assertWorkspaceScope(await client.identity(), scope)
+    const { items } = await client.persistentFollowups(scope)
+    const work = items.find(item => item.id === workId && item.receipt)
+    if (!work) { return null }
+    const content = await client.persistentReminder(work)
+    assertWorkspaceScope(await client.identity(), scope)
+    return content
+  })
   ipcMain.handle('hermes:workspace:ensure-winman-chat', async (_event, origin: string, scope: WorkspaceScope) => {
     const { client } = workspace(origin)
     assertWorkspaceScope(await client.identity(), scope)
@@ -275,9 +302,13 @@ return personal}
     try {
       assertWorkspaceScope(await client.identity(), scope)
       stream.controller.signal.throwIfAborted()
-      const response = await client.send(sessionId, message, requestIdentity, stream.controller.signal)
-      // Closing this finite SSE does not authorize replay or cancel durable responsibilities.
-      await requireWorkspaceCompletion(response)
+      if (/^\/followup(?:\s|$)/.test(message)) {
+        await client.explicitWork(sessionId, message, requestIdentity, scope, stream.controller.signal)
+      } else {
+        const response = await client.send(sessionId, message, requestIdentity, stream.controller.signal)
+        // Closing this finite SSE does not authorize replay or cancel durable responsibilities.
+        await requireWorkspaceCompletion(response)
+      }
       assertWorkspaceScope(await client.identity(), scope)
       const result = await client.history(sessionId)
       assertWorkspaceScope(await client.identity(), scope)

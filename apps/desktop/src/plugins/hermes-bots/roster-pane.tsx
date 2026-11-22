@@ -2,6 +2,7 @@ import { host, useI18n, useValue } from '@hermes/plugin-sdk'
 import { useEffect, useRef, useState } from 'react'
 
 import { BotRow } from './bot-row'
+import { PersistentFollowupPanel } from './persistent-followup-panel'
 import {
   $botChatFocused,
   $botsPaneVisible,
@@ -478,6 +479,7 @@ export function BotsPane() {
 
   return (
     <div className="flex h-full flex-col">
+      <PersistentFollowupPanel />
       <CanonicalGroupList onOpen={openGroupChat} />
       {renderRosterToolbar({
         b,
