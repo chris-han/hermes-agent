@@ -157,7 +157,7 @@ export interface BillingUsage {
   unresolved_attempts?: number | null
 }
 export interface BillingCommerceUsage {
-  known_cost: Money
+  known_cost: Money | null
   period: 'lifetime'
 }
 export interface BillingMerchant {

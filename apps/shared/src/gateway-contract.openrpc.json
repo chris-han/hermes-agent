@@ -6648,7 +6648,14 @@
         "additionalProperties": false,
         "properties": {
           "known_cost": {
-            "$ref": "#/components/schemas/Money"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "period": {
             "const": "lifetime",

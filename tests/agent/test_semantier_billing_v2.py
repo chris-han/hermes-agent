@@ -20,13 +20,15 @@ def state():
             'portal': {'url': 'https://billing.example'}, 'as_of': '2026-10-20T00:00:00Z'}
 
 
-def test_v2_customer_cloud_null_credit_survives_validation_and_rpc():
+def test_v2_customer_cloud_redactions_survive_validation_and_rpc():
     from tui_gateway.contracts.registry import METHODS
     payload = state()
     payload['credits']['available'] = None
+    payload['usage']['known_cost'] = None
     validated = SemantierBillingV2.model_validate(payload).model_dump(exclude_unset=True)
     wire = METHODS['billing.state'].result.model_validate({'ok': True, **validated})
     assert wire.credits.available is None
+    assert wire.usage.known_cost is None
     assert wire.credits.held.amount == '100.00'
 
 
@@ -50,13 +52,15 @@ def test_v2_bridge_uses_read_only_resource_and_bound_account(tmp_path, monkeypat
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from agent import semantier_gateway as sg
     calls = []
+    payload = state()
+    payload['usage']['known_cost'] = None
 
     class Upstream(BaseHTTPRequestHandler):
         def do_GET(self):
             calls.append((self.path, self.headers.get('Authorization')))
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(json.dumps(state()).encode())
+            self.wfile.write(json.dumps(payload).encode())
 
         def log_message(self, *args):
             pass
@@ -71,7 +75,7 @@ def test_v2_bridge_uses_read_only_resource_and_bound_account(tmp_path, monkeypat
     (tmp_path / '.env').write_text('TEST_BILLING_TOKEN=read-secret\n')
     try:
         result = sg.read_billing('state', schema_version='semantier.billing.v2')
-        assert result == {'ok': True, **state()}
+        assert result == {'ok': True, **payload}
         assert calls == [('/api/billing/commerce/state?account_id=account-a', 'Bearer read-secret')]
         assert 'read-secret' not in str(result)
         assert sg.billing_request('checkout', schema_version='semantier.billing.v2')['ok'] is False

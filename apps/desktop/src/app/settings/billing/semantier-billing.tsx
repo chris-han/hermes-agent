@@ -133,7 +133,7 @@ export function SemantierBilling({ state, refusal, onPortalOpen }: SemantierBill
         {row(commerce.purchased, formatSemantierMoney(state.credits.purchased))}
         {row(c.held, formatSemantierMoney(state.credits.held))}
         {row(c.available, state.credits.available === null ? c.unavailable : formatSemantierMoney(state.credits.available))}
-        {row(`${c.knownCost} · ${c.lifetime}`, formatSemantierMoney(state.usage.known_cost))}
+        {row(`${c.knownCost} · ${c.lifetime}`, state.usage.known_cost === null ? c.unavailable : formatSemantierMoney(state.usage.known_cost))}
         {row(c.updated, fmtDateTime.format(new Date(state.as_of)))}
       </SettingsSection>
       {state.capabilities.can_open_portal && <div className="flex flex-wrap gap-2">

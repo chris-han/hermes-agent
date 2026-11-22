@@ -113,7 +113,7 @@ class BillingCredits(Result):
 
 
 class BillingCommerceUsage(Result):
-    known_cost: Money
+    known_cost: Money | None
     period: Literal['lifetime']
 
 
