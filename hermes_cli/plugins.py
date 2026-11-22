@@ -1761,7 +1761,7 @@ def discover_plugins(force: bool = False) -> None:
     background discovery instead of racing a second scan."""
     from agent.safe_worker_policy import safe_worker_enabled
 
-    if safe_worker_enabled():
+    if safe_worker_enabled() or plugin_discovery_suppressed():
         return
     _join_background_discovery()
     get_plugin_manager().discover_and_load(force=force)
@@ -1777,7 +1777,7 @@ def start_background_plugin_discovery() -> None:
     registry. No-op when already done or in flight."""
     from agent.safe_worker_policy import safe_worker_enabled
 
-    if safe_worker_enabled():
+    if safe_worker_enabled() or plugin_discovery_suppressed():
         return
     global _background_discovery_thread
     manager = get_plugin_manager()
@@ -1882,17 +1882,23 @@ def invoke_hook(hook_name: str, **kwargs: Any) -> list[Any]:
     ``discover_plugins()`` (gateway platform events, TUI slash workers, query mode, cron) still fire
     callbacks registered by user plugins (tracking #64178).
     """
+    if plugin_discovery_suppressed():
+        return []
     return _delivery_manager().invoke_hook(hook_name, **kwargs)
 
 
 async def ainvoke_hook(hook_name: str, **kwargs: Any) -> list[Any]:
     """:func:`invoke_hook` for callers on an event loop: ``async def`` callbacks are awaited
     there instead of bridged through a helper thread (see ``PluginManager.ainvoke_hook``)."""
+    if plugin_discovery_suppressed():
+        return []
     return await _delivery_manager().ainvoke_hook(hook_name, **kwargs)
 
 
 def render_system_prompt_sections(session_info: Mapping[str, Any]) -> list[RenderedPluginSystemPromptSection]:
     """Render plugin prompt sections after idempotent plugin discovery."""
+    if plugin_discovery_suppressed():
+        return []
     return _ensure_plugins_discovered().render_system_prompt_sections(session_info)
 
 
@@ -1902,6 +1908,8 @@ def invoke_middleware(kind: str, **kwargs: Any) -> list[Any]:
     Lazy-discovers plugins on first use — same delivery-parity guarantee as :func:`invoke_hook` (tracking
     #64178).
     """
+    if plugin_discovery_suppressed():
+        return []
     return _delivery_manager().invoke_middleware(kind, **kwargs)
 
 
@@ -1912,6 +1920,8 @@ def has_middleware(kind: str) -> bool:
     Lazy-discovers first: callers use this as a gate before :func:`invoke_middleware`, so a pre-discovery
     ``False`` here would silently skip delivery on surfaces that never ran discovery (#64178).
     """
+    if plugin_discovery_suppressed():
+        return False
     manager = _delivery_manager()
     method = getattr(manager, "has_middleware", None)
     if callable(method):
@@ -1924,11 +1934,15 @@ def has_hook(hook_name: str) -> bool:
 
     Lazy-discovers first — same gate-before-invoke rationale as :func:`has_middleware` (tracking #64178).
     """
+    if plugin_discovery_suppressed():
+        return False
     return _delivery_manager().has_hook(hook_name)
 
 
 def iter_hook_callbacks(hook_name: str) -> tuple[Callable, ...]:
     """Return a stable snapshot of callbacks registered for a hook."""
+    if plugin_discovery_suppressed():
+        return ()
     return get_plugin_manager().iter_hook_callbacks(hook_name)
 
 
@@ -1938,6 +1952,8 @@ def fire_pre_command_hook(
 ) -> None:
     """Fire the observer-only ``pre_command`` hook; never raises. Directive-shaped returns are
     logged at debug so future block/rewrite adopters are discoverable."""
+    if plugin_discovery_suppressed():
+        return
     try:
         manager = get_plugin_manager()
         if not manager.has_hook("pre_command"):
@@ -2187,6 +2203,8 @@ def _ensure_plugins_discovered(force: bool = False) -> PluginManager:
 
 def get_plugin_context_engine():
     """Return the plugin-registered context engine, or None."""
+    if plugin_discovery_suppressed():
+        return None
     return _ensure_plugins_discovered()._context_engine
 
 

@@ -58,3 +58,35 @@ def test_plugin_only_dispatch_does_not_reenter_builtin_observers(monkeypatch):
     )
 
     assert plugins.invoke_hook("custom", value=1) == ["custom", {"value": 1}]
+
+
+def test_suppressed_plugin_discovery_blocks_preloaded_callbacks(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from hermes_cli import plugins
+    from hermes_cli.plugins_discovery import suppress_plugin_discovery
+
+    calls = []
+
+    def hook(*args, **kwargs):
+        calls.append("hook")
+        return ["registered"]
+
+    manager = SimpleNamespace(_discovered=True, invoke_hook=hook)
+    monkeypatch.setattr(plugins, "get_plugin_manager", lambda: manager)
+
+    with suppress_plugin_discovery():
+        plugins.discover_plugins()
+        plugins.start_background_plugin_discovery()
+        assert plugins.invoke_hook("pre_prompt") == []
+        assert asyncio.run(plugins.ainvoke_hook("pre_prompt")) == []
+        assert plugins.render_system_prompt_sections({}) == []
+        assert plugins.get_plugin_context_engine() is None
+        assert plugins.invoke_middleware("provider") == []
+        assert not plugins.has_middleware("provider")
+        assert not plugins.has_hook("pre_prompt")
+        assert plugins.iter_hook_callbacks("stream") == ()
+        plugins.fire_pre_command_hook(surface="api", command="chat", alias_used="", args_raw="")
+    assert calls == []
+    assert plugins.invoke_hook("pre_prompt") == ["registered"]
