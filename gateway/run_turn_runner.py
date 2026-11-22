@@ -938,7 +938,11 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
                 from agent.desktop_browser_target import prelude
                 kwargs['prelude']=prelude(browser_turn,agent,api_message,agent_history)
             with notification_turn(agent, muted=ctx.mute_notification_reply, session_id=ctx.session_id or ""), browser_turn_scope(browser_turn):
-                result = agent.run_conversation(api_message, **kwargs)
+                detached = getattr(self._runner, "_host_run_detached_inference", None)
+                if detached is None:
+                    result = agent.run_conversation(api_message, **kwargs)
+                else:
+                    result = detached(agent, api_message, agent_history)
             if captured is not None:
                 incoming = max(0, (getattr(agent, 'session_prompt_tokens', 0) or 0) - before[0])
                 outgoing = max(0, (getattr(agent, 'session_completion_tokens', 0) or 0) - before[1])
