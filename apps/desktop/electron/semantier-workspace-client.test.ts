@@ -231,3 +231,22 @@ it('retains managed quota refusal without retrying or reporting a sign-in failur
   })
   expect(transport).toHaveBeenCalledTimes(1)
 })
+
+it('surfaces an exact Project conflict through the signed Workspace transport', async () => {
+  const transport = vi.fn<typeof fetch>().mockResolvedValue(
+    Response.json({ detail: 'PROJECT_HEAD_CONFLICT' }, { status: 409 })
+  )
+  const client = createSemantierWorkspaceClient('https://cloud.example', transport)
+  const ref = 'project:' + 'a'.repeat(32)
+  const note = { artifact_kind: 'workspace_artifact', artifact_ref: 'note', artifact_hash: 'sha256:' + 'b'.repeat(64) }
+  const decision = { request_id: 'first', expected_head: null, note, goal: 'Pilot', question: 'Extend?', claim: 'Wait', rationale: 'Scope' }
+
+  await expect(client.commitProject(ref, decision)).rejects.toThrow('PROJECT_HEAD_CONFLICT')
+  expect(transport).toHaveBeenCalledTimes(1)
+  const [url, init] = transport.mock.calls[0]
+
+  expect(url).toBe('https://cloud.example/api/workbench/projects/' + encodeURIComponent(ref) + '/heads')
+  expect(init).toMatchObject({ method: 'POST', credentials: 'include', redirect: 'error' })
+  expect(new Headers(init?.headers).get('X-Semantier-CSRF')).toBe('1')
+  expect(JSON.parse(String(init?.body))).toEqual(decision)
+})

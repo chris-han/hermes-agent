@@ -6,10 +6,17 @@ import type {ManagedDeviceEnrollment} from './managed-device-enrollment'
 import type {PersonalCapabilitySync,PersonalPin,PersonalSnapshot} from './personal-capability-sync'
 import { assertWorkspaceScope, createSemantierWorkspaceClient, type ManagedDeviceInventory, type ManagedDevicePermission, requireNativeCompletion, requireWorkspaceCompletion, WORKSPACE_USER_STOP_ERROR, type WorkspaceHistory, type WorkspaceIdentity, type WorkspaceMainContext, type WorkspaceNativeCancellation, type WorkspaceNativeSnapshot, type WorkspaceNativeSubmission, type WorkspaceScope, type WorkspaceWinmanProfile, type WinmanCapability, type PersistentFollowup } from './semantier-workspace-client'
 
+import type { WorkspaceProject, WorkspaceProjectCommit, WorkspaceProjectContinuation, WorkspaceProjectHead, WorkspaceProjectPin } from './semantier-workspace-client'
+
 export { assertWorkspaceScope } from './semantier-workspace-client'
 export type { WorkspaceScope } from './semantier-workspace-client'
 
 export interface DesktopWorkspaceApi {
+  projects: (origin: string, scope: WorkspaceScope) => Promise<WorkspaceProject[]>
+  createProject: (origin: string, scope: WorkspaceScope, graph: WorkspaceProjectPin, consent: true) => Promise<WorkspaceProject>
+  continueProject: (origin: string, scope: WorkspaceScope, projectRef: string) => Promise<WorkspaceProjectContinuation>
+  commitProject: (origin: string, scope: WorkspaceScope, projectRef: string, decision: WorkspaceProjectCommit) => Promise<WorkspaceProjectHead>
+  replayProject: (origin: string, scope: WorkspaceScope, projectRef: string, head: WorkspaceProjectPin) => Promise<{ head: WorkspaceProjectHead }>
   personalPreview:(origin:string,scope:WorkspaceScope,skillId:string)=>ReturnType<PersonalCapabilitySync['preview']>
   personalSources:(origin:string,scope:WorkspaceScope)=>ReturnType<PersonalCapabilitySync['sources']>
   personalShare:(origin:string,scope:WorkspaceScope,selected:PersonalSnapshot,context:PersonalSnapshot['contexts'][number])=>ReturnType<PersonalCapabilitySync['share']>
@@ -108,6 +115,31 @@ return personal}
       throw error
     }
   })
+  async function withProjectScope<T>(
+    origin: string, scope: WorkspaceScope,
+    run: (client: ReturnType<typeof createSemantierWorkspaceClient>) => Promise<T>
+  ): Promise<T> {
+    const { client } = workspace(origin)
+
+    assertWorkspaceScope(await client.identity(), scope)
+    const result = await run(client)
+
+    assertWorkspaceScope(await client.identity(), scope)
+
+    return result
+  }
+
+  ipcMain.handle('hermes:workspace:projects', (_event, origin: string, scope: WorkspaceScope) =>
+    withProjectScope(origin, scope, client => client.projects()))
+  ipcMain.handle('hermes:workspace:create-project', (_event, origin: string, scope: WorkspaceScope, graph: WorkspaceProjectPin, consent: true) =>
+    withProjectScope(origin, scope, client => client.createProject(graph, consent)))
+  ipcMain.handle('hermes:workspace:continue-project', (_event, origin: string, scope: WorkspaceScope, ref: string) =>
+    withProjectScope(origin, scope, client => client.continueProject(ref)))
+  ipcMain.handle('hermes:workspace:commit-project', (_event, origin: string, scope: WorkspaceScope, ref: string, decision: WorkspaceProjectCommit) =>
+    withProjectScope(origin, scope, client => client.commitProject(ref, decision)))
+  ipcMain.handle('hermes:workspace:replay-project', (_event, origin: string, scope: WorkspaceScope, ref: string, head: WorkspaceProjectPin) =>
+    withProjectScope(origin, scope, client => client.replayProject(ref, head)))
+
   ipcMain.handle('hermes:workspace:managed-devices', async (_event, origin: string, scope: WorkspaceScope) => {
     const { client } = workspace(origin)
     assertWorkspaceScope(await client.identity(), scope)
