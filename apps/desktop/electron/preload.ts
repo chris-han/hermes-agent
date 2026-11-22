@@ -332,6 +332,7 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     resume:()=>ipcRenderer.invoke('hermes:file-sync:resume'),
   },
   workspace: {
+    projectMaterials: (origin, scope) => ipcRenderer.invoke('hermes:workspace:project-materials', origin, scope),
     projects: (origin, scope) => ipcRenderer.invoke('hermes:workspace:projects', origin, scope),
     createProject: (origin, scope, graph, consent) => ipcRenderer.invoke('hermes:workspace:create-project', origin, scope, graph, consent),
     continueProject: (origin, scope, ref) => ipcRenderer.invoke('hermes:workspace:continue-project', origin, scope, ref),

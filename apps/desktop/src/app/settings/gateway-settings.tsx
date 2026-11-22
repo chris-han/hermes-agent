@@ -1126,6 +1126,9 @@ function GatewayConnectionSettings({ embedded, standalone }: { embedded: boolean
       {/* Hermes Cloud panel: one portal sign-in, then a discovered-agent picker
           whose selection drives the silent per-agent cascade + a cloud
           connection. Replaces the URL/token form while in cloud mode. */}
+      {import.meta.env.VITE_PROJECT_CONTINUITY_DEV === '1' && state.mode === 'local' && (
+        <SemantierWorkspaceSettings connections={savedCloudConnections} projectsOnly />
+      )}
       {state.mode === 'cloud' && !state.envOverride ? (
         <div className="mt-5 grid gap-1">
           <SemantierWorkspaceSettings connections={savedCloudConnections} onConnect={selectConnection} />

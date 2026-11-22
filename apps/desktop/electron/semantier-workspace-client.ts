@@ -159,6 +159,9 @@ export function normalizeSemantierWorkspaceOrigin(origin: string): string {
 
 export type WorkspaceProjectPin = { artifact_kind: string; artifact_ref: string; artifact_hash: string }
 
+export type WorkspaceProjectMaterial = { pin: WorkspaceProjectPin; label: string }
+export type WorkspaceProjectMaterials = { graphs: WorkspaceProjectMaterial[]; notes: WorkspaceProjectMaterial[] }
+
 export type WorkspaceProject = { project_ref: string; graph: WorkspaceProjectPin }
 
 export type WorkspaceProjectDraft = {
@@ -264,6 +267,9 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
       const row = history.messages?.find((message: {id: string | number; role: string}) =>
         String(message.id) === item.receipt && message.role === 'assistant')
       return typeof row?.content === 'string' ? row.content : null
+    },
+    async projectMaterials(): Promise<WorkspaceProjectMaterials> {
+      return (await request(PROJECTS_PATH + '/materials')).json()
     },
     async projects(): Promise<WorkspaceProject[]> {
       return (await request(PROJECTS_PATH)).json()

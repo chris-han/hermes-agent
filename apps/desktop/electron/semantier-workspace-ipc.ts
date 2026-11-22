@@ -6,12 +6,13 @@ import type {ManagedDeviceEnrollment} from './managed-device-enrollment'
 import type {PersonalCapabilitySync,PersonalPin,PersonalSnapshot} from './personal-capability-sync'
 import { assertWorkspaceScope, createSemantierWorkspaceClient, type ManagedDeviceInventory, type ManagedDevicePermission, requireNativeCompletion, requireWorkspaceCompletion, WORKSPACE_USER_STOP_ERROR, type WorkspaceHistory, type WorkspaceIdentity, type WorkspaceMainContext, type WorkspaceNativeCancellation, type WorkspaceNativeSnapshot, type WorkspaceNativeSubmission, type WorkspaceScope, type WorkspaceWinmanProfile, type WinmanCapability, type PersistentFollowup } from './semantier-workspace-client'
 
-import type { WorkspaceProject, WorkspaceProjectCommit, WorkspaceProjectContinuation, WorkspaceProjectHead, WorkspaceProjectPin } from './semantier-workspace-client'
+import type { WorkspaceProject, WorkspaceProjectCommit, WorkspaceProjectContinuation, WorkspaceProjectHead, WorkspaceProjectMaterials, WorkspaceProjectPin } from './semantier-workspace-client'
 
 export { assertWorkspaceScope } from './semantier-workspace-client'
 export type { WorkspaceScope } from './semantier-workspace-client'
 
 export interface DesktopWorkspaceApi {
+  projectMaterials: (origin: string, scope: WorkspaceScope) => Promise<WorkspaceProjectMaterials>
   projects: (origin: string, scope: WorkspaceScope) => Promise<WorkspaceProject[]>
   createProject: (origin: string, scope: WorkspaceScope, graph: WorkspaceProjectPin, consent: true) => Promise<WorkspaceProject>
   continueProject: (origin: string, scope: WorkspaceScope, projectRef: string) => Promise<WorkspaceProjectContinuation>
@@ -129,6 +130,8 @@ return personal}
     return result
   }
 
+  ipcMain.handle('hermes:workspace:project-materials', (_event, origin: string, scope: WorkspaceScope) =>
+    withProjectScope(origin, scope, client => client.projectMaterials()))
   ipcMain.handle('hermes:workspace:projects', (_event, origin: string, scope: WorkspaceScope) =>
     withProjectScope(origin, scope, client => client.projects()))
   ipcMain.handle('hermes:workspace:create-project', (_event, origin: string, scope: WorkspaceScope, graph: WorkspaceProjectPin, consent: true) =>
