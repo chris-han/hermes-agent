@@ -91,3 +91,30 @@ it('does not save or open a workspace when hosted sign-in is cancelled', async (
     'https://cloud.semantier.cn'
   )
 })
+
+it('signs into Project continuity while leaving the local connection alone', async () => {
+  const save = vi.fn()
+  const onConnect = vi.fn()
+  const projects = vi.fn().mockResolvedValue([])
+  const projectMaterials = vi.fn().mockResolvedValue({ notes: [], graphs: [] })
+  Object.defineProperty(window, 'hermesDesktop', {
+    configurable: true,
+    value: {
+      workspace: {
+        identity: vi.fn().mockResolvedValue({ authenticated: false }),
+        login: vi.fn().mockResolvedValue({
+          authenticated: true, user: { user_id: 'a' }, workspace: { id: 'wa' }, organization_id: 'org'
+        }),
+        projects,
+        projectMaterials
+      },
+      connections: { save }
+    }
+  })
+  render(<SemantierWorkspaceSettings connections={[]} onConnect={onConnect} projectsOnly />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Sign in to Workspace' }))
+  expect(await screen.findByText('No admitted project context is available.')).toBeTruthy()
+  expect(projects).toHaveBeenCalledWith('https://cloud.semantier.cn', { userId: 'a', workspaceId: 'wa', organizationId: 'org' })
+  expect(save).not.toHaveBeenCalled()
+  expect(onConnect).not.toHaveBeenCalled()
+})

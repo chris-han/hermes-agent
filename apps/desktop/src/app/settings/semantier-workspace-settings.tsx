@@ -10,15 +10,18 @@ import { refreshConnectionsRegistry } from '@/store/connections'
 import type { WorkspaceIdentity } from '../../../electron/semantier-workspace-client'
 
 import { ListRow } from './primitives'
+import { SemantierDesktopProjects } from './semantier-desktop-projects'
 import { SemantierManagedDevices } from './semantier-managed-devices'
 import { SemantierPersonalSync } from './semantier-personal-sync'
 
 export function SemantierWorkspaceSettings({
   connections,
-  onConnect
+  onConnect,
+  projectsOnly = false
 }: {
   connections: DesktopRegistryConnection[]
-  onConnect: (id: string) => Promise<void> | void
+  onConnect?: (id: string) => Promise<void> | void
+  projectsOnly?: boolean
 }) {
   const { locale } = useI18n()
   const copy = semantierWorkspaceCopy(locale)
@@ -90,6 +93,7 @@ export function SemantierWorkspaceSettings({
       }
 
       setIdentity(actual)
+      if (projectsOnly) return
       const normalized = new URL(origin).origin
 
       const saved = connections.find(
@@ -114,7 +118,7 @@ export function SemantierWorkspaceSettings({
       }
 
       await refreshConnectionsRegistry()
-      await onConnect(connection.id)
+      await onConnect?.(connection.id)
     } catch {
       if (generation.current === current) {
         setError(copy.failed)
@@ -144,12 +148,15 @@ export function SemantierWorkspaceSettings({
       onSubmit={event => {
         event.preventDefault()
 
-        if (!checking && !busy) {
+        if (!checking && !busy && (!projectsOnly || !identity?.authenticated)) {
           void connect()
         }
       }}
     >
-      <ListRow description={copy.description} title={copy.title} />
+      <ListRow
+        description={projectsOnly ? (locale === 'zh' ? '通过工作区账户继续项目。' : 'Use your Workspace account to continue a project.') : copy.description}
+        title={projectsOnly ? (locale === 'zh' ? '项目' : 'Projects') : copy.title}
+      />
       <div className="grid gap-1.5">
         <label className="text-xs text-muted-foreground" htmlFor={addressId}>
           {copy.address}
@@ -172,9 +179,11 @@ export function SemantierWorkspaceSettings({
         </p>
       ) : null}
       <div className="flex flex-wrap gap-2">
-        <Button disabled={checking || busy} type="submit">
-          {busy ? copy.waiting : identity?.authenticated ? copy.open : copy.signIn}
-        </Button>
+        {(!projectsOnly || !identity?.authenticated) && (
+          <Button disabled={checking || busy} type="submit">
+            {busy ? copy.waiting : projectsOnly ? (locale === 'zh' ? '登录工作区' : 'Sign in to Workspace') : identity?.authenticated ? copy.open : copy.signIn}
+          </Button>
+        )}
         {identity?.authenticated ? (
           <Button disabled={busy} onClick={() => void signOut()} type="button" variant="outline">
             {copy.signOut}
@@ -182,7 +191,11 @@ export function SemantierWorkspaceSettings({
         ) : null}
       </div>
       {identity?.authenticated && identity.user?.user_id && identity.workspace?.id && identity.organization_id ? (
-        <>
+        projectsOnly ? <SemantierDesktopProjects
+          key={JSON.stringify([origin, identity.user.user_id, identity.workspace.id, identity.organization_id])}
+          origin={origin}
+          scope={{userId: identity.user.user_id, workspaceId: identity.workspace.id, organizationId: identity.organization_id}}
+        /> : <>
         <SemantierPersonalSync key={JSON.stringify([origin,identity.user.user_id,identity.workspace.id,identity.organization_id])} origin={origin} scope={{userId:identity.user.user_id,workspaceId:identity.workspace.id,organizationId:identity.organization_id}} />
         <SemantierManagedDevices
           origin={origin}
