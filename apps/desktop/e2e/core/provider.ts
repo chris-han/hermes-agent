@@ -14,6 +14,7 @@
 
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { setTimeout as delay } from 'node:timers/promises'
 
 export interface Gate {
   open: () => void
@@ -39,6 +40,8 @@ export interface ToolCallSpec {
 export interface Step {
   reasoning?: string[]
   text?: string[]
+  /** Scripted delay immediately before the first nonempty text chunk. */
+  firstTextDelayMs?: number
   toolCalls?: ToolCallSpec[]
   /** Hold the stream after the first text (or reasoning) chunk until the gate opens. */
   holdAfterFirstChunk?: Gate
@@ -55,6 +58,9 @@ export interface RecordedCompletion {
   /** The client (the backend) hung up before the stream ended, e.g. an interrupt/steer. */
   aborted: boolean
   body: any
+  receivedNs: string
+  firstTextDelayStartedNs?: string
+  firstTextWrittenNs?: string
 }
 
 export interface ScriptedProvider {
@@ -171,8 +177,19 @@ export function startScriptedProvider(): Promise<ScriptedProvider> {
     }
 
     for (const piece of step.text ?? []) {
+      const firstText = piece.trim() !== '' && rec.firstTextWrittenNs === undefined
+
+      if (firstText && step.firstTextDelayMs !== undefined) {
+        rec.firstTextDelayStartedNs = process.hrtime.bigint().toString()
+        await delay(step.firstTextDelayMs)
+      }
+
       if (rec.aborted) {
         return
+      }
+
+      if (firstText) {
+        rec.firstTextWrittenNs = process.hrtime.bigint().toString()
       }
 
       res.write(chunk(model, { content: piece }))
@@ -269,6 +286,7 @@ export function startScriptedProvider(): Promise<ScriptedProvider> {
       raw += data.toString()
     })
     req.on('end', () => {
+      const receivedNs = process.hrtime.bigint().toString()
       let body: any = {}
 
       try {
@@ -296,7 +314,8 @@ export function startScriptedProvider(): Promise<ScriptedProvider> {
         toolCalls: [],
         finished: false,
         aborted: false,
-        body
+        body,
+        receivedNs
       }
 
       completions.push(rec)

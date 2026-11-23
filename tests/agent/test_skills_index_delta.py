@@ -41,14 +41,15 @@ def _home(tmp_path, monkeypatch):
 
 
 def test_skill_installed_by_another_process_reaches_a_running_process(tmp_path, monkeypatch):
-    """The in-process index cache is keyed on skill files: a write this process never saw (a hub
-    install in another terminal) is not answered from the pre-install cache entry (#92313)."""
+    """External changes require explicit refresh rather than per-turn file scans."""
     skills = _home(tmp_path, monkeypatch)
     _write_skill(skills, "docker-ops", "Run containers.")
     assert "docker-ops" in pb.build_skills_system_prompt()
     code = ("import pathlib, sys; p = pathlib.Path(sys.argv[1]); p.parent.mkdir(parents=True); "
             "p.write_text('---\\nname: terraform-ops\\ndescription: Plan infra.\\n---\\nBody.\\n')")
     subprocess.run([sys.executable, "-c", code, str(skills / "devops" / "terraform-ops" / "SKILL.md")], check=True)
+    assert "terraform-ops" not in pb.build_skills_system_prompt()
+    pb.clear_skills_system_prompt_cache()
     assert "- terraform-ops: Plan infra." in pb.build_skills_system_prompt()
 
 
@@ -63,6 +64,7 @@ def test_long_lived_agent_is_told_each_skill_change_once(tmp_path, monkeypatch):
     assert _turn(agent, prompt, history) == ""
 
     _write_skill(skills, "terraform-ops", "Plan infra.")
+    pb.clear_skills_system_prompt_cache()
     note = _turn(agent, prompt, history)
     assert "    - terraform-ops: Plan infra." in note and "docker-ops" not in note
     assert _turn(agent, prompt, history) == ""
@@ -70,16 +72,19 @@ def test_long_lived_agent_is_told_each_skill_change_once(tmp_path, monkeypatch):
     assert _turn(_agent(tmp_path), prompt, history) == ""
 
     (skills / "devops" / "docker-ops" / "SKILL.md").unlink()
+    pb.clear_skills_system_prompt_cache()
     note = _turn(agent, prompt, history)
     assert "    - terraform-ops: Plan infra." in note and note.endswith("No longer available: docker-ops]")
 
     (skills / "devops" / "terraform-ops" / "SKILL.md").unlink()
     _write_skill(skills, "docker-ops", "Run containers.")
+    pb.clear_skills_system_prompt_cache()
     assert "accurate again" in _turn(agent, prompt, history)
     assert _turn(_agent(tmp_path), prompt, history) == ""
 
     # A compaction rebuild that now lists the announced skill needs no new note.
     _write_skill(skills, "terraform-ops", "Plan infra.")
+    pb.clear_skills_system_prompt_cache()
     assert "terraform-ops" in _turn(agent, prompt, history)
     rebuilt = "Identity.\n\n" + pb.build_skills_system_prompt()
     assert _turn(agent, rebuilt, history) == "" and _turn(_agent(tmp_path), rebuilt, history) == ""

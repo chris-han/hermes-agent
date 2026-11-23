@@ -70,7 +70,7 @@ directly via `window.__PERF_DRIVE__`, so no LLM credits are spent.
 | `idle-cost` | report | busy-but-silent tiles: idle commit rate, + fps while resizing / typing | (new) |
 | `right-pane` | report | file tree + persistent xterm tabs under chat/terminal output and split dragging | (new) |
 | `cold-start` | cold | launch → CDP → driver → first paint (fresh spawn/run) | (new) |
-| `first-token` | backend | Enter → first assistant token painted (TTFT) | (new) |
+| `first-token` | backend | Enter → first assistant-bubble DOM growth (approximation) | (new) |
 | `submit` | backend | Enter → cleared → user msg painted, scroll jump | measure-submit, measure-jump |
 | `session-switch` | backend | route → first-paint → settle | profile-session-switch |
 | `session-load` | backend | how far a session's transcript moves after first paint | (new) |
@@ -84,6 +84,58 @@ backend (and `--spawn` or a real session/credits) and are report-only.
 CPU profiling is a cross-cutting `--cpuprofile` flag on any scenario (it wraps
 the run in `Profiler.start/stop` and prints a top-self-time table), replacing
 every standalone `profile-*` script.
+
+## Windows first-visible-content MVL protocol
+
+Measure one focused native Electron window, one disposable local test identity,
+one fresh SessionDB and one conversation with sequential turns. Prefer the
+registered package and verify its executable and renderer hashes. If an
+instrumented source build is needed, identify it separately and use a minified
+production renderer with the ordinary GPU and sandbox settings. Check process
+ownership, isolated HOME and USERPROFILE, Hermes home, Electron user data and
+loopback port bindings before the first Enter. Use only the mock key and
+loopback model in the core E2E fixture. The default perf spawn path can seed
+credentials from the caller's Hermes home, so it is unsuitable for this MVL.
+
+Extend the existing `first-token` scenario and CDP client to capture the
+following ordered observations. The existing DOM-growth result is a rough
+diagnostic and cannot satisfy this protocol.
+
+| Event | Evidence |
+|---|---|
+| Enter | Trusted, single CDP keypress observed by a capture-phase composer listener |
+| Gateway acceptance | Accepted `prompt.submit` after durable user-row staging, with RPC, session and turn identity |
+| Agent request | Outbound inference attempt at the agent client boundary |
+| Provider receive / first text | Core fixture receipt and first nonempty content write, including delay-start mark |
+| Gateway delta | First matching content delta at the server emission boundary |
+| Renderer receive | Matching delta at the renderer WebSocket handler or renderer-side CDP frame receipt |
+| First visible paint | First compositor frame containing the exact scripted text in the current assistant message |
+
+Carry a unique `U<turn>-<run nonce>` prompt marker through the RPC and provider,
+and use a distinct response marker in the answer. Join the delta and completion
+on session, turn, and sequence. Record UTC timestamps for provenance. Measure
+with monotonic clocks and retain raw values. Calibrate each clock against a
+reference monotonic clock before and after the run using bracketed exchanges.
+Retain offset bounds and reject orderings or rankings that cannot be resolved
+within the calibration error. A DOM mutation or animation-frame callback alone
+does not verify a compositor frame. Retain timestamped visual frame evidence
+around the transition and report the frame interval when the first presentation
+is only bounded by two frames.
+
+Send reasoning and empty content as controls before the unique nonempty text,
+then apply the core provider's 200 ms first-text timer. Reject markers in user
+bubbles or reasoning, hidden and clipped nodes, placeholders and status text.
+Require the scripted provider output, first delta, painted assistant text and
+final completion to agree. Wait for renderer readiness and the correlated
+completion plus composer idle between turns. Run two warmups followed by ten
+measured turns. Preserve failed attempts in their original order with their
+timeout or rejection reasons.
+
+Report raw events and stage intervals per turn, the conventional median
+(average of the two middle observations), nearest-rank p95 (maximum at ten),
+and timeout count. Rank stages by median and show the injected provider delay
+separately when identifying the largest actionable stage. Stop after that
+finding. Acceptance requires all ten measured turns and zero false detections.
 
 ## Adding a scenario
 

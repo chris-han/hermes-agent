@@ -1188,12 +1188,13 @@ def drain_truncation_warnings() -> list:
 
 
 # Skills index (two-layer cache: in-process LRU, then disk snapshot).
+# Warm cache hits should not scan or stat the skills tree.
 # One entry per profile × platform (key carries skills_dir); a multiplexing gateway needs more than a handful.
 # Sized for multi-profile processes: since #86313 the cache key carries a per-profile skills_dir (one entry
 # per profile × platform), so the old cap of 8 could thrash on a gateway multiplexing default + several bots
 # (each miss = full os.walk manifest rebuild). ~32 costs low single-digit MB worst case.
 _SKILLS_PROMPT_CACHE_MAX = 32
-_SKILLS_PROMPT_CACHE: OrderedDict[tuple, str] = OrderedDict()
+_SKILLS_PROMPT_CACHE: OrderedDict[tuple, tuple[str, bool]] = OrderedDict()
 _SKILLS_PROMPT_CACHE_LOCK = threading.Lock()
 # v2 added org provenance fields (org_id/org_author); v4 adds ``rel`` (SKILL.md path relative to its root) for
 # duplicate-name resolution; v5 retains the longer task-relevance description. Older snapshots are rebuilt.
@@ -1234,16 +1235,21 @@ def _build_skills_manifest(skills_dir: Path) -> dict[str, list[int]]:
     return manifest
 
 
-def _load_skills_snapshot(skills_dir: Path, manifest: Optional[dict] = None) -> Optional[dict]:
-    """The disk snapshot if it exists, is current-version, and its manifest still matches."""
+def _load_skills_snapshot(
+    skills_dir: Path, manifest: Optional[dict] = None, *, validate_manifest: bool = True,
+) -> Optional[dict]:
+    """Read the disk snapshot; validate file metadata only on cold cache misses."""
     try:
         snapshot = json.loads(_skills_prompt_snapshot_path().read_text(encoding="utf-8-sig"))
     except Exception:  # missing, unreadable or corrupt -> rebuild
         return None
-    if (isinstance(snapshot, dict) and snapshot.get("version") == _SKILLS_SNAPSHOT_VERSION
-            and snapshot.get("manifest") == (manifest if manifest is not None else _build_skills_manifest(skills_dir))):
-        return snapshot
-    return None
+    if not isinstance(snapshot, dict) or snapshot.get("version") != _SKILLS_SNAPSHOT_VERSION:
+        return None
+    if validate_manifest and snapshot.get("manifest") != (
+        manifest if manifest is not None else _build_skills_manifest(skills_dir)
+    ):
+        return None
+    return snapshot
 
 
 def _requires_apps_list(frontmatter: dict) -> list[str]:
@@ -1507,28 +1513,32 @@ def _build_skills_system_prompt_inner(
     # Plugin-registered skills (ctx.register_skill) are registry state, not files under any scanned
     # root — the snapshot manifest can't see them change, so they participate in the cache key.
     plugin_rows = _plugin_skill_prompt_rows(disabled, available_tools, available_toolsets, _platform_hint or None)
-    # Skill files are part of the key: another process (a hub install in a second terminal, the curator
-    # inside the gateway, a git pull of an external dir) never clears this process's LRU, so a key of
-    # config alone served the pre-change index to every running session until restart (#92313).
-    manifest = _build_skills_manifest(skills_dir)
-    files = frozenset((rel, *sig) for rel, sig in manifest.items())
-    files |= {(str(d), rel, *sig) for _, d in extra_roots for rel, sig in _build_skills_manifest(d).items()}
+    # Warm cache hits never stat skill files; external edits require explicit reload.
     cache_key = (
-        str(skills_dir), tuple((t, str(d)) for t, d in extra_roots), files,
+        str(skills_dir), tuple((t, str(d)) for t, d in extra_roots),
         tuple(sorted(str(t) for t in (available_tools or set()))),
         tuple(sorted(str(ts) for ts in (available_toolsets or set()))),
         _platform_hint, tuple(sorted(disabled)), tuple(sorted(compact_categories or ())),
         _oneshot_prompt_variant(), tuple(plugin_rows), managed_hash,
     )
-    snapshot = _load_skills_snapshot(skills_dir, manifest)
-    app_gated = snapshot is not None and any(
-        entry.get("requires_apps") for entry in snapshot.get("skills", []) if isinstance(entry, dict)
-    )
     with _SKILLS_PROMPT_CACHE_LOCK:
         cached = _SKILLS_PROMPT_CACHE.get(cache_key)
-        if cached is not None and not app_gated:
+        if cached is not None:
             _SKILLS_PROMPT_CACHE.move_to_end(cache_key)
-            return cached
+            if not cached[1]:
+                return cached[0]
+
+    # App-gated skills must still react to application installs/uninstalls.
+    # Reuse their snapshot without a file-metadata scan on warm turns.
+    if cached is not None:
+        snapshot = _load_skills_snapshot(skills_dir, validate_manifest=False)
+        app_gated = cached[1]
+    else:
+        manifest = _build_skills_manifest(skills_dir)
+        snapshot = _load_skills_snapshot(skills_dir, manifest)
+        app_gated = snapshot is not None and any(
+            entry.get("requires_apps") for entry in snapshot.get("skills", []) if isinstance(entry, dict)
+        )
 
     def hides(skill_name: str, conditions: dict) -> bool:
         """Per-build visibility rule shared by every skill source (snapshot, scan, project, external)."""
@@ -1549,6 +1559,8 @@ def _build_skills_system_prompt_inner(
         for skill_file in iter_skill_index_files(skills_dir, "SKILL.md"):
             is_compatible, frontmatter, desc = _parse_skill_file(skill_file)
             candidates.append((_build_snapshot_entry(skill_file, skills_dir, frontmatter, desc), is_compatible))
+    # Fresh scans must retain app-gated metadata for later warm cache lookups.
+    app_gated = app_gated or any(entry.get("requires_apps") for entry, _ in candidates)
     # Every tier is resolved together, exactly as skill_view resolves names (agent.skill_utils precedence:
     # project > local > create_dir > external_dirs; same-tier duplicates listed by exact path). Hidden and
     # incompatible copies still take part — skill_view sees them too.
@@ -1598,7 +1610,7 @@ def _build_skills_system_prompt_inner(
     unloadable = sorted({e["name"] for e in visible_entries if not e["load_name"]})
     result = _render_skills_index(skills_by_category, category_descriptions, compact_categories, available_tools, unloadable)
     with _SKILLS_PROMPT_CACHE_LOCK:
-        _SKILLS_PROMPT_CACHE[cache_key] = result
+        _SKILLS_PROMPT_CACHE[cache_key] = (result, app_gated)
         _SKILLS_PROMPT_CACHE.move_to_end(cache_key)
         while len(_SKILLS_PROMPT_CACHE) > _SKILLS_PROMPT_CACHE_MAX:
             _SKILLS_PROMPT_CACHE.popitem(last=False)

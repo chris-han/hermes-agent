@@ -794,9 +794,9 @@ def command_snapshot(cmds: dict[str, dict[str, Any]]) -> dict[str, str]:
 def reload_skills() -> dict[str, Any]:
     """Re-scan skill dirs and return a diff of the slash-command map (``added``
     / ``removed`` / ``unchanged`` / ``total`` / ``commands``; descriptions are the
-    full frontmatter field). Does NOT invalidate the skills system-prompt cache:
-    skills are called by name, so ``/reload-skills`` costs no cache reset. The
-    plugin projection is rebuilt too, so a plugin enabled/disabled/installed
+    full frontmatter field). Refresh the skills index without changing the
+    persisted system prompt or its provider prefix cache. The plugin projection
+    is rebuilt too, so a plugin enabled/disabled/installed
     since the last scan shows up without a restart."""
     key = (_resolve_skill_commands_platform(), _resolve_skill_commands_home(), _resolve_skill_commands_project())
     with _publish_lock:
@@ -816,6 +816,8 @@ def reload_skills() -> dict[str, Any]:
         # platform/profile combination, so every cached identity must rescan.
         _skill_commands_by_key.clear()
     from tools.skills_tool import clear_skills_cache
+    from agent.prompt_builder import clear_skills_system_prompt_cache
+    clear_skills_system_prompt_cache()
     clear_skills_cache()  # the scan reads the shared catalog; an explicit reload must not hit its TTL
     invalidate_plugin_skill_commands()
     new_commands = scan_skill_commands()

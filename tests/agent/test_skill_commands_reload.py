@@ -2,9 +2,9 @@
 
 Covers the helper that powers ``/reload-skills`` (CLI + gateway slash command).
 The helper rescans the skills directory and returns a diff of what changed.
-It does NOT invalidate the skills system-prompt cache — skills are invoked
-at runtime via ``/skill-name``, ``skills_list``, or ``skill_view`` and don't
-need to live in the system prompt.
+It invalidates the in-process skills index so external edits are visible
+at the next turn, without changing persisted system-prompt bytes or the
+provider prefix cache.
 
 ``added`` and ``removed`` are lists of ``{"name": str, "description": str}``
 dicts. Descriptions are truncated to 60 chars.
@@ -89,12 +89,7 @@ class TestReloadSkillsHelper:
 
 
     def test_does_not_invalidate_prompt_cache_snapshot(self, hermes_home):
-        """reload_skills must NOT delete the skills prompt-cache snapshot.
-
-        Skills are called at runtime — the system prompt doesn't need to
-        mention them for the model to use them — so reloading them should
-        preserve prefix caching.
-        """
+        """Explicit reload invalidates the index cache, not the persisted prompt bytes."""
         from agent.prompt_builder import _skills_prompt_snapshot_path
         from agent.skill_commands import reload_skills
 
@@ -104,8 +99,25 @@ class TestReloadSkillsHelper:
         assert snapshot.exists()
 
         reload_skills()
+        assert snapshot.exists()
 
-        assert snapshot.exists(), (
-            "prompt cache snapshot should be preserved — skills don't live "
-            "in the system prompt so there's no reason to invalidate it"
-        )
+    def test_reload_refreshes_warm_index_after_external_edit(self, hermes_home):
+        from agent import prompt_builder as pb
+        from agent.skill_commands import reload_skills
+
+        skills = hermes_home / "skills"
+        _write_skill(skills, "demo", "Original guidance")
+        pb.clear_skills_system_prompt_cache(clear_snapshot=True)
+        try:
+            def index():
+                return pb.build_skills_system_prompt(
+                    available_tools={"skill_view"}, skills_dir_override=skills,
+                )
+
+            assert "demo" in index()
+            _write_skill(skills, "second", "New guidance")
+            assert "second" not in index()  # no per-turn file scan
+            reload_skills()
+            assert "second" in index()
+        finally:
+            pb.clear_skills_system_prompt_cache(clear_snapshot=True)
