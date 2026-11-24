@@ -1769,6 +1769,7 @@ export { Wordmark } from '@/components/chat/wordmark'
  *  Pair it with `anchor` (spawn corner, default `'top-right'`) plus
  *  `width`/`height`. */
 export type { FloatingAnchor } from '@/components/pane-shell/tree/renderer/floating-rect'
+export { PersistentFollowupPanel } from '@/components/persistent-followup-panel'
 export { StatusDot, type StatusTone } from '@/components/status-dot'
 export { Badge } from '@/components/ui/badge'
 export { Button } from '@/components/ui/button'
