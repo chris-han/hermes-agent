@@ -40,9 +40,84 @@ class Publisher:
                 self.remote_target.initialize(head)
             else:
                 target = safe_file(self.root, 'releases/channels/'+self.channel+'.json')
-                if target.exists() and json.loads(target.read_bytes()) != head:
-                    raise OperationError(503, 'channel_provenance_mismatch')
-                immutable_write(target, canonical(head))
+                if target.exists():
+                    if json.loads(target.read_bytes()) != head:
+                        raise OperationError(503, 'channel_provenance_mismatch')
+                else:
+                    immutable_write(target, canonical(head))
+
+    def bind_first_oss_head(self, actor, *, empty_sha256, published_sha256):
+        """Project the exact first OSS pointer from the private Channel 1 publisher.
+
+        The caller supplies hashes from the guarded native release operation.
+        This records delivery metadata without granting release admission.
+        """
+        from hermes_cli.release_channels import decode_json, validate_manifest
+
+        if (self.target_id != 'channel1' or self.remote_target or
+                self.channel != 'semantier-acceptance' or self.base != 'https://cloud.semantier.cn'):
+            raise OperationError(403, 'first_oss_head_requires_channel1')
+        if (not all(isinstance(value, str) and re.fullmatch('[a-f0-9]{64}', value)
+                    for value in (empty_sha256, published_sha256))
+                or empty_sha256 == published_sha256):
+            raise OperationError(422, 'first_oss_head_invalid_pins')
+        empty = self.empty_record()
+        if digest(empty) != empty_sha256:
+            raise OperationError(409, 'first_oss_head_seed_mismatch')
+        pointer = safe_file(self.root, 'releases/channels/' + self.channel + '.json')
+        with self.store.connection() as c:
+            c.execute('SELECT pg_advisory_xact_lock(hashtext(%s))', (self.store.schema+':'+self.channel,))
+            c.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',
+                      (self.store.schema+':delivery:channel1:'+self.channel,))
+            track = c.execute('SELECT revision, record, release_id, paused FROM channels WHERE channel=%s FOR UPDATE',
+                              (self.channel,)).fetchone()
+            row = c.execute('SELECT revision, record, release_id FROM delivery_heads '
+                            'WHERE channel=%s AND target_id=%s FOR UPDATE', (self.channel, self.target_id)).fetchone()
+            if (not track or track != {'revision': 1, 'record': empty, 'release_id': None, 'paused': False}
+                    or not row or row['release_id'] is not None or row['revision'] not in (1, 2)):
+                raise OperationError(409, 'first_oss_head_conflicting_state')
+
+            try:
+                raw = pointer.read_bytes()
+                if len(raw) > 65536 or hashlib.sha256(raw).hexdigest() != published_sha256:
+                    raise ValueError('published pointer hash differs')
+                actual = decode_json(raw)
+                native = actual['nativeHead']
+                manifest_path = safe_file(self.root, native['manifestKey'])
+                if manifest_path.stat().st_size > 4 * 1024 * 1024:
+                    raise ValueError('manifest size exceeds bound')
+                body = manifest_path.read_bytes()
+                if hashlib.sha256(body).hexdigest() != native['sha256']:
+                    raise ValueError('immutable manifest hash differs')
+                manifest = validate_manifest(decode_json(body), actual, self.base, allow_native=True)
+                package, = manifest['packages']
+                if manifest['schema'] != 2 or package['native']['schema'] != 2:
+                    raise ValueError('first head requires the OSS native contract')
+                if actual != self.intended_record({
+                    'manifest': manifest, 'manifest_key': native['manifestKey'],
+                    'manifest_sha256': native['sha256'],
+                }, empty):
+                    raise ValueError('not the initial Channel 1 transition')
+                graph = safe_file(self.root, package['native']['graph']['key'])
+                if graph.stat().st_size > 4 * 1024 * 1024 or file_facts(graph) != (
+                    package['native']['graph']['size'], package['native']['graph']['sha256'],
+                ):
+                    raise ValueError('immutable graph hash differs')
+            except (KeyError, TypeError, ValueError, OSError) as error:
+                raise OperationError(422, 'first_oss_head_provenance_mismatch') from error
+
+            if pointer.read_bytes() != raw:
+                raise OperationError(409, 'first_oss_head_conflicting_state')
+            if row['revision'] == 2 and row['record'] == actual:
+                return {'revision': 2, 'head_sha256': published_sha256, 'already_bound': True}
+            if row['revision'] != 1 or row['record'] != empty:
+                raise OperationError(409, 'first_oss_head_conflicting_state')
+            c.execute('UPDATE delivery_heads SET revision=%s,record=%s::jsonb WHERE channel=%s AND target_id=%s',
+                      (2, json.dumps(actual), self.channel, self.target_id))
+            self.store.audit(c, actor, 'channel1_first_oss_head', native['buildId'], {
+                'empty_sha256': empty_sha256, 'head_sha256': published_sha256, 'manifest_sha256': native['sha256'],
+            })
+            return {'revision': 2, 'head_sha256': published_sha256, 'already_bound': False}
 
     def admit(self,candidate,principal,*,persist=True,local=False):
         if local and self.target_id != "channel2":

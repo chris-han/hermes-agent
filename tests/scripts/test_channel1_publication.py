@@ -847,6 +847,55 @@ def test_first_head_uses_exact_empty_channel_and_can_restore_it(tmp_path, monkey
     assert pointer.read_bytes() == before
 
 
+def test_first_oss_head_binds_canonical_postgres_without_rewriting_pointer(tmp_path, monkeypatch):
+    import os
+    from uuid import uuid4
+
+    dsn = os.environ.get('SEMANTIER_FIRST_HEAD_TEST_DSN')
+    if not dsn:
+        pytest.skip('An isolated PostgreSQL test database is required')
+
+    from client_operations.artifact_io import OperationError
+    from client_operations.publication import Publisher
+    from client_operations.store import Store
+    from psycopg import sql
+
+    store = Store(dsn, 'semantier_client_operations_test_' + uuid4().hex)
+    store.migrate()
+    try:
+        root = tmp_path / 'public'
+        stage = tmp_path / 'upload'
+        request, digest, metadata = package(stage, 143, version='0.0.143.0')
+        (stage / 'SemantierAgent.msix').unlink()
+        owner = Publisher(store, root, stage, channel1.BASE, b'', request['identity'], channel1.CHANNEL)
+        owner.initialize_channel()
+        pointer = root / channel1.POINTER
+        seed = channel1.sha(pointer)
+        monkeypatch.setattr(channel1, '_verify_oss_head', lambda row: None)
+        result = channel1.publish(root, stage, metadata_sha256=metadata, package_sha256=digest, protocol=protocol,
+                                  expected_previous_sha256=seed, recovery=tmp_path / '.channel1-recovery-test',
+                                  first_head=True, metadata_only=True)
+        raw = pointer.read_bytes()
+        with pytest.raises(OperationError, match='first_oss_head_provenance_mismatch'):
+            owner.bind_first_oss_head('operator', empty_sha256=seed, published_sha256='0' * 64)
+        with store.connection() as connection:
+            assert connection.execute('SELECT revision FROM delivery_heads').fetchone()['revision'] == 1
+        fields = {'empty_sha256': seed, 'published_sha256': result['channelSha256']}
+        assert owner.bind_first_oss_head('operator', **fields)['already_bound'] is False
+        assert owner.bind_first_oss_head('operator', **fields)['already_bound'] is True
+        owner.initialize_channel()
+        assert pointer.read_bytes() == raw  # Native publisher's bytes, including the newline.
+        with store.connection() as connection:
+            head = connection.execute('SELECT revision, record, release_id FROM delivery_heads').fetchone()
+            assert head == {'revision': 2, 'record': json.loads(raw), 'release_id': None}
+            assert connection.execute('SELECT revision FROM channels').fetchone()['revision'] == 1
+            assert connection.execute('SELECT count(*) AS n FROM releases').fetchone()['n'] == 0
+            assert connection.execute("SELECT count(*) AS n FROM audit WHERE action='channel1_first_oss_head'").fetchone()['n'] == 1
+    finally:
+        with store.connection() as connection:
+            connection.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(store.schema)))
+
+
 @pytest.mark.parametrize('changed', [None, 'incumbent', 'fresh', 'identity'])
 def test_windows_first_head_preflight_reads_exact_fresh_and_incumbent_roots(tmp_path, changed):
     source = Path(__file__).resolve().parents[2]
