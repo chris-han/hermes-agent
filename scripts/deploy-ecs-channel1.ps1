@@ -140,8 +140,10 @@ function Test-NativeReleasePreflight {
     $profileManifests=@{samples=(Hash $ProfileSampleManifest);critical=(Hash $CriticalFileManifest)}
   }
   foreach($tool in @($SignTool,$BuildPython,$Node)){if(!(Test-Path -LiteralPath $tool -PathType Leaf)){throw 'Required native release tool unavailable'}}
-  & $BuildPython -B -c 'import curl_cffi'
-  if($LASTEXITCODE -ne 0){throw 'Existing curl_cffi environment unavailable'}
+  if(!$FirstChannel1Head){
+    & $BuildPython -B -c 'import curl_cffi'
+    if($LASTEXITCODE -ne 0){throw 'Existing curl_cffi environment unavailable'}
+  }
   $dirty=& git.exe -C $Repository status --porcelain
   if($LASTEXITCODE -ne 0 -or $dirty){throw 'Native release source must be committed and clean'}
   $applicationCommit=if($Commit){$Commit}else{$SourceCommit}
