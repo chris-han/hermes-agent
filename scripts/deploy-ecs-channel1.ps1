@@ -64,19 +64,68 @@ function Get-NativeReleaseRequiredSpace([string]$InputMsix,[switch]$Build) {
   if($packageFile.PSIsContainer -or ($packageFile.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Existing regular MSIX required'}
   return 2*$packageFile.Length+512MB  # Signed copy + the one Setup download, with headroom.
 }
+function Test-FirstChannel1Roots {
+  $publisher=Join-Path $PSScriptRoot 'releases/channel1.py'
+  $source=[IO.File]::ReadAllText($publisher).Replace("`r`n","`n")
+  $code=@'
+import hashlib,json,pathlib,sys,types
+seed,expected,incumbent,identity=sys.argv[1:]
+owner=types.ModuleType('channel1')
+exec(compile(sys.stdin.read(), 'channel1.py', 'exec'), owner.__dict__)
+root=pathlib.Path(seed)
+live=pathlib.Path('/opt/semantier-client-distribution/channel1-storage-root/releases')
+if root.resolve(strict=True)!=root or not root.is_dir() or root==live:
+    raise ValueError('Fresh Channel 1 directory ownership mismatch')
+pointer=owner._safe(root,owner.POINTER)
+owner._require_first_head(pointer,metadata_only=True,recovery=root.parent,expected_sha256=expected)
+record=json.loads(pointer.read_bytes())
+if record['identity'].get('msixAppIdWithOrg')!=identity:
+    raise ValueError('Fresh Channel 1 package identity mismatch')
+if owner.sha(owner._safe(live,owner.POINTER))!=incumbent:
+    raise ValueError('Incumbent Channel 1 pointer changed')
+caddy=pathlib.Path('/opt/semantier-cloud-live-v1/Caddyfile')
+print(json.dumps({'pointerSha256':expected,'incumbentPointerSha256':incumbent,
+                  'record':record,'caddySha256':owner.sha(caddy)}))
+'@
+  $entry=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($code))
+  $remote=Ssh "python3 -B -c `"import base64;exec(base64.b64decode('$entry'))`" '$RemoteRoot' '$ExpectedChannelSha256' '$ExpectedIncumbentChannelSha256' '$identity'" -InputText $source
+  $remote=$remote | ConvertFrom-Json
+  if($remote.pointerSha256 -cne $ExpectedChannelSha256 -or $remote.incumbentPointerSha256 -cne $ExpectedIncumbentChannelSha256){
+    throw 'Fresh Channel 1 preflight readback differs'
+  }
+  $publicCode=@'
+import hashlib,http.client,sys
+connection=http.client.HTTPSConnection('cloud.semantier.cn',timeout=15)
+try:
+    connection.request('GET','/releases/channels/semantier-acceptance.json',
+                       headers={'Accept':'application/json','Cache-Control':'no-cache'})
+    response=connection.getresponse()
+    body=response.read(65537)
+    if response.status!=200 or len(body)>65536 or not response.getheader('Content-Type','').startswith('application/json') or hashlib.sha256(body).hexdigest()!=sys.argv[1]:
+        raise SystemExit('Public incumbent Channel 1 pointer changed')
+finally:
+    connection.close()
+'@
+  $publicCode | & $BuildPython -B - $ExpectedIncumbentChannelSha256
+  if($LASTEXITCODE -ne 0){throw 'Public incumbent Channel 1 readback failed'}
+  return $remote
+}
+
 function Test-NativeReleasePreflight {
   if($RemoteRoot -cnotmatch '^/opt/[A-Za-z0-9_/-]+/releases$' -or $RemoteRoot.Contains('/../') -or
     $SshTarget -cnotmatch '^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+$' -or $PublicBase -cne 'https://cloud.semantier.cn') {throw 'Invalid native release destination'}
   # Refuse prompts: existing process credentials or noninteractive SSH must work.
   if(!(Get-EcsSshPassword $CredentialsEnv)){$script:sshOptions+=@('-o','BatchMode=yes')}
-  $package=@(Get-AppxPackage -Name $identity)
-  if($package.Count -ne 1 -or $package[0].Version.ToString() -cne $NativeUpdateFrom -or
+  $package=@(if(!$FirstChannel1Head){Get-AppxPackage -Name $identity})
+  if(!$FirstChannel1Head -and ($package.Count -ne 1 -or $package[0].Version.ToString() -cne $NativeUpdateFrom -or
     $package[0].Publisher -cne $publisher -or $package[0].Status.ToString() -cne 'Ok' -or
-    $package[0].Architecture.ToString() -ine 'X64'){throw 'Installed baseline identity/version/status mismatch'}
+    $package[0].Architecture.ToString() -ine 'X64')){throw 'Installed baseline identity/version/status mismatch'}
   $certificate=Get-Item ('Cert:/CurrentUser/My/'+$Thumbprint)
   if(!$certificate.HasPrivateKey -or $certificate.Subject -cne $publisher -or $certificate.NotAfter.ToUniversalTime() -le [DateTime]::UtcNow){throw 'Native release signer unavailable'}
-  $localRecovery=Get-NativeLocalRecovery $package[0]
-  $signature=$localRecovery.signature
+  if(!$FirstChannel1Head){
+    $localRecovery=Get-NativeLocalRecovery $package[0]
+    $signature=$localRecovery.signature
+  }
   if($OssSetupQualification -and $NativePublishOnly -and $SkipLocalInstall){
     # This path never starts a package deployment or touches the installed profile.
     $journalReadiness=@{result='NOT_RUN_PUBLISH_ONLY_NO_INSTALL'}
@@ -109,6 +158,11 @@ function Test-NativeReleasePreflight {
   if($SupersededBuildOutput -and !$PreflightOnly -and (Get-PSDrive ([IO.Path]::GetPathRoot($Output).Substring(0,1))).Free -lt 12GB){$null=Remove-SupersededUnsignedInput $SupersededBuildOutput}
   $requiredSpace=Get-NativeReleaseRequiredSpace $Msix -Build:([bool]$Commit)
   if((Get-PSDrive ([IO.Path]::GetPathRoot($Output).Substring(0,1))).Free -lt $requiredSpace){throw 'Insufficient space for the selected native release operation'}
+  if($FirstChannel1Head){
+    $remote=Test-FirstChannel1Roots
+    return @{result='PASS';stage='READ_ONLY_FIRST_HEAD_PREFLIGHT';producedAt=[DateTime]::UtcNow.ToString('o');
+      source=$script:SourceBinding;target=$ExpectedVersion;remote=$remote;llmCalls=0}
+  }
   $code=@'
 import hashlib,json,pathlib,sys
 root=pathlib.Path(sys.argv[1]);expected=sys.argv[2];identity=sys.argv[3]

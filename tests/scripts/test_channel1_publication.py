@@ -847,6 +847,49 @@ def test_first_head_uses_exact_empty_channel_and_can_restore_it(tmp_path, monkey
     assert pointer.read_bytes() == before
 
 
+@pytest.mark.parametrize('changed', [None, 'incumbent', 'fresh', 'identity'])
+def test_windows_first_head_preflight_reads_exact_fresh_and_incumbent_roots(tmp_path, changed):
+    source = Path(__file__).resolve().parents[2]
+    script = (source / 'scripts/deploy-ecs-channel1.ps1').read_text()
+    code = script.split('function Test-FirstChannel1Roots {', 1)[1].split("$code=@'\n", 1)[1].split("\n'@", 1)[0]
+    fresh = tmp_path / 'fresh'
+    incumbent = tmp_path / 'active'
+    caddy = tmp_path / 'Caddyfile'
+    caddy.write_bytes(b'current route')
+    code = code.replace('/opt/semantier-client-distribution/channel1-storage-root/releases', str(incumbent))
+    code = code.replace('/opt/semantier-cloud-live-v1/Caddyfile', str(caddy))
+    request, _, _ = package(tmp_path / 'candidate', 143)
+    record = {
+        'schema': 1, 'name': request['channel'], 'repository': request['repository'],
+        'identity': request['identity'], 'state': 'active', 'policy': 'stable-release',
+        'revision': 1, 'nextSequence': 1, 'head': None,
+    }
+    seed = fresh / channel1.POINTER
+    seed.parent.mkdir(parents=True)
+    seed.write_bytes(protocol.canonical_json(record))
+    publish(incumbent, tmp_path / 'prior', 135)
+    old_pointer = incumbent / channel1.POINTER
+    pins = [channel1.sha(seed), channel1.sha(old_pointer), request['identity']['msixAppIdWithOrg']]
+    if changed:
+        pins[{'fresh': 0, 'incumbent': 1, 'identity': 2}[changed]] = '0' * 64
+    result = subprocess.run(
+        [sys.executable, '-c', code, str(fresh), *pins],
+        input=(source / 'scripts/releases/channel1.py').read_text(),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == (1 if changed else 0)
+    if not changed:
+        proof = json.loads(result.stdout)
+        assert proof == {
+            'record': record, 'pointerSha256': pins[0], 'incumbentPointerSha256': pins[1],
+            'caddySha256': channel1.sha(caddy),
+        }
+    assert list(fresh.rglob('*.json')) == [seed]
+    assert seed.read_bytes() == protocol.canonical_json(record)
+
+
 def test_missing_oss_bytes_refuses_pointer_change_and_metadata_only_rollback_restores_old_closure(tmp_path, monkeypatch):
     root=tmp_path/'public';root.mkdir()
     publish(root,tmp_path/'old',130)

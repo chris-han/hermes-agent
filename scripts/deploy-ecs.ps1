@@ -98,6 +98,8 @@ param(
   [switch]$VerifyPublicDownload,
   [switch]$Latest,
   [string]$NativeUpdateFrom = '',
+  [switch]$FirstChannel1Head,
+  [string]$ExpectedIncumbentChannelSha256 = '',
   [switch]$NativePublishOnly,
   [string]$ExpectedVersion = '',
   [string]$ExpectedChannelSha256 = '',
@@ -135,6 +137,20 @@ $script:nativePreflight=$null
 $script:SourceBinding=$null
 $script:qualifiedTooling=$null
 function Assert-NativeReleaseOptions {
+  if($FirstChannel1Head){
+    if(!$PreflightOnly -or !$NativePublishOnly -or !$SkipLocalInstall -or !$OssSetupQualification -or $BuildMode -cne 'Prod' -or
+      $NativeUpdateFrom -or $RecoveryMsix -or $ChannelRecoveryMsix -or $Latest -or $BuildOnly -or $LocalOnly -or $DesktopOnly -or
+      $SetupOnly -or $LocalSetup -or $UpdateSetup -or $ResumeSigned -or $OssCacheOnlyRecovery -or
+      $Commit -cnotmatch '^[a-f0-9]{40}$' -or $ExpectedVersion -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+\.0$' -or
+      $ExpectedChannelSha256 -cnotmatch '^[a-f0-9]{64}$' -or $ExpectedIncumbentChannelSha256 -cnotmatch '^[a-f0-9]{64}$' -or
+      $ExpectedChannelSha256 -ceq $ExpectedIncumbentChannelSha256 -or
+      $RemoteRoot -cnotmatch '^/opt/semantier-client-distribution/channel1-[a-z0-9-]+/releases$' -or
+      $RemoteRoot -ceq '/opt/semantier-client-distribution/channel1-storage-root/releases'){
+      throw 'First Channel 1 preflight requires a distinct fresh root, both pointer hashes, exact source/version and read-only Prod publish-only mode.'
+    }
+    return
+  }
+  if($ExpectedIncumbentChannelSha256){throw 'Incumbent channel SHA256 applies only to first Channel 1 preflight.'}
   if(!$NativeUpdateFrom){if($ChannelRecoveryMsix){throw 'ChannelRecoveryMsix requires native publish-only mode'};return}
   if(!$NativePublishOnly -or $BuildMode -cne 'Prod' -or !$SkipLocalInstall -or $Latest -or $BuildOnly -or $LocalOnly -or
      $DesktopOnly -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or ($PreflightOnly -and !$OssSetupQualification)){
@@ -2394,8 +2410,8 @@ if($ResumeSigned){
   if(!$Repository){$Repository=Split-Path -Parent $PSScriptRoot}
   Restore-SignedRelease
 }
-if($NativeUpdateFrom){Assert-NativeReleaseOptions}
-if($NativePublishOnly -and !$NativeUpdateFrom){throw '-NativePublishOnly requires the bound native release preflight.'}
+Assert-NativeReleaseOptions
+if($NativePublishOnly -and !$NativeUpdateFrom -and !$FirstChannel1Head){throw '-NativePublishOnly requires the bound native release preflight.'}
 if($Latest){
   if($Commit -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly -or $PSBoundParameters.ContainsKey('Msix')){
     throw '-Latest is for a Runtime-pinned commit build only; do not combine with -Commit, Setup, preflight-only or a fixed MSIX.'
@@ -2405,15 +2421,15 @@ if($Latest){
   $Commit=Sync-GitHubLatestSource $runtime $PSCommandPath
 }
 if($BuildOnly -and (!$Commit -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly)){throw '-BuildOnly requires -Commit and cannot be combined with Setup or preflight modes.'}
-if($SkipLocalInstall -and ($BuildOnly -or $LocalOnly -or $DesktopOnly -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or ($PreflightOnly -and !($NativeUpdateFrom -and $OssSetupQualification)))){throw '-SkipLocalInstall is for MSIX publication only.'}
+if($SkipLocalInstall -and ($BuildOnly -or $LocalOnly -or $DesktopOnly -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or ($PreflightOnly -and !(($NativeUpdateFrom -or $FirstChannel1Head) -and $OssSetupQualification)))){throw '-SkipLocalInstall is for MSIX publication only.'}
 $script:explicitOutput=$PSBoundParameters.ContainsKey('Output')
 Initialize-ReleasePaths
-if($NativeUpdateFrom -and !$WhatIfPreference){
+if(($NativeUpdateFrom -or $FirstChannel1Head) -and !$WhatIfPreference){
   . (Join-Path $PSScriptRoot 'deploy-ecs-channel1.ps1')
   $script:sshOptions=@('-o','ConnectTimeout=15','-o','StrictHostKeyChecking=yes','-o','ServerAliveInterval=15','-o','ServerAliveCountMax=3')
   if($IdentityFile){$script:sshOptions+=@('-i',(Resolve-Path -LiteralPath $IdentityFile).Path)}
   if(!(Get-EcsSshPassword $CredentialsEnv)){$script:sshOptions+=@('-o','BatchMode=yes')}
-  if(Test-NativeCompletedRelease){return}
+  if(!$FirstChannel1Head -and (Test-NativeCompletedRelease)){return}
   $script:nativePreflight=Test-NativeReleasePreflight
   if($PreflightOnly){
     if(!(Test-Path -LiteralPath $Output)){New-Item -ItemType Directory -Path $Output|Out-Null}
