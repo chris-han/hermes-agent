@@ -46,11 +46,12 @@ class Publisher:
                 else:
                     immutable_write(target, canonical(head))
 
-    def bind_first_oss_head(self, actor, *, empty_sha256, published_sha256):
+    def bind_first_oss_head(self, actor, *, empty_sha256, published_sha256,
+                           setup_proof=None, incumbent_sha256=None):
         """Project the exact first OSS pointer from the private Channel 1 publisher.
 
-        The caller supplies hashes from the guarded native release operation.
-        This records delivery metadata without granting release admission.
+        The migration owner can also record the matching signed Setup download
+        so installed diagnostics can reference the canonical release.
         """
         from hermes_cli.release_channels import decode_json, validate_manifest
 
@@ -108,16 +109,79 @@ class Publisher:
 
             if pointer.read_bytes() != raw:
                 raise OperationError(409, 'first_oss_head_conflicting_state')
-            if row['revision'] == 2 and row['record'] == actual:
-                return {'revision': 2, 'head_sha256': published_sha256, 'already_bound': True}
-            if row['revision'] != 1 or row['record'] != empty:
+            already_bound = row['revision'] == 2 and row['record'] == actual
+            if not already_bound and (row['revision'] != 1 or row['record'] != empty):
                 raise OperationError(409, 'first_oss_head_conflicting_state')
+            if setup_proof is not None or incumbent_sha256 is not None:
+                if incumbent_sha256 in (empty_sha256, published_sha256):
+                    raise OperationError(422, 'first_oss_setup_proof_mismatch')
+                self._record_first_oss_setup(c, actor, manifest, native, package, graph,
+                                             setup_proof, incumbent_sha256)
+            if already_bound:
+                return {'revision': 2, 'head_sha256': published_sha256, 'already_bound': True}
             c.execute('UPDATE delivery_heads SET revision=%s,record=%s::jsonb WHERE channel=%s AND target_id=%s',
                       (2, json.dumps(actual), self.channel, self.target_id))
             self.store.audit(c, actor, 'channel1_first_oss_head', native['buildId'], {
                 'empty_sha256': empty_sha256, 'head_sha256': published_sha256, 'manifest_sha256': native['sha256'],
             })
             return {'revision': 2, 'head_sha256': published_sha256, 'already_bound': False}
+
+    def _record_first_oss_setup(self, connection, actor, manifest, native, package, graph, proof, incumbent):
+        request = manifest['request']
+        artifact = package['artifact']
+        base = package['native']['packageBase']
+        native_object, = json.loads(graph.read_bytes())['objects']
+        expected = {
+            'status': 'DOWNLOADED_VERIFIED_NOT_INSTALLED',
+            'selection': 'PINNED_STAGED_CANDIDATE',
+            'channelSha256': incumbent,
+            'manifestSha256': native['sha256'],
+            'buildId': request['buildId'],
+            'version': request['windowsVersion'],
+            'sha256': artifact['sha256'],
+            'uri': base + '/' + artifact['key'],
+            'sourceCommit': request['commit'],
+            'nativeDigest': native_object['nativeDigest'],
+            'signature': 'PINNED_SIGNER_VALID',
+            'origin': base,
+        }
+        try:
+            if (not isinstance(incumbent, str) or re.fullmatch('[a-f0-9]{64}', incumbent) is None
+                    or not isinstance(proof, dict)
+                    or set(proof) != expected.keys() | {'producedAt', 'ossResponseBytes', 'responses', 'protocol'}
+                    or any(proof[key] != value for key, value in expected.items())
+                    or type(proof['ossResponseBytes']) is not int or proof['ossResponseBytes'] < artifact['size']
+                    or type(proof['responses']) is not int or proof['responses'] <= 0
+                    or type(proof['protocol']) is not int or proof['protocol'] < 0
+                    or datetime.fromisoformat(proof['producedAt']).utcoffset() != timedelta(0)):
+                raise ValueError('Setup proof does not match the immutable release')
+        except (TypeError, ValueError) as error:
+            raise OperationError(422, 'first_oss_setup_proof_mismatch') from error
+
+        release_id = request['buildId']
+        release = {'release_id': release_id, 'manifest': manifest, 'notes': manifest.get('notes', {}),
+                   'manifest_key': native['manifestKey'], 'manifest_sha256': native['sha256'],
+                   'native_receipt': proof, 'receipt_hmac': None, 'qualification': 'verified',
+                   'verification_scope': 'channel1-oss-setup'}
+        body_hash = digest(release)
+        body = release | {'received_at': utcnow()}
+        inserted = connection.execute(
+            'INSERT INTO releases(release_id,build_id,body,body_hash,qualification) '
+            "VALUES(%s,%s,%s::jsonb,%s,'verified') ON CONFLICT DO NOTHING RETURNING release_id",
+            (release_id, release_id, json.dumps(body), body_hash),
+        ).fetchone()
+        if inserted:
+            self.store.audit(connection, actor, 'channel1_oss_setup_verified', release_id, {
+                'manifest_sha256': native['sha256'], 'artifact_sha256': artifact['sha256'],
+            })
+        else:
+            existing = connection.execute(
+                'SELECT release_id,build_id,body_hash,qualification FROM releases '
+                'WHERE release_id=%s OR build_id=%s FOR UPDATE', (release_id, release_id),
+            ).fetchone()
+            if existing != {'release_id': release_id, 'build_id': release_id, 'body_hash': body_hash,
+                            'qualification': 'verified'}:
+                raise OperationError(409, 'release_idempotency_conflict')
 
     def admit(self,candidate,principal,*,persist=True,local=False):
         if local and self.target_id != "channel2":

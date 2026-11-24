@@ -847,7 +847,8 @@ def test_first_head_uses_exact_empty_channel_and_can_restore_it(tmp_path, monkey
     assert pointer.read_bytes() == before
 
 
-def test_first_oss_head_binds_canonical_postgres_without_rewriting_pointer(tmp_path, monkeypatch):
+@pytest.mark.parametrize('with_setup_proof', [False, True])
+def test_first_oss_head_binds_canonical_postgres_without_rewriting_pointer(tmp_path, monkeypatch, with_setup_proof):
     import os
     from uuid import uuid4
 
@@ -881,6 +882,26 @@ def test_first_oss_head_binds_canonical_postgres_without_rewriting_pointer(tmp_p
         with store.connection() as connection:
             assert connection.execute('SELECT revision FROM delivery_heads').fetchone()['revision'] == 1
         fields = {'empty_sha256': seed, 'published_sha256': result['channelSha256']}
+        if with_setup_proof:
+            from client_operations.contracts import Diagnostic
+            metadata_body = json.loads((stage / 'channel1-metadata.json').read_bytes())
+            artifact = metadata_body['manifest']['packages'][0]['artifact']
+            proof = {
+                'status': 'DOWNLOADED_VERIFIED_NOT_INSTALLED', 'selection': 'PINNED_STAGED_CANDIDATE',
+                'producedAt': '2026-11-24T15:00:00Z',
+                'channelSha256': 'a' * 64, 'manifestSha256': result['manifestSha256'],
+                'buildId': request['buildId'], 'version': request['windowsVersion'],
+                'sha256': digest, 'uri': 'https://assets.semantier.cn/' + artifact['key'],
+                'sourceCommit': request['commit'], 'nativeDigest': metadata_body['graph']['objects'][0]['nativeDigest'],
+                'signature': 'PINNED_SIGNER_VALID', 'origin': 'https://assets.semantier.cn',
+                'ossResponseBytes': artifact['size'], 'responses': 1, 'protocol': 3,
+            }
+            fields.update(incumbent_sha256='a' * 64, setup_proof=proof)
+            with pytest.raises(OperationError, match='first_oss_setup_proof_mismatch'):
+                owner.bind_first_oss_head('operator', **(fields | {'setup_proof': proof | {'ossResponseBytes': 0}}))
+            with store.connection() as connection:
+                assert connection.execute('SELECT revision FROM delivery_heads').fetchone()['revision'] == 1
+                assert connection.execute('SELECT count(*) AS n FROM releases').fetchone()['n'] == 0
         assert owner.bind_first_oss_head('operator', **fields)['already_bound'] is False
         assert owner.bind_first_oss_head('operator', **fields)['already_bound'] is True
         owner.initialize_channel()
@@ -889,8 +910,21 @@ def test_first_oss_head_binds_canonical_postgres_without_rewriting_pointer(tmp_p
             head = connection.execute('SELECT revision, record, release_id FROM delivery_heads').fetchone()
             assert head == {'revision': 2, 'record': json.loads(raw), 'release_id': None}
             assert connection.execute('SELECT revision FROM channels').fetchone()['revision'] == 1
-            assert connection.execute('SELECT count(*) AS n FROM releases').fetchone()['n'] == 0
+            assert connection.execute('SELECT count(*) AS n FROM releases').fetchone()['n'] == int(with_setup_proof)
             assert connection.execute("SELECT count(*) AS n FROM audit WHERE action='channel1_first_oss_head'").fetchone()['n'] == 1
+            if with_setup_proof:
+                release = connection.execute('SELECT * FROM releases').fetchone()
+                assert release['release_id'] == release['build_id'] == request['buildId']
+                assert release['body']['verification_scope'] == 'channel1-oss-setup'
+                assert release['body']['receipt_hmac'] is None
+                assert release['body']['native_receipt'] == proof
+        if with_setup_proof:
+            from agents.client_operations.feedback import Feedback
+            diagnostic = Diagnostic(schema_version='1.0.0', submission_key='first_oss_diagnostic',
+                app_version=request['windowsVersion'], platform='win32', release_id=request['buildId'],
+                sections={'app': 'synthetic native report'})
+            receipt = Feedback(store, owner.channel).submit('operator', diagnostic)
+            assert receipt['release_id'] == request['buildId']
     finally:
         with store.connection() as connection:
             connection.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(store.schema)))
