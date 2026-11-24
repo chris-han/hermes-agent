@@ -522,6 +522,10 @@ def _(rid, params: dict) -> dict:
     and consent lives with the CALLER (privacy notice first). Structured ``ok``/``error`` envelope so
     upload failures render inline. Optional: ``error_context`` (-> ``error-context.txt``),
     ``extra_files`` ({label -> text}), ``log_lines`` (default 200); all force-redacted."""
+    from hermes_cli.steward import is_semantier_windows_product
+
+    if is_semantier_windows_product():
+        return _ok(rid, {"ok": False, "error": "Open Send diagnostics in Semantier Agent."})
     # Outside the try: the except path needs it, and agent.redact is a hard dependency.
     from hermes_cli.debug_redaction import redact_debug_support_text
 

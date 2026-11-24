@@ -110,6 +110,7 @@ declare global {
       claimAmbientCue: (key: string) => Promise<boolean>
       // Renderer-drawn min/max/close for WSLg (`custom` true there only), sent
       // over hermes:window-control; Electron/OS chrome owns them elsewhere.
+      semantierProduct?: boolean
       semantierFeedback?: {
         onOpen?(callback: () => void): () => void
         status(): Promise<{enabled:boolean;profile:string|null;queued:number;dropped:number;journeyEnabled?:boolean}>
@@ -477,7 +478,7 @@ declare global {
         onChanged: (callback: (payload: { level: number; percent: number }) => void) => () => void
       }
       revealLogs: () => Promise<{ ok: boolean; path: string; error?: string }>
-      getRecentLogs: () => Promise<{ path: string; lines: string[] }>
+      getRecentLogs: (mode?: 'diagnostic') => Promise<{ path: string; lines: string[] }>
       /** Persist a renderer error-boundary catch to desktop.log (fire-and-forget). */
       reportRendererError?: (report: {
         label: string

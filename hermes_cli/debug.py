@@ -499,6 +499,12 @@ def _confirm_upload(args) -> bool:
 
 def run_debug_share(args):
     """Collect debug report + full logs, upload each, print URLs."""
+    from hermes_cli.steward import is_semantier_windows_product
+
+    if is_semantier_windows_product():
+        print("Open Send diagnostics in Semantier Agent to review, copy, or send a diagnostic.")
+        return
+
     log_lines = getattr(args, "lines", 200)
     expiry = getattr(args, "expire", 1)
     redact = not getattr(args, "no_redact", False)
@@ -639,6 +645,12 @@ def run_debug_delete(args):
 
 def run_debug(args):
     """Route debug subcommands (sweeping expired pastes opportunistically on every call)."""
+    from hermes_cli.steward import is_semantier_windows_product
+
+    if is_semantier_windows_product():
+        print("Open Send diagnostics in Semantier Agent to review, copy, or send a diagnostic.")
+        return
+
     _best_effort_sweep_expired_pastes()
     handler = {"share": run_debug_share, "delete": run_debug_delete}.get(
         getattr(args, "debug_command", None))

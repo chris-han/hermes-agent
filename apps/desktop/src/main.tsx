@@ -93,37 +93,37 @@ if (winParam === 'overlay') {
 
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <RootErrorBoundary>
-        <QueryClientProvider client={queryClient}>
-          <I18nProvider>
-            <ThemeProvider>
-              <HapticsProvider>
-                {/* ONE tooltip provider for the whole app. Every `Tip` used to
-                    carry its own, and with ~107 call sites those subtrees
-                    dominated unrelated interactions (52,784 TooltipProvider
-                    renders in a single sash drag). Radix's provider holds only
-                    refs and stable callbacks, so hoisting is what it's for. */}
-                <RootTooltipProvider>
-                  {/* useTransitions={false}: react-router v7's HashRouter wraps every
-                    route state update in React.startTransition() by default. In
-                    React 19's concurrent renderer, transitions are non-urgent — React
-                    can yield mid-render and resume later. When the app is under load
-                    (streaming token deltas, gateway events, store updates), those
-                    higher-priority updates keep interrupting the transition, starving
-                    the route change commit. The session sidebar highlight + main pane
-                    both freeze for seconds despite the main thread being free.
-                    Disabling transitions makes navigate() commit at default priority. */}
-                  <HashRouter useTransitions={false}>
-                    <WindowCloseChoiceHost />
-                    <SemantierFeedbackHost />
+      <QueryClientProvider client={queryClient}>
+        <I18nProvider>
+          <ThemeProvider>
+            <HapticsProvider>
+              {/* ONE tooltip provider for the whole app. Every `Tip` used to
+                  carry its own, and with ~107 call sites those subtrees
+                  dominated unrelated interactions (52,784 TooltipProvider
+                  renders in a single sash drag). Radix's provider holds only
+                  refs and stable callbacks, so hoisting is what it's for. */}
+              <RootTooltipProvider>
+                {/* useTransitions={false}: react-router v7's HashRouter wraps every
+                  route state update in React.startTransition() by default. In
+                  React 19's concurrent renderer, transitions are non-urgent — React
+                  can yield mid-render and resume later. When the app is under load
+                  (streaming token deltas, gateway events, store updates), those
+                  higher-priority updates keep interrupting the transition, starving
+                  the route change commit. The session sidebar highlight + main pane
+                  both freeze for seconds despite the main thread being free.
+                  Disabling transitions makes navigate() commit at default priority. */}
+                <HashRouter useTransitions={false}>
+                  <WindowCloseChoiceHost />
+                  <SemantierFeedbackHost />
+                  <RootErrorBoundary>
                     <App />
-                  </HashRouter>
-                </RootTooltipProvider>
-              </HapticsProvider>
-            </ThemeProvider>
-          </I18nProvider>
-        </QueryClientProvider>
-      </RootErrorBoundary>
+                  </RootErrorBoundary>
+                </HashRouter>
+              </RootTooltipProvider>
+            </HapticsProvider>
+          </ThemeProvider>
+        </I18nProvider>
+      </QueryClientProvider>
     </StrictMode>
   )
 }

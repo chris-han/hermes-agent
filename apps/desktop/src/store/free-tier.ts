@@ -60,6 +60,10 @@ export async function refreshFreeTierStatus(
   requestGateway: FreeTierRequester,
   isCurrent?: () => boolean
 ): Promise<FreeTierStatus | null> {
+  if (window.hermesDesktop?.semantierProduct) {
+    return null
+  }
+
   try {
     const status = await requestGateway<FreeTierStatus>('free_tier.status')
 
@@ -193,7 +197,7 @@ export function setFreeTierRoute(route: boolean | null | undefined) {
 
 /** True when the one-time introduction is still owed to this user. */
 export function freeTierNoticePending(status: FreeTierStatus | null): boolean {
-  return Boolean(status?.has_guest && status.notice_pending)
+  return !window.hermesDesktop?.semantierProduct && Boolean(status?.has_guest && status.notice_pending)
 }
 
 /** The introduction is owed AND the free tier is the route: the overlay's ready screen. */

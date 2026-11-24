@@ -16,6 +16,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useI18n } from '@/i18n'
 import { confirm } from '@/store/confirm'
 import { $defaultProfileRoute, refreshDefaultProfile } from '@/store/default-profile'
+import { type DiagnosticContext, openSemantierDiagnostics } from '@/store/send-diagnostics'
 import { $desktopVersion, $updateStatus } from '@/store/updates'
 
 interface Preview {
@@ -170,7 +171,7 @@ function useFeedbackAuthorization(profile: string) {
   return { state, pending, error, begin, cancel, refresh }
 }
 
-export const openSemantierDiagnostics = () => window.dispatchEvent(new Event('semantier:send-diagnostics'))
+export { openSemantierDiagnostics }
 
 export function SemantierFeedbackSettings() {
   const { t: translations } = useI18n()
@@ -238,7 +239,7 @@ return()=>{live=false}},[])
       >
         {enabled ? copy.stopReportingAndClearUnsentEvents : copy.enableUpdateResultReporting}
       </Button>
-      <Button data-semantier-diagnostics-trigger onClick={openSemantierDiagnostics} variant="secondary">
+      <Button data-semantier-diagnostics-trigger onClick={() => openSemantierDiagnostics()} variant="secondary">
         {copy.sendDiagnostics}
       </Button>
       {authorization.pending && (
@@ -259,6 +260,8 @@ export function SemantierFeedbackHost() {
   const { locale, t: translations } = useI18n()
   const copy = translations.semantierFeedback
   const [profile, setProfile] = useState('')
+  const [context, setContext] = useState<DiagnosticContext>()
+  const [openedVersion, setOpenedVersion] = useState<string>()
   const returnFocus = useRef<HTMLElement | null>(null)
 
   const rememberReturnFocus = useCallback(() => {
@@ -286,37 +289,42 @@ export function SemantierFeedbackHost() {
   useEffect(() => {
     let live = true
 
-    const open = async () => {
-      const route = await refreshDefaultProfile()
+    const open = async (context?: DiagnosticContext) => {
+      const route = await refreshDefaultProfile().catch(() => null)
 
       if (!live) {
         return
       }
 
-      if (!route?.profile || (route.connectionId && route.connectionId !== LOCAL_CONNECTION_ID)) {
-        setError(copy.selectAnIntendedLocalProfileToPrepare)
+      // A remote turn must never send the preview or feedback credentials to
+      // its Gateway. The dialog names the local profile that will own the report.
+      const localProfile = route?.profile && (!route.connectionId || route.connectionId === LOCAL_CONNECTION_ID)
+        ? route.profile
+        : 'default'
 
-        return
-      }
-
+      setContext(context)
+      setOpenedVersion(undefined)
+      void window.hermesDesktop?.getVersion?.({ connectionId: LOCAL_CONNECTION_ID, profile: localProfile }).then(info => {
+        if (live) {setOpenedVersion(info.appVersion)}
+      }).catch(() => undefined)
       setDraftKey(crypto.randomUUID())
       setSubmitted(false)
       setRetryAfter(0)
       setInclude(false)
-      setProfile(route.profile)
+      setProfile(localProfile)
       setPreview(null)
       setReceipt(null)
       setNote('')
       setError('')
     }
 
-    const listener = () => {
+    const listener = (event?: Event) => {
       rememberReturnFocus()
-      void open()
+      void open(event instanceof CustomEvent ? event.detail : undefined)
     }
 
     window.addEventListener('semantier:send-diagnostics', listener)
-    const stop = window.hermesDesktop.semantierFeedback?.onOpen?.(listener)
+    const stop = window.hermesDesktop?.semantierFeedback?.onOpen?.(listener)
 
     return () => {
       live = false
@@ -376,25 +384,38 @@ export function SemantierFeedbackHost() {
     }
   }, [])
   useEffect(() => {
-    if (!profile || receipt) {
+    if (!profile || receipt || submitted) {
       return
     }
 
     let live = true
-    const app = version?.appVersion ?? ''
+    const app = version?.appVersion || openedVersion
+
+    if (!app) {return}
     const appVersion = /^\d+\.\d+\.\d+$/.test(app) ? app + '.0' : app
-    void feedback<Preview>(profile, 'preview', {
-      submission_key: draftKey,
-      app_version: appVersion,
-      release_id: update?.installedReleaseId ?? null,
-      note,
-      include_update: include,
-      context: JSON.stringify({
-        code: update?.error ?? null,
-        mechanism: update?.mechanism ?? null,
-        channel: update?.channel ?? null
+
+    async function preparePreview() {
+      const events = include
+        ? await window.hermesDesktop?.getRecentLogs?.('diagnostic').catch(() => undefined)
+        : undefined
+
+      return feedback<Preview>(profile, 'preview', {
+        submission_key: draftKey,
+        app_version: appVersion,
+        release_id: update?.installedReleaseId ?? null,
+        note,
+        include_update: include,
+        technical_context: context,
+        update_context: {
+          code: update?.error ?? null,
+          mechanism: update?.mechanism ?? null,
+          channel: update?.channel ?? null,
+          events: events?.lines
+        }
       })
-    })
+    }
+
+    void preparePreview()
       .then(p => {
         if (live) {
           setPreview(p)
@@ -415,8 +436,11 @@ export function SemantierFeedbackHost() {
     profile,
     note,
     include,
+    context,
     version?.appVersion,
+    openedVersion,
     receipt,
+    submitted,
     update?.installedReleaseId,
     update?.channel,
     update?.error,
@@ -431,6 +455,7 @@ export function SemantierFeedbackHost() {
     }
 
     setProfile('')
+    setContext(undefined)
     setPreview(null)
     setReceipt(null)
     setNote('')
@@ -447,7 +472,7 @@ export function SemantierFeedbackHost() {
       return
     }
 
-    if (!preview || sending || retryAfter) {
+    if (!preview || !authorization.state?.diagnostic_signed_in || sending || retryAfter) {
       return
     }
 
@@ -497,6 +522,7 @@ export function SemantierFeedbackHost() {
       open={!!profile}
     >
       <DialogContent
+        className="z-[calc(var(--z-crash)+2)]"
         onCloseAutoFocus={event => {
           event.preventDefault()
           const origin = returnFocus.current
@@ -508,6 +534,7 @@ export function SemantierFeedbackHost() {
           target?.focus()
           returnFocus.current = null
         }}
+        overlayClassName="z-[calc(var(--z-crash)+1)]"
       >
         <DialogHeader>
           <DialogTitle>{receipt ? copy.diagnosticReceipt : copy.sendDiagnostics}</DialogTitle>
@@ -578,7 +605,7 @@ export function SemantierFeedbackHost() {
             </p>
             <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all">
               {preview
-                ? JSON.stringify({ note: preview.payload.note, sections: preview.payload.sections }, null, 2)
+                ? JSON.stringify(preview.payload, null, 2)
                 : copy.preparingPreview}
             </pre>
             <p>{copy.excludesConversationsDocumentsArbitraryFilesAndCrash}</p>
@@ -610,6 +637,14 @@ export function SemantierFeedbackHost() {
           </p>
         )}
         <DialogFooter>
+          {!receipt && preview && (
+            <Button
+              onClick={() => void navigator.clipboard.writeText(JSON.stringify(preview.payload, null, 2))}
+              variant="secondary"
+            >
+              {copy.copyDiagnosticPreview}
+            </Button>
+          )}
           <Button disabled={sending} onClick={close} variant="secondary">
             {copy.close}
           </Button>

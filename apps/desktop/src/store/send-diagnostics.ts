@@ -41,8 +41,26 @@ export const $sendDiagnostics = atom<SendDiagnosticsState | null>(null)
 // server-side; we just ignore the result).
 let generation = 0
 
-/** Open the consent modal. No network I/O happens until the user confirms. */
-export function requestSendDiagnostics(errorContext?: string): void {
+export interface DiagnosticContext {
+  source: 'failed_turn' | 'error_boundary'
+  code?: string
+  layer?: string
+  provider?: string
+  model?: string
+}
+
+export function openSemantierDiagnostics(context?: DiagnosticContext): void {
+  window.dispatchEvent(new CustomEvent('semantier:send-diagnostics', { detail: context }))
+}
+
+/** Open the product-specific preview. */
+export function requestSendDiagnostics(errorContext?: string, context?: DiagnosticContext): void {
+  if (window.hermesDesktop?.semantierProduct) {
+    openSemantierDiagnostics(context)
+
+    return
+  }
+
   generation += 1
   $sendDiagnostics.set({ errorContext, phase: 'consent' })
 }
@@ -80,6 +98,10 @@ const SHARE_TIMEOUT_MS = 120_000
 
 /** User confirmed — run the upload. Transitions consent → uploading → done/error. */
 export async function confirmSendDiagnostics(): Promise<void> {
+  if (window.hermesDesktop?.semantierProduct) {
+    return
+  }
+
   const current = $sendDiagnostics.get()
 
   if (!current || current.phase !== 'consent') {

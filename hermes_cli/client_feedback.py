@@ -5,29 +5,18 @@ The reporting capability remains DPAPI-protected and is never returned locally.
 """
 from datetime import datetime,timedelta,timezone, UTC
 import json
-from functools import cache
-import importlib.util
-import os
+from importlib.metadata import PackageNotFoundError, version
+import platform
+import re
 from uuid import uuid4
+from client_operations import contracts
 from hermes_constants import get_hermes_home
 from hermes_cli import cloud_device_client as device
+from hermes_cli.steward import is_semantier_windows_product
 
 CONSENT='semantier-operational-reporting/1'
 MAX_QUEUE=1000
 MAX_BYTES=1024*1024
-
-
-@cache
-def _contract():
-    """Load the exact shared contract shipped with this Hermes composition."""
-    from pm.paths import repo_root
-    path = repo_root() / 'semantier-runtime/src/contracts/client_operations.py'
-    spec = importlib.util.spec_from_file_location('semantier_client_operations_contract', path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError('Shipped Semantier feedback contract is unavailable')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def _path():
@@ -61,6 +50,12 @@ def _service():
     return device._origin(origin),device._origin(portal)
 
 
+def _diagnostic_origin(origin):
+    if is_semantier_windows_product() and origin != device.DEFAULT_CLOUD_ORIGIN:
+        raise device.CloudDeviceError(403)
+    return origin
+
+
 def _request(origin,secret,method,path,body=None):
     import httpx
     with httpx.Client(timeout=15,follow_redirects=False,trust_env=False) as client:
@@ -78,8 +73,11 @@ def _request(origin,secret,method,path,body=None):
 def status():
     with device._locked():
         state=_read()
-        diagnostic=state.get('diagnostic_authorization')
-        signed_in=bool(diagnostic and datetime.fromisoformat(diagnostic['expires_at'])>datetime.now(UTC))
+        try:
+            _diagnostic_identity(state)
+            signed_in=True
+        except device.CloudDeviceError:
+            signed_in=False
         return {'enabled':state['enabled'],'purpose':'update_results_only','destination':'Semantier Cloud','consent_version':CONSENT,'queued':len(state['queue']),'dropped':state['dropped'],'revocation_pending':bool(state.get('revocation_pending')),'authorization_pending':(state.get('authorization') or {}).get('purpose'), 'diagnostic_signed_in':signed_in}
 
 
@@ -98,8 +96,12 @@ def authorization_start(purpose):
     import secrets
     with device._locked():
         state=_read();origin,portal=_service()
+        if purpose == 'diagnostic':
+            _diagnostic_origin(origin)
         previous=state.get('authorization')
         reuse=previous and previous['purpose']==purpose and datetime.fromisoformat(previous['expires_at'])>datetime.now(UTC)
+        if purpose == 'diagnostic' and reuse:
+            _diagnostic_origin(previous['origin'])
         if reuse and previous.get('authorization_url'):
             return {k:previous[k] for k in ('purpose','authorization_url','expires_at')}
         if previous and not reuse:authorization_cancel()
@@ -124,6 +126,8 @@ def authorization_poll():
     with device._locked():
         state=_read();pending=state.get('authorization')
         if not pending:return {'status':'unavailable'}
+        if pending['purpose'] == 'diagnostic':
+            _diagnostic_origin(pending['origin'])
         reply=_request(pending['origin'],'','POST','/authorizations/'+pending['intent_ref']+'/poll',{'proof':pending['proof']})
         if reply['status']=='approved':
             if reply['purpose']!=pending['purpose'] or reply['profile_ref']!=state['profile_ref']:raise ValueError('Feedback authorization scope mismatch')
@@ -139,15 +143,17 @@ def authorization_cancel():
     with device._locked():
         state=_read();pending=state.get('authorization')
         if pending:
+            if pending['purpose'] == 'diagnostic':
+                _diagnostic_origin(pending['origin'])
             _request(pending['origin'],'','POST','/authorizations/'+pending['intent_ref']+'/cancel',{'proof':pending['proof']})
             state.pop('authorization',None);_write(state)
         return {'status':'cancelled'}
 
 
-def _diagnostic_identity():
-    item=_read().get('diagnostic_authorization')
+def _diagnostic_identity(state=None):
+    item=(_read() if state is None else state).get('diagnostic_authorization')
     if not item or datetime.fromisoformat(item['expires_at'])<=datetime.now(UTC):raise device.CloudDeviceError(401)
-    return item['origin'],item['capability']
+    return _diagnostic_origin(item['origin']),item['capability']
 
 
 def _revoke(state):
@@ -160,7 +166,7 @@ def _revoke(state):
 
 
 def record(events):
-    UpdateEvent = _contract().UpdateEvent
+    UpdateEvent = contracts.UpdateEvent
     with device._locked():
         state=_read()
         if not state['enabled']:return status()
@@ -208,24 +214,78 @@ def flush():
         return status()
 
 
+def _technical_identifier(value):
+    # Keep selectors and codes. Never copy a URL, path, message, or stack trace.
+    return value if isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:/@+-]{0,127}', value) and not (
+        '://' in value or re.match(r'^[A-Za-z]:/', value) or value.startswith(('/home/', '/Users/'))
+    ) else None
+
+
 def preview(body):
-    contract = _contract()
-    sanitize, MAX_DIAGNOSTIC_BYTES = contract.sanitize, contract.MAX_DIAGNOSTIC_BYTES
-    note,n=sanitize(str(body.get('note',''))[:4000]);context,m=sanitize(str(body.get('context',''))[:32768])
-    payload={'schema_version':'1.0.0','submission_key':body.get('submission_key') or uuid4().hex,
-             'app_version':body['app_version'],'platform':'win32','release_id':body.get('release_id'),
-             'update_id':body.get('update_id'),'error_code':body.get('error_code'),
-             'note':note,'sections':{'update':context} if body.get('include_update',True) else {}}
-    Diagnostic = _contract().Diagnostic
-    payload=Diagnostic.model_validate(payload).model_dump()
-    size=len(json.dumps(payload,ensure_ascii=False).encode())
-    if size>MAX_DIAGNOSTIC_BYTES:raise ValueError('Diagnostic too large')
-    return {'payload':payload,'bytes':size,'redactions':n+m,'retention_days':30,'destination':'Semantier Cloud'}
+    from hermes_cli.version_info import get_version_info
+
+    note, redactions = contracts.sanitize(str(body.get('note', ''))[:4000])
+    supplied = body.get('technical_context') or {}
+    if not isinstance(supplied, dict):
+        raise ValueError('Invalid technical context')
+    technical = {
+        key: safe for key in ('source', 'code', 'layer', 'provider', 'model')
+        if (safe := _technical_identifier(supplied.get(key))) is not None
+    }
+    if 'code' in technical and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}', technical['code']):
+        technical.pop('code')
+    try:
+        technical['runtime_version'] = version('semantier')
+    except PackageNotFoundError:
+        pass
+    # The default includes only selected version/OS facts and structured error
+    # events. The optional update section excludes arbitrary log text.
+    sections = {
+        'app': json.dumps({
+            'os': platform.system(),
+            'os_release': platform.release(),
+            'architecture': platform.machine(),
+        }),
+        'runtime': json.dumps({'gateway_version': get_version_info().display_version, **technical}),
+    }
+    if body.get('include_update'):
+        update = body.get('update_context') or {}
+        if not isinstance(update, dict):
+            raise ValueError('Invalid update context')
+        update_details = {
+            key: safe for key in ('code', 'mechanism', 'channel')
+            if (safe := _technical_identifier(update.get(key))) is not None
+        }
+        allowed_events = ('gateway_ready', 'secondary_window', 'bootstrap_started', 'bootstrap_completed')
+        events = update.get('events', [])
+        if isinstance(events, list):
+            update_details['events'] = [event for event in events[-20:] if event in allowed_events]
+        sections['update'] = json.dumps(update_details)
+    for key, value in sections.items():
+        sections[key], removed = contracts.sanitize(value)
+        redactions += removed
+    payload = contracts.Diagnostic.model_validate({
+        'schema_version': '1.0.0',
+        'submission_key': body.get('submission_key') or uuid4().hex,
+        'app_version': body['app_version'],
+        'platform': 'win32',
+        'release_id': body.get('release_id'),
+        'update_id': body.get('update_id'),
+        'error_code': technical.get('code'),
+        'note': note,
+        'sections': sections,
+    }).model_dump()
+    size = len(contracts.canonical(payload))
+    if size > contracts.MAX_DIAGNOSTIC_BYTES:
+        raise ValueError('Diagnostic too large')
+    return {
+        'payload': payload, 'bytes': size, 'redactions': redactions,
+        'retention_days': 30, 'destination': 'Semantier Cloud',
+    }
 
 
 def submit(body):
-    Diagnostic = _contract().Diagnostic
-    data=Diagnostic.model_validate(body).model_dump()
+    data=contracts.Diagnostic.model_validate(body).model_dump()
     with device._locked():
         origin,secret=_diagnostic_identity()
         try:

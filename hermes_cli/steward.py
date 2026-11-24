@@ -20,6 +20,7 @@ desktop app's Settings -> About page).
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -190,6 +191,20 @@ def read_install_stamp(project_root: Path) -> dict:
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+
+def is_semantier_windows_product() -> bool:
+    """Recognize an app-owned process or the signed channel's standalone CLI."""
+    if os.environ.get("SEMANTIER_WINDOWS_PRODUCT") == "1":
+        return True
+    if sys.platform != "win32":
+        return False
+
+    from pm.paths import repo_root
+
+    channel = read_install_stamp(repo_root()).get("channelBuild")
+    return isinstance(channel, dict) and channel.get("semantierScope") == "semantier-windows-x64/v1"
 
 
 def is_bundled_payload(project_root: Path) -> bool:

@@ -516,8 +516,18 @@ function BillingSettingsContent({
     </SettingsContent>
   }
 
-  const view = deriveBillingView(billingResult, subscriptionResult, b)
   const billing = billingResult?.ok && !isSemantierBilling(billingResult.data) ? billingResult.data : undefined
+
+  if (window.hermesDesktop?.semantierProduct && (!billing?.logged_in || billing.free_tier_account)) {
+    return (
+      <SettingsContent>
+        <BillingHeader fixtureName={fixtureName} onFixtureChange={onFixtureChange} />
+        <p className="text-sm text-muted-foreground">{b.semantier.unavailable}</p>
+      </SettingsContent>
+    )
+  }
+
+  const view = deriveBillingView(billingResult, subscriptionResult, b)
 
   const { paymentRow, refillRow, topupRow } = view
 

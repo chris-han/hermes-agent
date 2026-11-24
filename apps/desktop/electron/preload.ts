@@ -16,7 +16,7 @@ const translucencySupport = ipcRenderer.sendSync('hermes:translucency:support')
 const hudWindowing = ipcRenderer.sendSync('hermes:hud:windowing')
 const hudNativeDrag = hudWindowing?.nativeDrag === true
 
-const launchFlags: { assumeFreshInstall?: boolean } | undefined = ipcRenderer.sendSync('hermes:feature-flags')
+const launchFlags: { assumeFreshInstall?: boolean; semantierProduct?: boolean } | undefined = ipcRenderer.sendSync('hermes:feature-flags')
 
 // Local, sanitized skin payload for the first renderer theme paint. This does
 // not wait on `gateway.ready`, so an unreachable remote primary cannot force
@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
   // Dev-only launch fact: an unpackaged app started with --fresh-install, so
   // onboarding treats this launch as a fresh install. Always false when packaged.
   assumeFreshInstall: launchFlags?.assumeFreshInstall === true,
+  semantierProduct: launchFlags?.semantierProduct === true,
   localSkin: localSkin && typeof localSkin === 'object' ? localSkin : null,
   getConnection: (profile, opts) => ipcRenderer.invoke('hermes:connection', profile, opts),
   // Loopback origin that hosts YouTube's player for the file:// renderer.
@@ -520,7 +521,7 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     }
   },
   revealLogs: () => ipcRenderer.invoke('hermes:logs:reveal'),
-  getRecentLogs: () => ipcRenderer.invoke('hermes:logs:recent'),
+  getRecentLogs: (mode?: 'diagnostic') => ipcRenderer.invoke('hermes:logs:recent', mode),
   // Fire-and-forget: persists a renderer error-boundary catch (with component
   // stack) to desktop.log so crashes survive the window (#79428).
   reportRendererError: report => ipcRenderer.send('hermes:logs:renderer-error', report),

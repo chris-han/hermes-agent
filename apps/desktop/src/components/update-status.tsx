@@ -257,7 +257,7 @@ export function VersionHero({
                   <RefreshCw className="size-3" />
                   {u.bundleSwapPendingAction}
                 </Button>
-              ) : (
+              ) : !window.hermesDesktop?.semantierProduct && (
                 <Button asChild className="mt-2" size="sm" variant="textStrong">
                   <a
                     href={INSTALLER_URL}
@@ -386,7 +386,7 @@ export function UpdateStatusCard({
 
           <UpdateActions target={target} u={u} view={view} />
 
-          {showReleaseNotes && !status?.installedReleaseId && (
+          {showReleaseNotes && !status?.installedReleaseId && !window.hermesDesktop?.semantierProduct && (
             <Button asChild className="ml-auto" size="sm" variant="text">
               <a
                 href={RELEASE_NOTES_URL}

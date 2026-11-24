@@ -742,6 +742,14 @@ import { isPackagedInstallPath as isPackagedInstallPathUnderRoots } from './work
 import { readWslWindowsClipboardImage } from './wsl-clipboard-image'
 import { resolvePickerDefaultPath, setActiveGatewayProfile, setWslBridgeProfileState } from './wsl-path-bridge'
 
+const SEMANTIER_WINDOWS_PRODUCT = PRODUCT_IDENTITY.semantierBuild ||
+  INSTALL_STAMP?.channelBuild?.semantierScope === 'semantier-windows-x64/v1'
+
+// Inherit the baked product boundary in app-owned Gateway and CLI processes.
+if (SEMANTIER_WINDOWS_PRODUCT) {
+  process.env.SEMANTIER_WINDOWS_PRODUCT = '1'
+}
+
 const IDENTITY_APP_NAME: string | null = applyDesktopIdentity(app)
 const USER_DATA_OVERRIDE: string | undefined = process.env.HERMES_DESKTOP_USER_DATA_DIR
 
@@ -5286,7 +5294,7 @@ async function resolveHermesBackend(backendArgs: string[]): Promise<ResolvedHerm
   //    is a recoverable state the GUI can drive through.
   return {
     kind: 'bootstrap-needed',
-    label: 'Hermes Agent not installed yet; bootstrap required',
+    label: SEMANTIER_WINDOWS_PRODUCT ? 'Semantier Agent runtime requires setup' : 'Hermes Agent not installed yet; bootstrap required',
     command: null,
     args: backendArgs,
     bootstrap: true,
@@ -5349,7 +5357,9 @@ async function ensureRuntime(
     rememberLog('[bootstrap] REFUSING installer on a bundled install; payload missing or damaged — reinstall the app')
 
     const bundledError: Error & { isBootstrapFailure?: boolean } = new Error(
-      'This app bundles its own Hermes runtime, but the runtime files are missing or damaged. Reinstall Hermes Desktop to restore it.'
+      SEMANTIER_WINDOWS_PRODUCT
+        ? 'The bundled runtime files are missing or damaged. Reinstall Semantier Agent to restore them.'
+        : 'This app bundles its own Hermes runtime, but the runtime files are missing or damaged. Reinstall Hermes Desktop to restore it.'
     )
 
     bundledError.isBootstrapFailure = true
@@ -12243,7 +12253,7 @@ async function startHermes(requestedProfile?: string) {
   // otherwise SIGTERMs the running instance's live backend (#87295).
   if (!isPrimaryInstance) {
     rememberLog('[boot] non-primary instance: skipping backend machinery')
-    throw new Error('Hermes Desktop is already running in another window.')
+    throw new Error(`${SEMANTIER_WINDOWS_PRODUCT ? 'Semantier Agent' : 'Hermes Desktop'} is already running in another window.`)
   }
 
   await reapOrphanedBackendsOnce()
@@ -17416,7 +17426,8 @@ ipcMain.on('hermes:feature-flags', (event: IpcMainEvent): void => {
   event.returnValue = {
     // Dev-only: `--fresh-install` makes onboarding treat this launch as a fresh
     // install. Packaged builds never honour it.
-    assumeFreshInstall: !app.isPackaged && process.argv.includes('--fresh-install')
+    assumeFreshInstall: !app.isPackaged && process.argv.includes('--fresh-install'),
+    semantierProduct: SEMANTIER_WINDOWS_PRODUCT
   }
 })
 
@@ -17766,7 +17777,26 @@ ipcMain.handle('hermes:logs:reveal', async () => {
   }
 })
 
-ipcMain.handle('hermes:logs:recent', async () => ({ path: DESKTOP_LOG_PATH, lines: hermesLog.slice(-200) }))
+ipcMain.handle('hermes:logs:recent', async (_event, mode?: 'diagnostic') => {
+  if (mode !== 'diagnostic') {
+    return { path: DESKTOP_LOG_PATH, lines: hermesLog.slice(-200) }
+  }
+
+  const events = [
+    ['[backend] Hermes gateway is ready', 'gateway_ready'],
+    ['[boot] non-primary instance: skipping backend machinery', 'secondary_window'],
+    ['[bootstrap] no Hermes install found; starting first-launch bootstrap', 'bootstrap_started'],
+    ['[bootstrap] bootstrap complete; marker written. Re-resolving backend.', 'bootstrap_completed']
+  ] as const
+
+  const lines = hermesLog.flatMap(line => {
+    const event = events.find(([message]) => line.endsWith(message))
+
+    return event ? [event[1]] : []
+  }).slice(-20)
+
+  return { path: '', lines }
+})
 
 // Renderer error-boundary catches (#79428 defect B): the component stack only
 // exists in renderer memory, so the boundary posts it here and we persist it

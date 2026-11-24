@@ -267,3 +267,10 @@ def test_share_nous_upload_failure_is_structured(monkeypatch):
     payload = result["result"]
     assert payload["ok"] is False
     assert "NAS unavailable" in payload["error"]
+
+
+def test_semantier_product_refuses_legacy_upload(monkeypatch, captured_upload):
+    monkeypatch.setenv("SEMANTIER_WINDOWS_PRODUCT", "1")
+    reply = _handler()("rid-product", {})
+    assert reply["result"]["ok"] is False
+    assert not captured_upload.get("blob")

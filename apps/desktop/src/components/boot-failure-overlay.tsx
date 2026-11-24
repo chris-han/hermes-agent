@@ -397,7 +397,7 @@ export function BootFailureOverlay() {
   // the structured isCloudBackendDown/statusCode it carries through boot
   // progress. When set, the recovery screen leads with the cloud-specific
   // guidance instead of the generic remote-failure copy (#85335).
-  const cloudDown = Boolean(boot.isCloudBackendDown)
+  const cloudDown = Boolean(boot.isCloudBackendDown) && !window.hermesDesktop?.semantierProduct
 
   if (remoteReauth) {
     actions = [
@@ -449,7 +449,7 @@ export function BootFailureOverlay() {
     // bundled install is not fixed by reinstalling.
     const damagedPayload: boolean = bundled && classifyLocalBootFailure(boot.error) === 'installMissing'
 
-    const fixAction: RecoveryAction | null = damagedPayload
+    const fixAction: RecoveryAction | null = damagedPayload && !window.hermesDesktop?.semantierProduct
       ? {
           key: 'reinstall',
           label: copy.reinstallApp,

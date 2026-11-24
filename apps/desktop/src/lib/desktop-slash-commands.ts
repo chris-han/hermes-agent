@@ -558,6 +558,12 @@ export function resolveDesktopCommand(command: string): DesktopCommandSpec | nul
   const canonical = canonicalDesktopSlashCommand(command)
   const local = SPEC_BY_NAME.get(canonical)
   const catalog = specFromCatalog(command)
+  const spec = local ?? catalog
+
+  if (spec && globalThis.window?.hermesDesktop?.semantierProduct &&
+      (canonical === '/topup' || canonical === '/subscription')) {
+    return { ...spec, surface: { kind: 'unavailable', reason: 'settings' } }
+  }
 
   if (local && catalog?.desktopSubcommands !== undefined) {
     return { ...local, desktopSubcommands: catalog.desktopSubcommands }

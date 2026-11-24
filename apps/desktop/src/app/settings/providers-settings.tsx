@@ -172,10 +172,11 @@ function OAuthPicker({
   const isConnected = (p: OAuthProvider) => Boolean(p.status?.logged_in) && p.status?.free_tier !== true
 
   const cloud = ordered.find(p => p.id === FEATURED_ID)
+
   // A connected primary stays in Connected; it must not promote another account.
   const featured = cloud
     ? isConnected(cloud) ? null : cloud
-    : ordered.find(p => p.id === 'nous' && !isConnected(p)) ?? null
+    : window.hermesDesktop?.semantierProduct ? null : ordered.find(p => p.id === 'nous' && !isConnected(p)) ?? null
 
   const rest = featured ? ordered.filter(p => p.id !== featured.id) : ordered
   // Keep connected accounts grouped and always visible; only the unconnected

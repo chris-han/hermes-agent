@@ -91,13 +91,17 @@ export function VersionDetails({ version, channelAction }: { version: DesktopVer
         <div className="flex justify-between gap-4">
           <dt className="text-muted-foreground">{u.versionDetailsCommit}</dt>
           <dd className="break-all text-right">
-            <ExternalLink
-              className="break-all font-mono text-xs"
-              href={`https://github.com/NousResearch/hermes-agent/commit/${version.commit}`}
-              native
-            >
-              {version.commit.slice(0, 14)}
-            </ExternalLink>
+            {window.hermesDesktop?.semantierProduct ? (
+              <code>{version.commit.slice(0, 14)}</code>
+            ) : (
+              <ExternalLink
+                className="break-all font-mono text-xs"
+                href={`https://github.com/NousResearch/hermes-agent/commit/${version.commit}`}
+                native
+              >
+                {version.commit.slice(0, 14)}
+              </ExternalLink>
+            )}
             {version.dirty && <span className="text-warning"> {u.versionDetailsUncommittedChanges}</span>}
           </dd>
         </div>

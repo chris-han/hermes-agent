@@ -17,9 +17,10 @@ vi.mock('@/store/updates', async () => {
   return { $desktopVersion: atom({ appVersion: '0.0.39' }), $updateStatus: atom(null) }
 })
 const submit = vi.fn()
+let diagnosticSignedIn = true
 
 const api = vi.fn(async ({ path, body }: { path: string; body: Record<string, unknown> }) => {
-  if (path.endsWith('/status')) {return { enabled: false, diagnostic_signed_in: true }}
+  if (path.endsWith('/status')) {return { enabled: false, diagnostic_signed_in: diagnosticSignedIn }}
 
   if (path.endsWith('/preview'))
     {return {
@@ -36,6 +37,7 @@ const api = vi.fn(async ({ path, body }: { path: string; body: Record<string, un
 
 beforeEach(() => {
   submit.mockReset()
+  diagnosticSignedIn = true
   api.mockClear()
   Object.defineProperty(window, 'hermesDesktop', {
     configurable: true,
@@ -60,7 +62,7 @@ async function open() {
 it.each([
   [401, 'Sign in again to send this report. Your preview is retained.'],
   [403, 'This account cannot upload diagnostics. Your preview is retained.'],
-  [413, 'The report is too large. Remove the update excerpt or shorten the description.'],
+  [413, 'The report is too large. Remove the expanded logs or shorten the description.'],
   [422, 'The report content was rejected. Review the description and selected excerpt.'],
   [429, 'Too many requests. Retry is available in 2 seconds.'],
   [503, 'The feedback service is unavailable. Retry keeps the same report ID.']
@@ -144,7 +146,7 @@ it.each([false, true])('returns focus after Escape when the diagnostic action is
   )
 
   const view = render(content(0))
-  const trigger = screen.getByRole('button', { name: 'Send diagnostics' })
+  const trigger = screen.getByRole('button', { name: 'Send diagnostics to Semantier' })
   trigger.focus()
   fireEvent.click(trigger)
   await screen.findByRole('dialog')
@@ -153,5 +155,24 @@ it.each([false, true])('returns focus after Escape when the diagnostic action is
 
   fireEvent.keyDown(window.document, { key: 'Escape' })
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-  await waitFor(() => expect(window.document.activeElement).toBe(screen.getByRole('button', { name: 'Send diagnostics' })))
+  await waitFor(() => expect(window.document.activeElement).toBe(screen.getByRole('button', { name: 'Send diagnostics to Semantier' })))
+})
+
+it('allows copying a sanitized preview while signed out and closes without uploading', async () => {
+  diagnosticSignedIn = false
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  render(
+    <I18nProvider configClient={null} initialLocale="en">
+      <SemantierFeedbackHost />
+    </I18nProvider>
+  )
+  await act(async () => openSemantierDiagnostics({ source: 'error_boundary', code: 'renderer_error' }))
+  expect(await screen.findByRole('dialog', { name: 'Send diagnostics to Semantier' })).toBeTruthy()
+  expect((screen.getByRole('button', { name: 'Send diagnostic report' }) as HTMLButtonElement).disabled).toBe(true)
+  fireEvent.click(await screen.findByRole('button', { name: 'Copy sanitized diagnostics' }))
+  expect(writeText).toHaveBeenCalledOnce()
+  fireEvent.click(screen.getAllByRole('button', { name: 'Close' })[0])
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  expect(submit).not.toHaveBeenCalled()
 })

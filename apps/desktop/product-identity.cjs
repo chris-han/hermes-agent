@@ -56,7 +56,8 @@ const legacyDisplayName = buildCommit
 const { channelBuildRequest } = require('../../scripts/msix-shared.mjs')
 const request = channelBuildRequest()
 const semantierVersion = process.env.SEMANTIER_DESKTOP_VERSION || ''
-const semantierBuild = Boolean(semantierVersion && (buildCommit || request?.semantierScope === 'semantier-windows-x64/v1') && variant === 'bundled' && !store)
+const semantierChannel = request?.semantierScope === 'semantier-windows-x64/v1'
+const semantierBuild = variant === 'bundled' && !store && (semantierChannel || Boolean(semantierVersion && buildCommit))
 if (
   semantierVersion &&
   (!semantierBuild ||
@@ -65,7 +66,7 @@ if (
 ) {
   throw new Error('Semantier version requires a local bundled commit build and numeric X.Y.Z')
 }
-const displayName = semantierBuild ? `Semantier Agent ${semantierVersion}` : legacyDisplayName
+const displayName = semantierBuild ? `Semantier Agent ${semantierVersion || request.version}` : legacyDisplayName
 
 const kebabSuffix = buildCommit ? `-${buildCommit}` : canary ? '-canary' : ''
 const pascalSuffix = buildCommit ? `Commit${buildCommit}` : canary ? 'Canary' : ''
@@ -80,6 +81,7 @@ if (store && (canary || buildCommit)) {
 const identity = {
   store,
   light,
+  semantierBuild,
   displayName,
   appId: `com.semantier.${name.kebab}${kebabSuffix}`,
   // Store and commit builds do not publish a release feed.
@@ -123,5 +125,5 @@ module.exports = !request
   : Object.freeze(
       officialChannel
         ? { ...identity, channel: request.channel }
-        : { ...request.identity, store: false, light: false, channel: request.channel }
+        : { ...request.identity, store: false, light: false, semantierBuild, channel: request.channel }
     )

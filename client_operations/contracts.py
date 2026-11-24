@@ -116,6 +116,13 @@ class Diagnostic(Strict):
     note: Annotated[str,Field(max_length=4000)] = ''
     sections: Annotated[dict[str,str],Field(max_length=8)]
 
+    @field_validator('submission_key', 'release_id', 'update_id', 'error_code')
+    @classmethod
+    def non_secret_identifier(cls, value):
+        if value is not None and sanitize(value)[1]:
+            raise ValueError('invalid diagnostic identifier')
+        return value
+
     @field_validator('sections')
     @classmethod
     def allowed(cls,value):
@@ -135,11 +142,13 @@ class Classification(Strict):
 # Deliberately removes whole sensitive lines/content sections rather than trying
 # to infer which fragment of a conversation or tool result might be harmless.
 _REDACTIONS = (
-    (r'(?im)^.*(?:authorization|cookie|password|api[_-]?key|access[_-]?token|refresh[_-]?token|secret)\s*[:=].*$', '[redacted credential line]'),
-    (r'(?im)^.*(?:prompt|conversation|tool[_ ]?(?:result|output)|document[_ ]?content|user[_ ]?(?:id|email))\s*[:=].*$', '[excluded content line]'),
-    (r'(?i)\b(?:sk-|smg_|sco_)[A-Za-z0-9_-]{8,}', '[redacted credential]'),
-    (r'(?i)[A-Z]:\\Users\\[^\s]+', '[redacted user path]'),
-    (r'/(?:home|Users)/[^\s]+', '[redacted user path]'),
+    (r'(?im)^.*(?:authorization|cookie|password|api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret)"?\s*[:=].*$', '[redacted credential line]'),
+    (r'(?im)^.*(?:prompt|conversation|tool[_ -]?(?:result|input|output)|document[_ -]?content|business[_ -]?data|user[_ ]?(?:id|email))"?\s*[:=].*$', '[excluded content line]'),
+    (r'(?is)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)', '[redacted private key]'),
+    (r'(?i)\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}', '[redacted authorization]'),
+    (r'(?i)\b(?:sk-|smg_|sco_|gh[pousr]_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{8,}', '[redacted credential]'),
+    (r'(?m)^.*(?:\b[A-Za-z]:[\\/]|\\\\[A-Za-z0-9_.-]+\\).*$', '[redacted local path line]'),
+    (r'(?m)^.*(?<![A-Za-z0-9:/])/(?:home|Users|mnt|tmp|var|private|etc|opt|root|srv)/.*$', '[redacted local path line]'),
     (r'(?i)(https?://[^\s?#]+)\?[^\s]*', r'\1?[redacted]'),
     (r'\b[^\s@]+@[^\s@]+\.[A-Za-z]{2,}\b', '[redacted email]'),
 )

@@ -1306,7 +1306,7 @@ export function ContribWiring({ children }: { children: ReactNode }) {
       {/* One host for every free-tier sign-in entry point (Settings › Billing,
           the statusbar chip, the first-launch intro). It owns the flow; the
           entry points only record the intent. */}
-      {!isAuxiliaryWindow() && <FreeTierSignInDialog onSelectModel={selectModel} />}
+      {!window.hermesDesktop?.semantierProduct && !isAuxiliaryWindow() && <FreeTierSignInDialog onSelectModel={selectModel} />}
       <ModelPickerOverlay
         gateway={gateway || undefined}
         onSelect={selectModel}
@@ -1416,7 +1416,7 @@ export function ContribWiring({ children }: { children: ReactNode }) {
 
       {/* Send Diagnostics consent/upload dialog — driven by $sendDiagnostics
           (error card action); renders nothing until requested. */}
-      <SendDiagnosticsHost />
+      {!window.hermesDesktop?.semantierProduct && <SendDiagnosticsHost />}
 
       {/* Fallback modal when opening an external URL fails — carries the URL
           so a dead system-browser click is never silent. */}

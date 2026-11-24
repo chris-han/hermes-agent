@@ -35,6 +35,30 @@ describe('send-diagnostics store', () => {
     vi.restoreAllMocks()
   })
 
+  it('routes a Semantier failed turn to local preview without invoking the upstream RPC', async () => {
+    const request = vi.fn()
+    const restoreGateway = stubGateway(request)
+    const restoreDesktop = stubDesktopLogs([])
+    Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: { semantierProduct: true } })
+    const open = vi.fn()
+    window.addEventListener('semantier:send-diagnostics', open)
+
+    try {
+      const context = { source: 'failed_turn', code: 'stream_drop', provider: 'semantier-cloud' } as const
+      requestSendDiagnostics('/private/path; business-canary', context)
+      await confirmSendDiagnostics()
+
+      expect(open).toHaveBeenCalledOnce()
+      expect(open.mock.calls[0][0].detail).toEqual(context)
+      expect($sendDiagnostics.get()).toBeNull()
+      expect(request).not.toHaveBeenCalled()
+    } finally {
+      window.removeEventListener('semantier:send-diagnostics', open)
+      restoreDesktop()
+      restoreGateway()
+    }
+  })
+
   it('opens in consent phase without any network I/O', () => {
     const request = vi.fn()
     const restore = stubGateway(request)

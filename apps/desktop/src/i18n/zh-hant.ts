@@ -17,7 +17,11 @@ import { zhHantSettings } from './zh-hant_settings'
 
 export const zhHantOverrides = {
   branding: zhHantBranding,
-  semantierFeedback: feedbackEnglish,
+  semantierFeedback: {
+    ...feedbackEnglish,
+    sendDiagnostics: '向司序科技傳送診斷資訊',
+    copyDiagnosticPreview: '複製已清理的診斷資訊'
+  },
   connectors: {
     directory: {
       suggested: '推薦',

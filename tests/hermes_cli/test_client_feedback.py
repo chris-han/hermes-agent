@@ -58,8 +58,7 @@ def test_lost_start_reply_reuses_intent_and_proof(native,monkeypatch):
 
 
 def test_same_shared_fixture_is_consumed_without_client_extensions():
-    from hermes_cli.client_feedback import _contract
-    contract = _contract()
+    from client_operations import contracts as contract
     UpdateEvent, FeedbackAuthorization = contract.UpdateEvent, contract.FeedbackAuthorization
     from pydantic import ValidationError
     path=Path(__file__).resolve().parents[2]/'semantier-runtime/src/contracts/client-operations-v1.fixture.json'
@@ -168,3 +167,49 @@ assert reply['payload']['app_version'] == '0.0.41.0'
     result = subprocess.run([sys.executable, '-I', '-c', code, str(Path(__file__).resolve().parents[2])],
                             capture_output=True, text=True, timeout=30, check=False)
     assert result.returncode == 0, result.stderr
+
+
+def test_default_diagnostic_preview_drops_unstructured_context_and_sends_sanitized_draft(native, monkeypatch):
+    owner, _, _ = native
+    preview = owner.preview({
+        'app_version': '0.0.141.0',
+        'technical_context': {
+            'source': 'failed_turn', 'code': 'stream_drop', 'layer': 'streaming',
+            'provider': 'semantier-cloud', 'model': 'qwen3.5-plus',
+            'conversation': 'conversation-canary', 'tool_input': 'input-canary',
+            'tool_output': 'tool-output-canary', 'document': 'document-canary',
+        },
+        'context': 'arbitrary-context-canary',
+        'update_context': {'code': 'disabled-update-canary'},
+        'note': 'Password: password-canary\nBusiness data: business-canary\nC:\\Users\\private-canary\\report.txt',
+    })
+    payload = preview['payload']
+    requests = []
+    monkeypatch.setattr(owner, '_diagnostic_identity', lambda: (owner.device.DEFAULT_CLOUD_ORIGIN, 'test-capability'))
+
+    def wire(origin, secret, method, path, body=None):
+        if method == 'GET':
+            raise owner.device.CloudDeviceError(404)
+        requests.append((origin, body))
+        return {'receipt': {'diagnostic_id': 'fake-wire-receipt'}}
+
+    monkeypatch.setattr(owner, '_request', wire)
+    owner.submit(payload)
+    assert requests == [(owner.device.DEFAULT_CLOUD_ORIGIN, payload)]
+    assert payload['error_code'] == 'stream_drop'
+    assert 'qwen3.5-plus' in payload['sections']['runtime']
+    assert set(payload['sections']) == {'app', 'runtime'}
+    assert '-canary' not in str(requests)
+
+
+def test_product_refuses_diagnostic_network_calls_with_an_untrusted_saved_origin(native, monkeypatch):
+    owner, _, _ = native
+    monkeypatch.setenv('SEMANTIER_WINDOWS_PRODUCT', '1')
+    owner._write({'enabled': False, 'queue': [], 'dropped': 0, 'diagnostic_authorization': {
+        'origin': 'https://portal.nousresearch.com', 'capability': 'fake-test-capability',
+        'expires_at': '2099-01-01T00:00:00+00:00',
+    }})
+    monkeypatch.setattr(owner, '_request', lambda *args, **kwargs: pytest.fail('unexpected diagnostic network request'))
+    with pytest.raises(owner.device.CloudDeviceError) as exc:
+        owner.submit(owner.preview({'app_version': '0.0.141.0'})['payload'])
+    assert exc.value.status == 403

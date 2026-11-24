@@ -8,6 +8,16 @@ from typing import Callable
 
 def build_debug_parser(subparsers, *, cmd_debug: Callable) -> None:
     """Attach the ``debug`` subcommand to ``subparsers``."""
+    from hermes_cli.steward import is_semantier_windows_product
+
+    if is_semantier_windows_product():
+        description = "Open Send diagnostics in Semantier Agent to review, copy, or send a diagnostic."
+        debug_parser = subparsers.add_parser("debug", help=description, description=description)
+        debug_sub = debug_parser.add_subparsers(dest="debug_command")
+        debug_sub.add_parser("share", help=description)
+        debug_parser.set_defaults(func=cmd_debug)
+        return
+
     debug_parser = subparsers.add_parser(
         "debug", help="Debug tools — upload logs and system info for support",
         description="Debug utilities for Hermes Agent. Use 'hermes debug share' to "

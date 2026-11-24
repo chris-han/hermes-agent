@@ -34,7 +34,7 @@ const TERMS_BUTTERBAR: ButterbarItem = { id: 'portal-terms', node: <TermsNotice 
 export function TermsButterbar() {
   const freeTier = useStore($freeTierStatus)
 
-  useButterbar(freeTier?.available ? TERMS_BUTTERBAR : null)
+  useButterbar(!window.hermesDesktop?.semantierProduct && freeTier?.available ? TERMS_BUTTERBAR : null)
 
   return null
 }

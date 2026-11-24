@@ -1,6 +1,8 @@
 interface ProductIdentity {
   /** True when this artifact is Hermes Light (remote-only client). */
   light: boolean
+  /** True for the Semantier Windows product composition. */
+  semantierBuild: boolean
   /** True for a Store-submission build (Windows Store packaging identity). */
   store: boolean
   /** Display name. e.g. "Hermes Light" */

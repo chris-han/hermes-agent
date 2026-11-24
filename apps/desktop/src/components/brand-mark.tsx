@@ -1,3 +1,4 @@
+import semantierLogo from '@/assets/semantier-logo.png'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/themes'
 
@@ -15,7 +16,11 @@ export function BrandMark({ className, ...props }: React.ComponentProps<'span'>)
 
   return (
     <span className={cn('inline-flex size-14 shrink-0 items-center justify-center', className)} {...props}>
-      <img alt="" className="size-full object-contain" src={assetPath(dark ? 'nous-girl-dark.png' : 'nous-girl.png')} />
+      <img
+        alt=""
+        className="size-full object-contain"
+        src={window.hermesDesktop?.semantierProduct ? semantierLogo : assetPath(dark ? 'nous-girl-dark.png' : 'nous-girl.png')}
+      />
     </span>
   )
 }

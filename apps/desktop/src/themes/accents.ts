@@ -37,7 +37,11 @@ export interface AccentSwatchSpec {
 }
 
 export const accentsFor = (dark: boolean): AccentSwatchSpec[] =>
-  SWATCHES.map(({ dark: onDark, id, light, name }) => ({ hex: dark ? onDark : light, id, name }))
+  SWATCHES.map(({ dark: onDark, id, light, name }) => ({
+    hex: dark ? onDark : light,
+    id,
+    name: id === 'nous' && globalThis.window?.hermesDesktop?.semantierProduct ? 'Theme default' : name
+  }))
 
 /** A pick the agent or a card names: its hex on this surface and the id reported back (`null` = the theme's own). */
 export interface ResolvedAccent {
@@ -73,5 +77,5 @@ export function resolveAccentPick(value: string, dark: boolean): ResolvedAccent 
 
 /** The name a settled card shows for a reported accent id. */
 export function accentName(id: string): string {
-  return SWATCHES.find(swatch => swatch.id === id)?.name ?? id.replace(CUSTOM_ACCENT_PREFIX, '')
+  return accentsFor(false).find(swatch => swatch.id === id)?.name ?? id.replace(CUSTOM_ACCENT_PREFIX, '')
 }

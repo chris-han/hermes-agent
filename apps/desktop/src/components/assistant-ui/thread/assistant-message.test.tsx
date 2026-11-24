@@ -254,6 +254,32 @@ describe('ownership refusal recovery (#106217)', () => {
 })
 
 describe('code-keyed error card copy and actions', () => {
+  it('passes only technical context from a Semantier failed turn', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, 'hermesDesktop')
+    Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: {
+      ...window.hermesDesktop, semantierProduct: true
+    } })
+    const open = vi.fn()
+    window.addEventListener('semantier:send-diagnostics', open)
+
+    try {
+      render(<Harness assistant={failedMessage({
+        code: 'model_not_found', layer: 'provider', provider: 'semantier-cloud',
+        model: 'test-model', retryable: false
+      }, 'private business data')} />)
+      fireEvent.click(await screen.findByRole('button', { name: /send diagnostics/i }))
+      expect(open.mock.calls[0][0].detail).toEqual({
+        source: 'failed_turn', code: 'model_not_found', layer: 'provider',
+        provider: 'semantier-cloud', model: 'test-model'
+      })
+    } finally {
+      window.removeEventListener('semantier:send-diagnostics', open)
+
+      if (descriptor) {Object.defineProperty(window, 'hermesDesktop', descriptor)}
+      else {Reflect.deleteProperty(window, 'hermesDesktop')}
+    }
+  })
+
   it('hides Retry and offers Edit message for a safety refusal', async () => {
     render(
       <Harness
