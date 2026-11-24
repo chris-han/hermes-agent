@@ -790,6 +790,63 @@ def test_oss_publication_requires_only_metadata_on_ecs_and_commits_pointer_last(
     assert not (root/'releases/SemantierAgent.msix.sha256').exists()
 
 
+@pytest.mark.parametrize('mutation', [None, 'absent', 'revision', 'prior_native_head', 'sha256'])
+def test_first_head_uses_exact_empty_channel_and_can_restore_it(tmp_path, monkeypatch, mutation):
+    root = tmp_path / 'fresh'
+    stage = tmp_path / 'upload'
+    request, digest, metadata = package(stage, 143, version='0.0.143.0')
+    (stage / 'SemantierAgent.msix').unlink()
+    pointer = root / channel1.POINTER
+    pointer.parent.mkdir(parents=True)
+    installed = {
+        'schema': 1, 'name': request['channel'], 'repository': request['repository'],
+        'identity': request['identity'], 'state': 'active', 'policy': 'stable-release',
+        'revision': 1, 'nextSequence': 1, 'head': None,
+    }
+    if mutation == 'revision':
+        installed['revision'] = 2
+    elif mutation == 'prior_native_head':
+        manifest = json.loads((stage / 'channel1-metadata.json').read_bytes())['manifest']
+        installed = channel1._record(manifest, installed, protocol)
+    before = protocol.canonical_json(installed)
+    if mutation != 'absent':
+        pointer.write_bytes(before)
+    recovery = tmp_path / '.channel1-recovery-first'
+    checked = []
+    monkeypatch.setattr(channel1, '_verify_oss_head', lambda row: checked.append(row['artifact']['sha256']))
+    arguments = dict(
+        metadata_sha256=metadata, package_sha256=digest, protocol=protocol,
+        metadata_only=True, first_head=True, recovery=recovery,
+        expected_previous_sha256='0' * 64 if mutation == 'sha256' else hashlib.sha256(before).hexdigest(),
+    )
+    if mutation is not None:
+        with pytest.raises(ValueError, match='empty Channel 1|Concurrent'):
+            channel1.publish(root, stage, **arguments)
+        if mutation == 'absent':
+            assert not pointer.exists()
+        else:
+            assert pointer.read_bytes() == before
+        assert not recovery.exists()
+        assert not checked
+        return
+    caddy = tmp_path / 'Caddyfile'
+    caddy.write_bytes(b'incumbent metadata route')
+    real_path = Path
+    monkeypatch.setattr(channel1, 'Path', lambda path: (
+        caddy if str(path) == '/opt/semantier-cloud-live-v1/Caddyfile' else real_path(path)
+    ))
+    caddy_sha = hashlib.sha256(caddy.read_bytes()).hexdigest()
+    channel1.stage_native(root, stage, caddy_sha256=caddy_sha, **arguments)
+    assert pointer.read_bytes() == before
+    assert caddy.read_bytes() == b'incumbent metadata route'
+    result = channel1.publish(root, stage, **arguments)
+    assert result['buildId'] == request['buildId']
+    assert json.loads(pointer.read_bytes())['revision'] == 2
+    assert checked == [digest, digest]
+    channel1.restore(root, recovery)
+    assert pointer.read_bytes() == before
+
+
 def test_missing_oss_bytes_refuses_pointer_change_and_metadata_only_rollback_restores_old_closure(tmp_path, monkeypatch):
     root=tmp_path/'public';root.mkdir()
     publish(root,tmp_path/'old',130)

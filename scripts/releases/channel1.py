@@ -88,6 +88,29 @@ def prepare(package, output, *, expected_sha256, source_commit, windows_version,
     return result
 
 
+def _initialized_empty_channel(record):
+    """Match the seed written by Client Operations Publisher.initialize_channel."""
+    return isinstance(record, dict) and record == {
+        'schema': 1, 'name': CHANNEL, 'repository': 'chris-han/hermes-agent',
+        'policy': 'stable-release', 'revision': 1, 'nextSequence': 1,
+        'identity': record.get('identity'), 'head': None, 'state': 'active',
+    } and isinstance(record.get('identity'), dict) and all(
+        type(record[field]) is int for field in ('schema', 'revision', 'nextSequence')
+    )
+
+
+def _require_first_head(pointer, *, metadata_only, recovery, expected_sha256):
+    if not metadata_only or recovery is None or not re.fullmatch('[a-f0-9]{64}', expected_sha256 or ''):
+        raise ValueError('First head requires OSS metadata, exact empty Channel 1 SHA256 and recovery')
+    if not pointer.is_file():
+        raise ValueError('An initialized empty Channel 1 record is required')
+    before = pointer.read_bytes()
+    if hashlib.sha256(before).hexdigest() != expected_sha256:
+        raise ValueError('Concurrent channel publication')
+    if not _initialized_empty_channel(json.loads(before)):
+        raise ValueError('An initialized empty Channel 1 record is required')
+
+
 def _record(manifest, previous, protocol):
     request = manifest['request']
     digest = hashlib.sha256(protocol.canonical_json(manifest)).hexdigest()
@@ -338,16 +361,20 @@ def restore(root, recovery):
             raise ValueError('Recovery pointer binding mismatch')
         old = json.loads((recovery/saved['files'][-1]['saved']).read_bytes())
         head = old.get('nativeHead') or old.get('head')
-        body = _safe(root, head['manifestKey']).read_bytes()
-        if hashlib.sha256(body).hexdigest() != head['sha256']:
-            raise ValueError('Previous immutable manifest changed')
-        row = json.loads(body)['packages'][0]
-        if metadata_recovery and row.get('native', {}).get('schema') == 2:
-            _verify_oss_head(row)
-        elif sha(_safe(root, row['artifact']['key'])) != (row['artifact']['sha256'] if metadata_recovery else saved['files'][0]['sha256']):
-            raise ValueError('Previous immutable package changed')
-        if row.get('native') and sha(_safe(root, row['native']['graph']['key'])) != row['native']['graph']['sha256']:
-            raise ValueError('Previous immutable graph changed')
+        if head is None:
+            if not metadata_recovery or saved.get('route') or not _initialized_empty_channel(old):
+                raise ValueError('Previous empty channel recovery binding mismatch')
+        else:
+            body = _safe(root, head['manifestKey']).read_bytes()
+            if hashlib.sha256(body).hexdigest() != head['sha256']:
+                raise ValueError('Previous immutable manifest changed')
+            row = json.loads(body)['packages'][0]
+            if metadata_recovery and row.get('native', {}).get('schema') == 2:
+                _verify_oss_head(row)
+            elif sha(_safe(root, row['artifact']['key'])) != (row['artifact']['sha256'] if metadata_recovery else saved['files'][0]['sha256']):
+                raise ValueError('Previous immutable package changed')
+            if row.get('native') and sha(_safe(root, row['native']['graph']['key'])) != row['native']['graph']['sha256']:
+                raise ValueError('Previous immutable graph changed')
         route = saved.get('route')
         if route:
             live = Path(route['path'])
@@ -418,7 +445,7 @@ def _native_route_body(before, old_id, new_id):
 
 
 def stage_native(root, stage, *, metadata_sha256, package_sha256, protocol,
-                 expected_previous_sha256, recovery, caddy_sha256, metadata_only=False):
+                 expected_previous_sha256, recovery, caddy_sha256, metadata_only=False, first_head=False):
     """Expose exact immutable candidate URLs for probing; leave pointer unchanged."""
     root, stage, recovery = Path(root).absolute(), Path(stage).absolute(), Path(recovery).absolute()
     if root == stage or root in stage.parents or stage.is_symlink():
@@ -427,6 +454,9 @@ def stage_native(root, stage, *, metadata_sha256, package_sha256, protocol,
     row = manifest['packages'][0]; request = manifest['request']
     with _lock(root):
         pointer = _safe(root, POINTER)
+        if first_head:
+            _require_first_head(pointer, metadata_only=metadata_only, recovery=recovery,
+                                expected_sha256=expected_previous_sha256)
         if sha(pointer) != expected_previous_sha256:
             raise ValueError('Concurrent channel publication')
         previous = protocol.decode_json(pointer.read_bytes())
@@ -505,7 +535,7 @@ def _verify_oss_head(row):
 
 
 def publish(root, stage, *, metadata_sha256, package_sha256, protocol,
-            expected_previous_sha256=None, recovery=None, metadata_only=False):
+            expected_previous_sha256=None, recovery=None, metadata_only=False, first_head=False):
     """Activate an uploaded, validated closure; restore the previous view on error."""
     root, stage = Path(root).absolute(), Path(stage).absolute()
     _safe(root, POINTER)
@@ -516,6 +546,9 @@ def publish(root, stage, *, metadata_sha256, package_sha256, protocol,
     prefix = protocol.build_prefix(request['buildId'])
     pointer = _safe(root, POINTER)
     with _lock(root), tempfile.TemporaryDirectory(prefix='.channel1-rollback-', dir=root.parent) as directory:
+        if first_head:
+            _require_first_head(pointer, metadata_only=metadata_only, recovery=recovery,
+                                expected_sha256=expected_previous_sha256)
         previous = protocol.decode_json(pointer.read_bytes()) if pointer.exists() else None
         record = _record(manifest, previous, protocol)
         if expected_previous_sha256 is not None and sha(pointer) != expected_previous_sha256:
@@ -1127,6 +1160,7 @@ def main():
     remote.add_argument('--expected-previous-sha256')
     remote.add_argument('--recovery')
     remote.add_argument('--metadata-only', action='store_true', help='OSS bytes; stage/activate ECS JSON only')
+    remote.add_argument('--first-head', action='store_true', help='Require the exact initialized empty Channel 1 record')
     rollback = commands.add_parser('rollback')
     rollback.add_argument('--root', required=True)
     rollback.add_argument('--recovery', required=True)
@@ -1135,6 +1169,7 @@ def main():
                  'expected-previous-sha256', 'recovery', 'caddy-sha256'):
         staging.add_argument('--'+name, required=True)
     staging.add_argument('--metadata-only', action='store_true', help='Keep current head and Caddy unchanged; stage JSON only')
+    staging.add_argument('--first-head', action='store_true', help='Require the exact initialized empty Channel 1 record')
     oss = commands.add_parser('stage-oss', help='Private WSL staging only; no ECS/pointer writes')
     for name in ('package', 'metadata', 'output'):
         oss.add_argument('--'+name, required=True)
