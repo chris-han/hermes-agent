@@ -61,7 +61,7 @@ export function workspace(origin: string) {
 /** These local Gateway surfaces have no Workspace HTTP adapter. */
 export function isUnsupportedWorkspaceStartupRequest(method: string, pathname: string): boolean {
   return (method === 'POST' && pathname === '/api/sessions/owner-backfill') ||
-    (method === 'GET' && (pathname === '/api/status' || pathname === '/api/cron/jobs' ||
+    (method === 'GET' && (pathname === '/api/status' || pathname === '/api/cron/jobs' || pathname === '/api/profiles/active' ||
       /^\/api\/sessions\/[^/]+\/timeline$/.test(pathname)))
 }
 
@@ -106,9 +106,11 @@ export async function readScopedWorkspaceDesktop(
     }
   }
 
-  // The registry's two inventory consumers can arrive after its own dial
-  // check. Give those reads the same fresh coalescing boundary as Main IPC.
-  const checkBeforeRead = !resolvedScope || (url.pathname === '/api/sessions' && profile === 'default')
+  // Registry consumers may arrive together after a shared dial check.
+  // Use the same fresh coalescing boundary for Main and the Bot roster.
+  const coalescedStartupRead = profile === 'default' &&
+    (url.pathname === '/api/sessions' || url.pathname === '/api/profiles')
+  const checkBeforeRead = !resolvedScope || coalescedStartupRead
 
   const read = async (initialCheckFinished?: () => void) => {
     try {

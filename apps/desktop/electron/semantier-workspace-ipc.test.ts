@@ -353,8 +353,36 @@ it('identifies unsupported Gateway startup operations without excluding Cloud hi
 
   expect(isUnsupportedWorkspaceStartupRequest('POST', '/api/sessions/owner-backfill')).toBe(true)
   expect(isUnsupportedWorkspaceStartupRequest('GET', '/api/status')).toBe(true)
+  expect(isUnsupportedWorkspaceStartupRequest('GET', '/api/profiles/active')).toBe(true)
   expect(isUnsupportedWorkspaceStartupRequest('GET', '/api/cron/jobs')).toBe(true)
   expect(isUnsupportedWorkspaceStartupRequest('GET', '/api/sessions/main-a/timeline')).toBe(true)
   expect(isUnsupportedWorkspaceStartupRequest('GET', '/api/sessions/main-a/messages')).toBe(false)
   expect(isUnsupportedWorkspaceStartupRequest('GET', '/api/profiles/sessions/sidebar')).toBe(false)
+})
+
+
+it('shares overlapping registry Bot roster reads without retaining completed results', async () => {
+  const { readScopedWorkspaceDesktop } = await import('./semantier-workspace-ipc')
+  let release!: (response: Response) => void
+  const gate = new Promise<Response>(resolve => { release = resolve })
+  const profile = { name: 'bot-a', path: '/owned-profile' }
+  const roster = () => Response.json({ bot_id: 'bot-a', native_profile_id: profile.path, profile })
+  const fetch = vi.fn().mockReturnValueOnce(gate)
+    .mockResolvedValueOnce(roster()).mockResolvedValueOnce(Response.json(identity))
+    .mockResolvedValueOnce(Response.json(identity)).mockResolvedValueOnce(roster())
+    .mockResolvedValueOnce(Response.json(identity))
+  vi.mocked(session.fromPartition).mockReturnValue({ fetch } as never)
+  const read = () => readScopedWorkspaceDesktop('https://cloud.example', scope, '/api/profiles', 'default', scope)
+  const first = read()
+  const second = read()
+
+  expect(fetch).toHaveBeenCalledTimes(1)
+  release(Response.json(identity))
+  expect(await Promise.all([first, second])).toEqual([
+    { profiles: [{ ...profile, runtime_bot_id: 'bot-a', native_profile_id: profile.path }] },
+    { profiles: [{ ...profile, runtime_bot_id: 'bot-a', native_profile_id: profile.path }] }
+  ])
+  expect(fetch.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/auth/context', '/api/winman', '/auth/context'])
+  await read()
+  expect(fetch).toHaveBeenCalledTimes(6)
 })
