@@ -63,7 +63,7 @@ const pendingStartupReads = new WeakMap<object, Map<string, Promise<unknown>>>()
 
 const pendingReadContexts = new WeakMap<object, Promise<WorkspaceIdentity>>()
 
-async function assertInitialReadScope(target: ReturnType<typeof workspace>, scope: WorkspaceScope) {
+export function readPendingWorkspaceIdentity(target: ReturnType<typeof workspace>) {
   const { owned, client } = target
   let current = pendingReadContexts.get(owned)
   if (!current) {
@@ -71,7 +71,7 @@ async function assertInitialReadScope(target: ReturnType<typeof workspace>, scop
     pendingReadContexts.set(owned, current)
   }
 
-  assertWorkspaceScope(await current, scope)
+  return current
 }
 
 export async function readScopedWorkspaceDesktop(origin: string, scope: WorkspaceScope, path: string, profile: string) {
@@ -80,7 +80,7 @@ export async function readScopedWorkspaceDesktop(origin: string, scope: Workspac
 
   const read = async (initialCheckFinished?: () => void) => {
     try {
-      await assertInitialReadScope(target, scope)
+      assertWorkspaceScope(await readPendingWorkspaceIdentity(target), scope)
     } finally {
       initialCheckFinished?.()
     }
@@ -221,7 +221,7 @@ return personal}
 
     return result
   })
-  ipcMain.handle('hermes:workspace:identity', (_event, origin: string) => workspace(origin).client.identity())
+  ipcMain.handle('hermes:workspace:identity', (_event, origin: string) => readPendingWorkspaceIdentity(workspace(origin)))
   ipcMain.handle('hermes:workspace:logout', async (_event, origin: string) => {
     await beforeAccountChange?.(new URL(origin).origin)
     const { owned } = workspace(origin)
@@ -316,7 +316,7 @@ return personal}
   ipcMain.handle('hermes:workspace:history', async (_event, origin: string, scope: WorkspaceScope, sessionId: string, afterId?: string) => {
     const target = workspace(origin)
     const { client } = target
-    await assertInitialReadScope(target, scope)
+    assertWorkspaceScope(await readPendingWorkspaceIdentity(target), scope)
     const result = await client.history(sessionId, ...(afterId === undefined ? [] : [afterId]))
     assertWorkspaceScope(await client.identity(), scope)
 
@@ -325,7 +325,7 @@ return personal}
   ipcMain.handle('hermes:workspace:native-context', async (_event, origin: string, scope: WorkspaceScope, sessionId: string) => {
     const target = workspace(origin)
     const { client } = target
-    await assertInitialReadScope(target, scope)
+    assertWorkspaceScope(await readPendingWorkspaceIdentity(target), scope)
     const result = await client.nativeContext(sessionId)
     assertWorkspaceScope(await client.identity(), scope)
 

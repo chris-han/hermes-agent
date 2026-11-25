@@ -21,7 +21,7 @@ import { looksBinary, previewFileMetadata } from './main_file_preview'
 import {ManagedDeviceEnrollment} from './managed-device-enrollment'
 import {runManagedDeviceKey} from './managed-device-key-process'
 import { PersonalCapabilitySync } from './personal-capability-sync'
-import { assertWorkspaceScope, readScopedWorkspaceDesktop, registerSemantierWorkspaceIpc, workspace as semantierWorkspace } from './semantier-workspace-ipc'
+import { assertWorkspaceScope, readPendingWorkspaceIdentity, readScopedWorkspaceDesktop, registerSemantierWorkspaceIpc, workspace as semantierWorkspace } from './semantier-workspace-ipc'
 import { registerSemantierFeedbackIpc } from './updater/semantier-feedback-ipc'
 
 const workspaceAccountGenerations = new Map<string, number>()
@@ -11059,8 +11059,9 @@ async function ensureRegistryBackend(
   }
 
   if (source.transport === 'semantier-workspace-http') {
-    const { client, origin } = semantierWorkspace(source.url)
-    const identity = await client.identity()
+    const target = semantierWorkspace(source.url)
+    const { client, origin } = target
+    const identity = await readPendingWorkspaceIdentity(target)
 
     if (!identity.authenticated || !identity.user?.user_id || !identity.workspace?.id || !identity.organization_id) {
       throw new Error('Sign in to the Semantier Cloud workspace before connecting.')
