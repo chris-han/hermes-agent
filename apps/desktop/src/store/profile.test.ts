@@ -276,6 +276,17 @@ describe('refreshProfiles shared rail list (#49289)', () => {
     expect($profiles.get().map(profile => profile.name)).toEqual(['default', 'healthops'])
   })
 
+  it('does not retry an unavailable Cloud roster during Main startup', async () => {
+    $connection.set({ ...remoteConn(), transport: 'semantier-workspace-http' })
+    vi.mocked(getProfiles).mockRejectedValueOnce(new Error('Cloud roster unavailable'))
+
+    await expect(refreshProfiles()).rejects.toThrow('Cloud roster unavailable')
+    expect(getProfiles).toHaveBeenCalledTimes(1)
+
+    vi.mocked(getProfiles).mockResolvedValueOnce({ profiles: [profile('default', true)] })
+    await expect(refreshProfiles()).resolves.toHaveLength(1)
+  })
+
   it('shares one retry chain across concurrent callers (single-flight)', async () => {
     // Gateway open fires both useBackgroundSync and the activeGatewayProfile
     // effect at once; both callers must ride the same chain, not double it.
