@@ -101,7 +101,8 @@ async function installAgentHalf(plan: InstallPlan, deps: InstallDeps, report: Re
     force: plan.force,
     enable: plan.enable,
     catalogName: request.catalogName,
-    ref: plan.ref,
+    ref: request.semantierRelease?.package_ref ?? plan.ref,
+    ...(request.semantierRelease ? { semantierRelease: request.semantierRelease } : {}),
     profile: plan.profile
   })
 

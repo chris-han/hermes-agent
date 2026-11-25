@@ -38,7 +38,18 @@ const FETCH_TIMEOUT_MS = 15_000
 const LOOKUP_TIMEOUT_MS = 20_000
 
 /** The fields an install needs — the same ones the embedded picker posts on a pick. */
+export interface SemantierPluginRelease {
+  id: string
+  source: string
+  path: string
+  version: string
+  package_ref: string
+  content_hash: string
+}
+
 export interface PluginCatalogEntry {
+  provider?: 'semantier'
+  release?: SemantierPluginRelease
   name: string
   repo: string
   /** Reviewed pin (40-hex) the backend installs at; may be missing on a malformed feed. */

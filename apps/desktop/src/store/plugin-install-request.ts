@@ -1,5 +1,7 @@
 import { atom } from 'nanostores'
 
+import type { SemantierPluginRelease } from '@/lib/plugin-catalog'
+
 /** Which plugin component(s) a legacy deeplink pre-selects after probe. */
 export type PluginInstallLegacyHint = 'agent' | 'desktop' | null
 
@@ -14,6 +16,7 @@ export interface PluginInstallRequest {
   /** Curated-catalog pick: install the agent half by catalog name so the
    *  backend pins the reviewed SHA and records sidecar provenance. */
   catalogName?: string
+  semantierRelease?: SemantierPluginRelease
   /** The catalog pin (display only — the backend resolves it itself). */
   sha?: string
   /** Display name for the dialog heading (the catalog card's title); falls back to the catalog name. */

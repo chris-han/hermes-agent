@@ -27,6 +27,15 @@ def _(rid, params: dict) -> dict:
     name = str(params.get("name") or "").strip()
     if not looks_like_catalog_name(name):  # the same rule `hermes plugins install <name>` applies
         return _ok(rid, {"status": "invalid_name"})
+    if params.get("provider") == "semantier":
+        from hermes_cli.semantier_plugin_catalog import load_semantier_plugin_catalog
+        try:
+            row = load_semantier_plugin_catalog().get(name)
+        except (OSError, ValueError, KeyError, TypeError):
+            return _ok(rid, {"status": "unavailable"})
+        return _ok(rid, {"status": "found", "entry": row} if row else {"status": "unknown"})
+    if params.get("provider") not in (None, "nous"):
+        return _ok(rid, {"status": "unavailable"})
     # The loaders never raise: a dead host falls back to the cache, then to the in-tree catalog.
     # Nothing readable at all is "unavailable", never a guess.
     entries = load_catalog_live()
@@ -47,6 +56,15 @@ def list_catalog(rid, params: dict) -> dict:
     """Native discovery uses the same catalog and removal policy as installation."""
     from hermes_cli.plugin_catalog import load_catalog_live, match_removed, resolved_removed_entries
 
+    if params.get("provider") == "semantier":
+        from hermes_cli.semantier_plugin_catalog import load_semantier_plugin_catalog
+        try:
+            rows = load_semantier_plugin_catalog()
+        except (OSError, ValueError, KeyError, TypeError):
+            return _ok(rid, {"available": False, "entries": []})
+        return _ok(rid, {"available": True, "entries": list(rows.values())})
+    if params.get("provider") not in (None, "nous"):
+        return _ok(rid, {"available": False, "entries": []})
     entries = load_catalog_live()
     removed = resolved_removed_entries()
     return _ok(rid, {"available": bool(entries), "entries": [

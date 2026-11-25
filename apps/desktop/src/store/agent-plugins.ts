@@ -1,5 +1,6 @@
 import { atom } from 'nanostores'
 
+import type { SemantierPluginRelease } from '@/lib/plugin-catalog'
 import { notifyError } from '@/store/notifications'
 
 /**
@@ -301,6 +302,7 @@ export async function installAgentPlugin(
     enable?: boolean
     /** Curated-catalog install: the backend resolves repo + pinned SHA from
      *  its own plugin-catalog and records provenance in the sidecar. */
+    semantierRelease?: SemantierPluginRelease
     catalogName?: string
     /** Pin a custom source to one full commit SHA (team-wide reproducible install). */
     ref?: string
@@ -332,6 +334,7 @@ export async function installAgentPlugin(
           force: Boolean(opts.force),
           enable: opts.enable ?? true,
           ...(opts.catalogName ? { catalog_name: opts.catalogName } : {}),
+          ...(opts.semantierRelease ? { semantier_release: opts.semantierRelease } : {}),
           ...(opts.ref ? { ref: opts.ref } : {})
         },
         opts.profile

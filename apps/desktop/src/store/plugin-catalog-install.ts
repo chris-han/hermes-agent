@@ -17,6 +17,26 @@ export function openCatalogPluginInstall(
   profile: null | string,
   options: Pick<PluginInstallRequest, 'stayAfterInstall' | 'title' | 'connectionId'> = {}
 ): void {
+  if (entry.provider === 'semantier') {
+    if (!entry.release || entry.release.package_ref !== entry.sha) {
+      notify({ kind: 'error', message: 'Semantier release details unavailable' })
+
+      return
+    }
+
+    openPluginInstallRequest({
+      ...options,
+      profile,
+      repo: `${entry.repo}#${entry.subdir}`,
+      sha: entry.sha,
+      semantierRelease: entry.release,
+      title: `Semantier · ${entry.name} ${entry.release.version}`,
+      summary: entry.summary
+    })
+
+    return
+  }
+
   const existing = $agentPlugins.get().find(row => row.catalog_name === entry.name || row.name === entry.name)
 
   if (existing && !existing.update_available) {

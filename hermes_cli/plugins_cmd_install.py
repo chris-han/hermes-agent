@@ -340,6 +340,7 @@ def _install_plugin_core(
     catalog: Optional[dict] = None,
     allow_removed: bool = False,
     before_swap=None,
+    semantier_release=None,
 ) -> tuple[Path, dict, str]:
     """Clone a Git plugin and atomically record its source and exact revision.
 
@@ -414,6 +415,12 @@ def _install_plugin_core(
         # A callback may merge user-owned state into the candidate tree; run it first so one scan
         # admits the final bytes.
         merged = before_swap(manifest, tmp_target) if before_swap is not None else None
+        if semantier_release is not None:
+            from hermes_cli.semantier_plugin_catalog import verify_release_tree
+            try:
+                verify_release_tree(semantier_release, manifest, tmp_target)
+            except (ValueError, OSError) as exc:
+                raise _pc().PluginOperationError(str(exc), failure_class="manifest_invalid") from exc
         # Scan BEFORE anything is moved into place; raises PluginScanBlocked when blocked.
         _pc()._scan_merged_tree(tmp_target, identifier, merged, force=force, scan_decision_cb=scan_decision_cb,
                                 reviewed_pin=at_reviewed_pin)
@@ -454,6 +461,8 @@ def _install_plugin_core(
                 record["update_url"] = https_update_url(manifest["update_url"])
             except ValueError as exc:
                 raise _pc().PluginOperationError(f"Plugin '{plugin_name}' {exc}", failure_class="manifest_invalid") from exc
+        if semantier_release is not None:
+            record["semantier_release"] = semantier_release
         if catalog:
             # ``sha`` = the commit checked out; ``pin`` = the reviewed catalog sha it satisfies (the
             # annotated-tag object for a tag pin), empty when installed off-pin via ``--ref``.
@@ -771,7 +780,7 @@ def _resolve_source(identifier: str, catalog_name: Optional[str]) -> tuple:
 
 
 def _place_tree(entry, identifier: str, *, force: bool, ref: Optional[str], assume_deps_consent: bool,
-                step: Callable[[InstallPhase], None]) -> tuple | dict:
+                step: Callable[[InstallPhase], None], semantier_release=None) -> tuple | dict:
     """``(target, manifest, installed_name)`` of the tree to enable, or the error result. A catalog
     entry already on disk and not enabled (an earlier enable was refused) is used as it is, unless
     an approved *ref* names another commit; a fresh install clones at *ref* when set, else the pin."""
@@ -785,7 +794,8 @@ def _place_tree(entry, identifier: str, *, force: bool, ref: Optional[str], assu
         if entry is not None:
             return catalog.install_catalog_entry(entry, force=force, ref=ref, allow_removed=False,
                                                  assume_deps_consent=assume_deps_consent)
-        return _pc()._install_plugin_core(identifier, force=force, ref=ref, assume_deps_consent=assume_deps_consent)
+        return _pc()._install_plugin_core(identifier, force=force, ref=ref, assume_deps_consent=assume_deps_consent,
+                                          **({"semantier_release": semantier_release} if semantier_release else {}))
 
     step(InstallPhase.downloading)
     try:
@@ -823,6 +833,7 @@ def _enable_placed(installed_name: str, deps, step: Callable[[InstallPhase], Non
 def dashboard_install_plugin(
     identifier: str, *, force: bool, enable: bool, catalog_name: Optional[str] = None,
     ref: Optional[str] = None, assume_deps_consent: Optional[bool] = None,
+    semantier_release=None,
     on_step: Optional[Callable[[InstallPhase], None]] = None,
 ) -> dict[str, Any]:
     """Non-interactive install for the dashboard/TUI. *catalog_name* installs a curated entry at its
@@ -836,10 +847,19 @@ def dashboard_install_plugin(
     if assume_deps_consent is None:
         assume_deps_consent = enable and not force
     step = on_step or (lambda _phase: None)
+    if semantier_release is not None:
+        from hermes_cli.semantier_plugin_catalog import resolve_selected_release
+        if catalog_name:
+            return {"ok": False, "error": "Conflicting plugin providers"}
+        try:
+            semantier_release = resolve_selected_release(semantier_release, identifier, ref)
+        except (ValueError, KeyError, OSError, TypeError) as exc:
+            return {"ok": False, "error": str(exc)}
     entry, identifier, warnings, error = _resolve_source(identifier, catalog_name)
     if error is not None:
         return error
-    placed = _place_tree(entry, identifier, force=force, ref=ref, assume_deps_consent=assume_deps_consent, step=step)
+    placed = _place_tree(entry, identifier, force=force, ref=ref, assume_deps_consent=assume_deps_consent, step=step,
+                         **({"semantier_release": semantier_release} if semantier_release else {}))
     if isinstance(placed, dict):
         return placed
     target, installed_manifest, installed_name = placed

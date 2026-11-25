@@ -25,13 +25,15 @@ export function NativePluginCatalog({
   const c = useInventoryCopy()
   const [query, setQuery] = useState(initialQuery)
 
+  const [provider, setProvider] = useState("nous")
+
   const catalog = useQuery(
     {
-      queryKey: ['native-plugin-catalog', connectionId, profile],
+      queryKey: ['native-plugin-catalog', connectionId, profile, provider],
       queryFn: () =>
         request<{ available: boolean; entries: (PluginCatalogEntry & { description: string })[] }>(
           'plugins.catalog.list',
-          profile ? { profile } : {},
+          { ...(profile ? { profile } : {}), ...(provider === "semantier" ? { provider } : {}) },
           20_000
         ),
       retry: false
@@ -42,6 +44,10 @@ export function NativePluginCatalog({
   return (
     <section className="grid gap-2 border-t border-(--ui-stroke-secondary) p-3">
       <h2 className="text-sm font-medium">{t.skills.plugins.catalogTitle}</h2>
+      <select aria-label="Plugin catalog source" onChange={event => setProvider(event.target.value)} value={provider}>
+        <option value="nous">Nous Research</option>
+        <option value="semantier">Semantier Plugins</option>
+      </select>
       <SearchField onChange={setQuery} placeholder={t.skills.plugins.catalogTitle} value={query} />
       {catalog.isLoading ? (
         <p role="status">{t.skills.loading}</p>
