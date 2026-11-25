@@ -69,3 +69,18 @@ def test_native_listing_reports_unavailable_without_inventing_entries(monkeypatc
     monkeypatch.setattr(pc, "load_catalog_live", list)
     response = server.handle_request({"id": "list", "method": "plugins.catalog.list", "params": {}})
     assert response["result"] == {"available": False, "entries": []}
+
+
+def test_semantier_market_selection_survives_gateway_dispatch(monkeypatch):
+    from hermes_cli import semantier_plugin_catalog as market
+
+    row = {"name": "tutor", "sha": SHA, "repo": market.REPO, "subdir": "plugins/tutor",
+           "provider": "semantier", "description": "Tutor",
+           "release": {"id": f"{market.REPO}/plugins/tutor", "source": "custom-marketplace",
+                       "path": "plugins/tutor", "version": "0.1.1", "package_ref": SHA,
+                       "content_hash": "sha256:" + "b" * 64}}
+    monkeypatch.setattr(market, "load_semantier_plugin_catalog", lambda: {"tutor": row})
+    response = server.handle_request({"id": "list", "method": "plugins.catalog.list",
+                                      "params": {"provider": "semantier"}})
+    assert response["result"] == {"available": True, "entries": [row]}
+    assert _lookup("tutor", provider="semantier")["entry"] == row

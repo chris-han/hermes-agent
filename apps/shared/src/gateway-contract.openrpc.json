@@ -2425,7 +2425,7 @@
         {
           "name": "params",
           "schema": {
-            "$ref": "#/components/schemas/ProfileParams"
+            "$ref": "#/components/schemas/PluginCatalogListParams"
           }
         }
       ],
@@ -2487,6 +2487,24 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/PluginsManageResult"
+        }
+      }
+    },
+    {
+      "name": "plugins.semantier.tutor.progress",
+      "summary": "Project connected Workspace objectives using the matching installed Tutor release.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/TutorProgressParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TutorProgressResult"
         }
       }
     },
@@ -27759,6 +27777,30 @@
             "title": "Subdir",
             "type": "string"
           },
+          "provider": {
+            "anyOf": [
+              {
+                "const": "semantier",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Provider"
+          },
+          "release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SemantierCatalogRelease"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "description": {
             "title": "Description",
             "type": "string"
@@ -27772,6 +27814,41 @@
           "description"
         ],
         "title": "PluginCatalogListEntry",
+        "type": "object"
+      },
+      "PluginCatalogListParams": {
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "enum": [
+                  "semantier",
+                  "nous"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Provider"
+          }
+        },
+        "title": "PluginCatalogListParams",
         "type": "object"
       },
       "PluginCatalogListResult": {
@@ -27815,6 +27892,42 @@
           "subdir": {
             "title": "Subdir",
             "type": "string"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "const": "semantier",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Provider"
+          },
+          "release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SemantierCatalogRelease"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
           }
         },
         "required": [
@@ -27840,6 +27953,22 @@
             ],
             "default": null,
             "title": "Profile"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "enum": [
+                  "semantier",
+                  "nous"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Provider"
           },
           "name": {
             "title": "Name",
@@ -28162,6 +28291,17 @@
             ],
             "default": null,
             "title": "Profile"
+          },
+          "semantier_release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SemantierCatalogRelease"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "action": {
             "$ref": "#/components/schemas/PluginsAction",
@@ -34807,6 +34947,45 @@
           "role"
         ],
         "title": "SeedMessage",
+        "type": "object"
+      },
+      "SemantierCatalogRelease": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          },
+          "package_ref": {
+            "title": "Package Ref",
+            "type": "string"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "path",
+          "version",
+          "package_ref",
+          "content_hash"
+        ],
+        "title": "SemantierCatalogRelease",
         "type": "object"
       },
       "SessionActivateParams": {
@@ -45036,6 +45215,69 @@
         ],
         "title": "TurnStatus",
         "type": "string"
+      },
+      "TutorProgressParams": {
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          },
+          "release": {
+            "$ref": "#/components/schemas/SemantierCatalogRelease"
+          },
+          "project_ref": {
+            "title": "Project Ref",
+            "type": "string"
+          },
+          "plan_ref": {
+            "title": "Plan Ref",
+            "type": "string"
+          },
+          "objectives": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Objectives",
+            "type": "array"
+          }
+        },
+        "required": [
+          "release",
+          "project_ref",
+          "plan_ref",
+          "objectives"
+        ],
+        "title": "TutorProgressParams",
+        "type": "object"
+      },
+      "TutorProgressResult": {
+        "additionalProperties": false,
+        "properties": {
+          "mastery": {
+            "items": {},
+            "title": "Mastery",
+            "type": "array"
+          },
+          "release": {
+            "$ref": "#/components/schemas/SemantierCatalogRelease"
+          }
+        },
+        "required": [
+          "mastery",
+          "release"
+        ],
+        "title": "TutorProgressResult",
+        "type": "object"
       },
       "UiMetaConflict": {
         "additionalProperties": false,

@@ -4477,6 +4477,7 @@ export interface LegacyPluginRow {
 /** ``toggle``: ``key``/``name`` + ``enable``; ``install``: ``identifier``/``repo`` or ``catalog_name`` (+ ``force``, ``enable``, ``ref``); ``update``: ``name`` (+ ``accept_capabilities`` to apply a re-pin that widened the plugin after the user confirmed the ``delta``); ``remove``: ``name`` (user installs only); ``settings``: ``key`` + ``values`` (``{setting_key: value}``, non-secret schema keys only); ``presence``: ``names`` (catalog names, answered in that order). */
 export interface PluginsManageParams {
   profile?: string | null
+  semantier_release?: SemantierCatalogRelease | null
   action?: PluginsAction
   key?: string | null
   name?: string | null
@@ -4489,6 +4490,14 @@ export interface PluginsManageParams {
   accept_capabilities?: boolean | null
   values?: Record<string, unknown> | null
   names?: string[] | null
+}
+export interface SemantierCatalogRelease {
+  id: string
+  source: string
+  path: string
+  version: string
+  package_ref: string
+  content_hash: string
 }
 export type PluginsAction = 'list' | 'toggle' | 'install' | 'update' | 'remove' | 'settings' | 'onboarding' | 'presence'
 /** ``list`` → ``plugins`` + counts; ``toggle`` → ``ok``/``unchanged``/``restart_required``/``name`` (the canonical key written)/``plugin``; ``install`` → ``hermes_cli.plugins_cmd.dashboard_install_plugin``'s ok payload; ``toggle``/``install``/``update`` that loaded a plugin also carry ``gateway_reloaded`` (the running gateway picked it up and re-wired its handlers) and ``activation`` — the honest split of what is live now vs deferred, so ``restart_required`` is True only when no gateway answered; ``update`` → ``ok``/``unchanged``/``sha``, or ``ok=false`` + ``consent_required`` with the ``delta`` (``{surface: [added...]}``) / ``delta_lines`` a widened pin adds — nothing changed until the client retries with ``accept_capabilities``; ``remove`` → ``ok``/``name`` plus ``cleared_memory_provider`` when the removed plugin was the live ``memory.provider``. */
@@ -4605,6 +4614,7 @@ export interface CatalogPluginPresence {
 }
 export interface PluginCatalogLookupParams {
   profile?: string | null
+  provider?: 'semantier' | 'nous' | null
   name: string
 }
 /** ``found`` carries ``entry``. ``unknown`` covers a name the catalog doesn't list and one it removed; ``unavailable`` means neither the live catalog nor the in-tree fallback could be read. */
@@ -4619,6 +4629,13 @@ export interface PluginCatalogLookupEntry {
   repo: string
   sha: string
   subdir: string
+  provider?: 'semantier' | null
+  release?: SemantierCatalogRelease | null
+  description?: string | null
+}
+export interface PluginCatalogListParams {
+  profile?: string | null
+  provider?: 'semantier' | 'nous' | null
 }
 export interface PluginCatalogListResult {
   available: boolean
@@ -4629,7 +4646,20 @@ export interface PluginCatalogListEntry {
   repo: string
   sha: string
   subdir: string
+  provider?: 'semantier' | null
+  release?: SemantierCatalogRelease | null
   description: string
+}
+export interface TutorProgressParams {
+  profile?: string | null
+  release: SemantierCatalogRelease
+  project_ref: string
+  plan_ref: string
+  objectives: Record<string, unknown>[]
+}
+export interface TutorProgressResult {
+  mastery: unknown[]
+  release: SemantierCatalogRelease
 }
 export interface CanonicalShellExecParams {
   session_id: string
@@ -6273,13 +6303,15 @@ export interface RpcMethods {
   /** Cheapest liveness probe; answered on the WS reader thread even while every agent is mid-turn. */
   ping: { params: PingParams; result: PingResult }
   /** Native read-only discovery using the install catalog and removal policy. */
-  'plugins.catalog.list': { params: ProfileParams; result: PluginCatalogListResult }
+  'plugins.catalog.list': { params: PluginCatalogListParams; result: PluginCatalogListResult }
   /** One curated plugin-catalog entry by name, from the backend's live catalog (cached, with the in-tree fallback and kill list); backs hermes://plugin/install?catalog= deep links. */
   'plugins.catalog.lookup': { params: PluginCatalogLookupParams; result: PluginCatalogLookupResult }
   /** Loaded plugin manager entries (legacy flat view); the Plugins Hub uses plugins.manage list. */
   'plugins.list': { params: PluginsListParams; result: PluginsListResult }
   /** Plugins Hub backend: list installed plugins, toggle, git-install, re-pin a catalog install, or remove a user install. */
   'plugins.manage': { params: PluginsManageParams; result: PluginsManageResult }
+  /** Project connected Workspace objectives using the matching installed Tutor release. */
+  'plugins.semantier.tutor.progress': { params: TutorProgressParams; result: TutorProgressResult }
   /** Spawn a hidden agent that brings the desktop preview's dev server back up. */
   'preview.restart': { params: PreviewRestartParams; result: TaskIdResult }
   /** Kill one background process the caller's session owns and return its output snapshot. */
@@ -6661,6 +6693,7 @@ export const RPC_METHODS = [
   'plugins.catalog.lookup',
   'plugins.list',
   'plugins.manage',
+  'plugins.semantier.tutor.progress',
   'preview.restart',
   'process.kill',
   'process.list',

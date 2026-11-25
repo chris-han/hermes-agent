@@ -8,6 +8,8 @@ Every ``mcp.servers.*``, ``mcp.catalog``, ``skills.manage`` and ``plugins.manage
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import Field
 
 from .base import JsonValue, Params, Result, WireEnum
@@ -595,6 +597,15 @@ class PluginsAction(WireEnum):
     presence = "presence"
 
 
+class SemantierCatalogRelease(Params):
+    id: str
+    source: str
+    path: str
+    version: str
+    package_ref: str
+    content_hash: str
+
+
 class PluginsManageParams(ProfileParams):
     """``toggle``: ``key``/``name`` + ``enable``; ``install``: ``identifier``/``repo`` or ``catalog_name``
     (+ ``force``, ``enable``, ``ref``); ``update``: ``name`` (+ ``accept_capabilities`` to apply a re-pin
@@ -602,6 +613,7 @@ class PluginsManageParams(ProfileParams):
     ``settings``: ``key`` + ``values`` (``{setting_key: value}``, non-secret schema keys only);
     ``presence``: ``names`` (catalog names, answered in that order)."""
 
+    semantier_release: SemantierCatalogRelease | None = None
     action: PluginsAction = PluginsAction.list
     key: str | None = None
     name: str | None = None
@@ -801,7 +813,11 @@ class PluginCatalogLookupStatus(WireEnum):
     unavailable = "unavailable"
 
 
-class PluginCatalogLookupParams(ProfileParams):
+class PluginCatalogListParams(ProfileParams):
+    provider: Literal["semantier", "nous"] | None = None
+
+
+class PluginCatalogLookupParams(PluginCatalogListParams):
     name: str
 
 
@@ -812,6 +828,9 @@ class PluginCatalogLookupEntry(Result):
     repo: str
     sha: str
     subdir: str
+    provider: Literal["semantier"] | None = None
+    release: SemantierCatalogRelease | None = None
+    description: str | None = None
 
 
 class PluginCatalogLookupResult(Result):
@@ -836,5 +855,20 @@ class PluginCatalogListResult(Result):
     entries: list[PluginCatalogListEntry]
 
 
-method("plugins.catalog.list", params=ProfileParams, result=PluginCatalogListResult,
+method("plugins.catalog.list", params=PluginCatalogListParams, result=PluginCatalogListResult,
        doc="Native read-only discovery using the install catalog and removal policy.")
+
+class TutorProgressParams(ProfileParams):
+    release: SemantierCatalogRelease
+    project_ref: str
+    plan_ref: str
+    objectives: list[dict[str, JsonValue]]
+
+
+class TutorProgressResult(Result):
+    mastery: list[JsonValue]
+    release: SemantierCatalogRelease
+
+
+method("plugins.semantier.tutor.progress", params=TutorProgressParams, result=TutorProgressResult,
+       doc="Project connected Workspace objectives using the matching installed Tutor release.")
