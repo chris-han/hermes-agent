@@ -254,6 +254,27 @@ it('withholds a Project continuation response after the Workspace account change
   expect(fetch).toHaveBeenCalledTimes(3)
 })
 
+it('shares the signed startup session inventory with the actual native Main IPC', async () => {
+  const { readScopedWorkspaceDesktop } = await import('./semantier-workspace-ipc')
+  let release!: (value: Response) => void
+  const first = new Promise<Response>(resolve => { release = resolve })
+  const fetch = vi.fn().mockReturnValueOnce(first)
+    .mockResolvedValueOnce(Response.json({ sessions: [{ key: 'main-a', title: 'Main' }] }))
+    .mockResolvedValueOnce(Response.json(identity))
+  vi.mocked(session.fromPartition).mockReturnValue({ fetch } as never)
+  vi.mocked(ipcMain.handle).mockClear()
+  registerSemantierWorkspaceIpc()
+  const handler = vi.mocked(ipcMain.handle).mock.calls.find(([name]) => name === 'hermes:workspace:sessions')![1]
+  const native = handler({} as never, 'https://cloud.example', scope)
+  const desktop = readScopedWorkspaceDesktop('https://cloud.example', scope, '/api/sessions', 'default')
+  expect(fetch).toHaveBeenCalledTimes(1)
+  release(Response.json(identity))
+  const [a, b] = await Promise.all([native, desktop])
+  expect(a).toMatchObject({ sessions: [{ key: 'main-a', id: 'main-a', title: 'Main' }] })
+  expect(b).toEqual(a)
+  expect(fetch).toHaveBeenCalledTimes(3)
+})
+
 it('joins overlapping startup inventory reads and rejects a changed scope before delivery', async () => {
   const { readScopedWorkspaceDesktop } = await import('./semantier-workspace-ipc')
   let release!: (value: Response) => void

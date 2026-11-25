@@ -295,12 +295,9 @@ return personal}
     return history
   })
   ipcMain.handle('hermes:workspace:sessions', async (_event, origin: string, scope: WorkspaceScope) => {
-    const { client } = workspace(origin)
-    assertWorkspaceScope(await client.identity(), scope)
-    const result = await client.sessions()
-    assertWorkspaceScope(await client.identity(), scope)
-
-    return result
+    // Join the already owned, signed startup inventory path rather than making
+    // a second independent context → sessions → context burst during Main open.
+    return readScopedWorkspaceDesktop(origin, scope, '/api/sessions', 'default')
   })
   ipcMain.handle('hermes:workspace:history', async (_event, origin: string, scope: WorkspaceScope, sessionId: string, afterId?: string) => {
     const { client } = workspace(origin)
