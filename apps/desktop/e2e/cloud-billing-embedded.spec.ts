@@ -146,7 +146,7 @@ print(hashlib.sha256((ref+'\\0'+base+'\\0'+secret).encode()).hexdigest())
 
     if (payerRefusal) {
       // Hold the genuine account response at the guest boundary until the user sees the denial.
-      await guest.evaluate((view: any) => view.executeJavaScript(`(() => {
+      const holdRead = `(() => {
         const original = window.fetch.bind(window)
         const gate = new Promise(resolve => { window.releaseBillingAccountRead = resolve })
         window.fetch = async (...args) => {
@@ -158,7 +158,13 @@ print(hashlib.sha256((ref+'\\0'+base+'\\0'+secret).encode()).hexdigest())
           }
           return response
         }
-      })()`))
+      })()`
+      await app.evaluate(async ({ webContents }, { guestId, source }) => {
+        const guest = webContents.fromId(guestId)!
+        guest.debugger.attach('1.3')
+        await guest.debugger.sendCommand('Page.addScriptToEvaluateOnNewDocument', { source })
+        await guest.executeJavaScript(source)
+      }, { guestId: await guest.evaluate((view: any) => view.getWebContentsId()), source: holdRead })
       await app.evaluate(({ webContents }, { guestId, origin }) => {
         const guest = webContents.fromId(guestId)!
 
