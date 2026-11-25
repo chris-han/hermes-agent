@@ -303,17 +303,21 @@ it('joins overlapping startup inventory reads and rejects a changed scope before
   expect(fetch).toHaveBeenCalledTimes(6)
 })
 
-it('shares only the pending initial scope check across distinct startup reads', async () => {
+it('starts distinct protected startup reads in sequence with fresh scope checks', async () => {
   const { readScopedWorkspaceDesktop } = await import('./semantier-workspace-ipc')
   let release!: (value: Response) => void
   const initial = new Promise<Response>(resolve => { release = resolve })
+  let finishInventory!: (value: Response) => void
+  const inventory = new Promise<Response>(resolve => { finishInventory = resolve })
+  let inventoryReads = 0
   let identityReads = 0
   const fetch = vi.fn(async (input: string) => {
     if (new URL(input).pathname === '/auth/context') {
       identityReads += 1
       return identityReads === 1 ? initial : Response.json(identity)
     }
-    return Response.json({ sessions: [] })
+    inventoryReads += 1
+    return inventoryReads === 1 ? inventory : Response.json({ sessions: [] })
   })
   vi.mocked(session.fromPartition).mockReturnValue({ fetch } as never)
 
@@ -324,11 +328,14 @@ it('shares only the pending initial scope check across distinct startup reads', 
   const second = profiles()
   expect(identityReads).toBe(1)
   release(Response.json(identity))
+  await vi.waitFor(() => expect(inventoryReads).toBe(1))
+  expect(identityReads).toBe(1)
+  finishInventory(Response.json({ sessions: [] }))
   await Promise.all([first, second])
-  expect(identityReads).toBe(3)
+  expect(identityReads).toBe(4)
 
   await sessions()
-  expect(identityReads).toBe(5)
+  expect(identityReads).toBe(6)
 })
 
 it('checks a freshly resolved registry scope and revalidates after the protected read', async () => {
