@@ -346,3 +346,15 @@ it('checks a freshly resolved registry scope and revalidates after the protected
   await expect(read(scope)).rejects.toThrow('changed')
   expect(fetch.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/auth/context', '/api/sessions', '/auth/context'])
 })
+
+
+it('identifies unsupported Gateway startup operations without excluding Cloud history', async () => {
+  const { isUnsupportedWorkspaceStartupRequest } = await import('./semantier-workspace-ipc')
+
+  expect(isUnsupportedWorkspaceStartupRequest('POST', '/api/sessions/owner-backfill')).toBe(true)
+  expect(isUnsupportedWorkspaceStartupRequest('GET', '/api/status')).toBe(true)
+  expect(isUnsupportedWorkspaceStartupRequest('GET', '/api/cron/jobs')).toBe(true)
+  expect(isUnsupportedWorkspaceStartupRequest('GET', '/api/sessions/main-a/timeline')).toBe(true)
+  expect(isUnsupportedWorkspaceStartupRequest('GET', '/api/sessions/main-a/messages')).toBe(false)
+  expect(isUnsupportedWorkspaceStartupRequest('GET', '/api/profiles/sessions/sidebar')).toBe(false)
+})

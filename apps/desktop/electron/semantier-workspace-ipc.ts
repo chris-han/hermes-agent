@@ -58,6 +58,13 @@ export function workspace(origin: string) {
   return { owned, origin: canonicalOrigin, client: createSemantierWorkspaceClient(canonicalOrigin, owned.fetch.bind(owned)) }
 }
 
+/** These local Gateway surfaces have no Workspace HTTP adapter. */
+export function isUnsupportedWorkspaceStartupRequest(method: string, pathname: string): boolean {
+  return (method === 'POST' && pathname === '/api/sessions/owner-backfill') ||
+    (method === 'GET' && (pathname === '/api/status' || pathname === '/api/cron/jobs' ||
+      /^\/api\/sessions\/[^/]+\/timeline$/.test(pathname)))
+}
+
 const startupReadPaths = new Set(['/api/profiles', '/api/sessions', '/api/profiles/sessions', '/api/profiles/sessions/sidebar'])
 const pendingStartupReads = new WeakMap<object, Map<string, Promise<unknown>>>()
 
