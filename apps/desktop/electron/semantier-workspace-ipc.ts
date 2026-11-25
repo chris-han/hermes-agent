@@ -4,7 +4,7 @@ import { BrowserWindow, ipcMain, session } from 'electron'
 
 import type {ManagedDeviceEnrollment} from './managed-device-enrollment'
 import type {PersonalCapabilitySync,PersonalPin,PersonalSnapshot} from './personal-capability-sync'
-import { assertWorkspaceScope, createSemantierWorkspaceClient, type ManagedDeviceInventory, type ManagedDevicePermission, type PersistentFollowup, requireNativeCompletion, requireWorkspaceCompletion, type WinmanCapability, WORKSPACE_USER_STOP_ERROR, workspaceDesktopRead, type WorkspaceHistory, type WorkspaceIdentity, type WorkspaceMainContext, type WorkspaceNativeCancellation, type WorkspaceNativeSnapshot, type WorkspaceNativeSubmission, type WorkspaceScope, type WorkspaceWinmanProfile } from './semantier-workspace-client'
+import { assertWorkspaceScope, createSemantierWorkspaceClient, type ManagedDeviceInventory, type ManagedDevicePermission, type PersistentFollowup, requireNativeCompletion, requireWorkspaceCompletion, type WinmanCapability, WORKSPACE_USER_STOP_ERROR, workspaceDesktopRead, type WorkspaceHistory, type WorkspaceIdentity, type WorkspaceMainContext, type WorkspaceNativeCancellation, type WorkspaceNativeSnapshot, type WorkspaceNativeSubmission, type WorkspaceScope, workspaceSidebarSessions, type WorkspaceWinmanProfile } from './semantier-workspace-client'
 import type { WorkspaceProject, WorkspaceProjectCommit, WorkspaceProjectContinuation, WorkspaceProjectHead, WorkspaceProjectMaterials, WorkspaceProjectPin } from './semantier-workspace-client'
 
 export { assertWorkspaceScope } from './semantier-workspace-client'
@@ -77,19 +77,31 @@ export function readPendingWorkspaceIdentity(target: ReturnType<typeof workspace
 export async function readScopedWorkspaceDesktop(
   origin: string, scope: WorkspaceScope, path: string, profile: string, resolvedScope?: WorkspaceScope
 ) {
+  const url = new URL(path, 'https://desktop.invalid')
+  const queryProfile = url.searchParams.get('profile')
+  const sidebarProfile = url.searchParams.get('recents_profile')
+  const mainSidebar = url.pathname === '/api/profiles/sessions/sidebar' && profile === 'default' &&
+    (!queryProfile || queryProfile === 'default') && (!sidebarProfile || sidebarProfile === 'default')
+  // Both entrypoints project the same server-owned Main inventory.
+  if (mainSidebar) {
+    const inventory = await readScopedWorkspaceDesktop(origin, scope, '/api/sessions', profile, resolvedScope) as { sessions: unknown[] }
+    return workspaceSidebarSessions(inventory.sessions)
+  }
+
   const target = workspace(origin)
   const { owned, client } = target
+  if (resolvedScope) {
+    // The registry dispatcher just obtained this scope from the same
+    // origin-owned cookie jar. Only its internal call may supply it.
+    if (scope?.userId !== resolvedScope.userId || scope?.workspaceId !== resolvedScope.workspaceId ||
+        scope?.organizationId !== resolvedScope.organizationId) {
+      throw new Error('The Semantier account or workspace changed. Reconnect before continuing.')
+    }
+  }
 
   const read = async (initialCheckFinished?: () => void) => {
     try {
-      if (resolvedScope) {
-        // The registry dispatcher just obtained this scope from the same
-        // origin-owned cookie jar. Only its internal call may supply it.
-        if (scope?.userId !== resolvedScope.userId || scope?.workspaceId !== resolvedScope.workspaceId ||
-            scope?.organizationId !== resolvedScope.organizationId) {
-          throw new Error('The Semantier account or workspace changed. Reconnect before continuing.')
-        }
-      } else {
+      if (!resolvedScope) {
         assertWorkspaceScope(await readPendingWorkspaceIdentity(target), scope)
       }
     } finally {
@@ -102,7 +114,7 @@ export async function readScopedWorkspaceDesktop(
     return result
   }
 
-  if (resolvedScope || !startupReadPaths.has(new URL(path, 'https://desktop.invalid').pathname)) {return read()}
+  if (!startupReadPaths.has(url.pathname)) {return read()}
 
   let pending = pendingStartupReads.get(owned)
 
@@ -115,6 +127,7 @@ export async function readScopedWorkspaceDesktop(
   const existing = pending.get(key)
 
   if (existing) {return existing}
+  if (resolvedScope) {return read()}
 
   // Join only while the initial signed check is in flight. A later caller must
   // run its own check before starting a new server read.

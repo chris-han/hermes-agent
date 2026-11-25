@@ -254,7 +254,7 @@ it('withholds a Project continuation response after the Workspace account change
   expect(fetch).toHaveBeenCalledTimes(3)
 })
 
-it('shares the signed startup session inventory with the actual native Main IPC', async () => {
+it('shares the signed default sidebar inventory with the actual native Main IPC', async () => {
   const { readScopedWorkspaceDesktop } = await import('./semantier-workspace-ipc')
   let release!: (value: Response) => void
   const first = new Promise<Response>(resolve => { release = resolve })
@@ -266,12 +266,13 @@ it('shares the signed startup session inventory with the actual native Main IPC'
   registerSemantierWorkspaceIpc()
   const handler = vi.mocked(ipcMain.handle).mock.calls.find(([name]) => name === 'hermes:workspace:sessions')![1]
   const native = handler({} as never, 'https://cloud.example', scope)
-  const desktop = readScopedWorkspaceDesktop('https://cloud.example', scope, '/api/sessions', 'default')
+  const desktop = readScopedWorkspaceDesktop('https://cloud.example', scope,
+    '/api/profiles/sessions/sidebar?recents_profile=default&recents_limit=40', 'default', scope)
   expect(fetch).toHaveBeenCalledTimes(1)
   release(Response.json(identity))
   const [a, b] = await Promise.all([native, desktop])
   expect(a).toMatchObject({ sessions: [{ key: 'main-a', id: 'main-a', title: 'Main' }] })
-  expect(b).toEqual(a)
+  expect(b).toMatchObject({ recents: { sessions: a.sessions }, cron: { unavailable: true }, messaging: { unavailable: true } })
   expect(fetch).toHaveBeenCalledTimes(3)
 })
 
@@ -315,9 +316,9 @@ it('shares only the pending initial scope check across distinct startup reads', 
 
   const origin = 'https://cloud.example'
   const sessions = () => readScopedWorkspaceDesktop(origin, scope, '/api/sessions', 'default')
-  const sidebar = () => readScopedWorkspaceDesktop(origin, scope, '/api/profiles/sessions/sidebar', 'default')
+  const profiles = () => readScopedWorkspaceDesktop(origin, scope, '/api/profiles/sessions', 'default')
   const first = sessions()
-  const second = sidebar()
+  const second = profiles()
   expect(identityReads).toBe(1)
   release(Response.json(identity))
   await Promise.all([first, second])

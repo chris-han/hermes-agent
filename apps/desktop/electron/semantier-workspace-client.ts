@@ -544,6 +544,14 @@ async function optionalNativeProfiles(client: ReturnType<typeof createSemantierW
   }
 }
 
+export function workspaceSidebarSessions(sessions: unknown[]) {
+  return {
+    recents: { sessions },
+    cron: { sessions: [], unavailable: true },
+    messaging: { sessions: [], unavailable: true }
+  }
+}
+
 /** Read projection for the existing Desktop Sessions surface, not another store. */
 export async function workspaceDesktopRead(
   client: ReturnType<typeof createSemantierWorkspaceClient>,
@@ -631,13 +639,7 @@ export async function workspaceDesktopRead(
   }
 
   if (pathname === '/api/profiles/sessions/sidebar') {
-    const sessions = await list()
-
-    return {
-      recents: { sessions },
-      cron: { sessions: [], unavailable: true },
-      messaging: { sessions: [], unavailable: true }
-    }
+    return workspaceSidebarSessions(await list())
   }
 
   const match = /^\/api\/sessions\/([^/]+)(\/messages)?$/.exec(pathname)
