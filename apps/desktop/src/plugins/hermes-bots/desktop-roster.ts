@@ -8,8 +8,11 @@ const managedDefault = (route: NativeDefaultRoute) =>
   route?.profile === 'default' && (!route.connectionId || route.connectionId === 'local')
 
 const localManagedBot = (bot: RosterRow) =>
-  bot.name === 'default' && bot.connectionId === 'local' && bot.connectionKind === 'local' &&
-  !bot.ghost && !bot.retained
+  bot.name === 'default' &&
+  bot.connectionId === 'local' &&
+  bot.connectionKind === 'local' &&
+  !bot.ghost &&
+  !bot.retained
 
 /** Retirement belongs to the profile lifecycle; still-live owners stay visible. */
 export function desktopBotRoster(roster: RosterRow[], _route: NativeDefaultRoute): RosterRow[] {

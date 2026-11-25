@@ -31,6 +31,7 @@ function canonicalHome(path: string): string {
 export function captureDestination(): SubmissionDestination {
   const { sid, info } = getUiState()
   const profileHome = canonicalHome(resolve(process.env.HERMES_HOME ?? join(homedir(), '.hermes')))
+
   // An explicit HERMES_TUI_GATEWAY_URL may serve another home or machine: its receipts name the
   // owner's profile_id (from the session snapshot), not this client's HERMES_HOME (C22). The local
   // home still keys the offline journal and image cache.

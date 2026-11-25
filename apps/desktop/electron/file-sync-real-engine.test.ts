@@ -32,7 +32,15 @@ it.skipIf(!fixture)(
       .join('; ')
 
     async function request(url: string, init?: RequestInit) {
-      return fetch(origin + url, { ...init, headers: { cookie, 'X-Semantier-User-Id':f.user_id,'X-Semantier-Workspace-Id':f.workspace_id, ...init?.headers } })
+      return fetch(origin + url, {
+        ...init,
+        headers: {
+          cookie,
+          'X-Semantier-User-Id': f.user_id,
+          'X-Semantier-Workspace-Id': f.workspace_id,
+          ...init?.headers
+        }
+      })
     }
 
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'semantier-filex-real-'))

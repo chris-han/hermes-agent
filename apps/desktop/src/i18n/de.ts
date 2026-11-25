@@ -2252,7 +2252,8 @@ export const deOverrides = {
       }
     },
     providers: {
-      cloudRemoteRevokePending: "Lokal getrennt. Der entfernte Widerruf konnte nicht bestätigt werden; widerrufen Sie dieses Gerät unter Abrechnung oder autorisieren Sie es erneut.",
+      cloudRemoteRevokePending:
+        'Lokal getrennt. Der entfernte Widerruf konnte nicht bestätigt werden; widerrufen Sie dieses Gerät unter Abrechnung oder autorisieren Sie es erneut.',
       connectAccount: 'Ein Konto verbinden',
       haveApiKey: 'Haben Sie stattdessen einen API-Key?',
       intro:
@@ -4236,8 +4237,8 @@ export const deOverrides = {
     releaseNotes: 'Versionshinweise',
     onLatest: 'Sie verwenden die neueste Version.',
     installing: 'Ein Update wird derzeit installiert.',
-    noPublishedRelease: "Für diesen Kanal ist noch keine Version verfügbar.",
-    cantReach: "Updates konnten nicht geprüft werden.",
+    noPublishedRelease: 'Für diesen Kanal ist noch keine Version verfügbar.',
+    cantReach: 'Updates konnten nicht geprüft werden.',
     tapCheck: 'Tippen Sie auf „Jetzt prüfen“, um nach Updates zu suchen.',
     updateReady: count => `Ein neues Update ist bereit (${count} Änderung${count === 1 ? '' : 'en'} enthalten).`,
     updateReadyUnknown: 'Ein neues Update ist bereit.',

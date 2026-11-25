@@ -1,5 +1,12 @@
 import type { SessionInfo } from '@/hermes'
-import { activeGateway, activeGatewayConnectionId, activeGatewayProfileKey, isActivePrimary, openGatewayForAgent, openGatewayForProfile } from '@/store/gateway'
+import {
+  activeGateway,
+  activeGatewayConnectionId,
+  activeGatewayProfileKey,
+  isActivePrimary,
+  openGatewayForAgent,
+  openGatewayForProfile
+} from '@/store/gateway'
 import { $showAllProfiles, ensureGatewayAgent, ensureGatewayProfile, normalizeProfileKey } from '@/store/profile'
 import { $connection, setSessionOwnerHint } from '@/store/session'
 import type { SessionOwnerScope, SessionProfileRoute } from '@/store/session-request-router'
@@ -94,9 +101,14 @@ export async function openResumeGateway(
 
   // Main history performs its own signed scope checks. Reactivating the
   // already-open source here republishes the route and wakes background reads.
-  if (profile === 'default' && connection?.transport === 'semantier-workspace-http' &&
-      connection.connectionId === resolvedConnectionId && activeGatewayConnectionId() === resolvedConnectionId &&
-      activeGatewayProfileKey() === profile && activeGateway()?.connectionState === 'open') {
+  if (
+    profile === 'default' &&
+    connection?.transport === 'semantier-workspace-http' &&
+    connection.connectionId === resolvedConnectionId &&
+    activeGatewayConnectionId() === resolvedConnectionId &&
+    activeGatewayProfileKey() === profile &&
+    activeGateway()?.connectionState === 'open'
+  ) {
     return
   }
 

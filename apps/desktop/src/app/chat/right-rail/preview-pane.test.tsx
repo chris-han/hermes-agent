@@ -346,8 +346,12 @@ describe('PreviewPane console state', () => {
       Object.assign(guest, { loadURL, getURL: () => 'https://test.example/elsewhere' })
       const event = new Event(navigationEvent)
       Object.assign(event, { url: 'https://test.example/elsewhere' })
-      await act(async () => { guest.dispatchEvent(event) })
-      await act(async () => { rendered.rerender(<PreviewPane tabId="reopen-guest" target={{ ...target }} />) })
+      await act(async () => {
+        guest.dispatchEvent(event)
+      })
+      await act(async () => {
+        rendered.rerender(<PreviewPane tabId="reopen-guest" target={{ ...target }} />)
+      })
       expect(rendered.container.querySelector('webview')).toBe(guest)
       expect(loadURL).toHaveBeenCalledWith(target.url)
     }
@@ -362,7 +366,9 @@ describe('PreviewPane console state', () => {
     const guest = rendered.container.querySelector('webview')!
     const event = new Event('did-navigate-in-page')
     Object.assign(event, { isMainFrame: true, url: url + '#semantier-return-to-app' })
-    await act(async () => { guest.dispatchEvent(event) })
+    await act(async () => {
+      guest.dispatchEvent(event)
+    })
     expect($previewTabs.get().some(tab => tab.id === id)).toBe(false)
   })
 
@@ -374,15 +380,21 @@ describe('PreviewPane console state', () => {
     const onClose = vi.fn()
     const rendered = render(<PreviewPane onClose={onClose} tabId={id} target={target} />)
     const guest = rendered.container.querySelector('webview')!
-    await act(async () => { guest.dispatchEvent(Object.assign(new Event('did-navigate-in-page'), {
-      isMainFrame: true, url: url + '#semantier-return-to-app'
-    })) })
+    await act(async () => {
+      guest.dispatchEvent(
+        Object.assign(new Event('did-navigate-in-page'), {
+          isMainFrame: true,
+          url: url + '#semantier-return-to-app'
+        })
+      )
+    })
     expect(onClose).toHaveBeenCalledOnce()
     closeRightRail()
   })
 
   it.each(['foreign-origin', 'subframe', 'changed-runtime', 'unmarked-entry'])(
-    'ignores a Billing return from %s', async reason => {
+    'ignores a Billing return from %s',
+    async reason => {
       closeRightRail()
       const runtime = $activeSessionId.get()
       const url = 'https://billing.example/billing' + (reason === 'unmarked-entry' ? '' : '?entry=windows')
@@ -391,15 +403,24 @@ describe('PreviewPane console state', () => {
       const rendered = render(<PreviewPane tabId={id} target={target} />)
       const guest = rendered.container.querySelector('webview')!
 
-      if (reason === 'changed-runtime') { $activeSessionId.set('another-runtime') }
+      if (reason === 'changed-runtime') {
+        $activeSessionId.set('another-runtime')
+      }
       const event = new Event('did-navigate-in-page')
-      Object.assign(event, { isMainFrame: reason !== 'subframe', url:
-        (reason === 'foreign-origin' ? 'https://evil.example/billing' : url) + '#semantier-return-to-app' })
+      Object.assign(event, {
+        isMainFrame: reason !== 'subframe',
+        url: (reason === 'foreign-origin' ? 'https://evil.example/billing' : url) + '#semantier-return-to-app'
+      })
 
       try {
-        await act(async () => { guest.dispatchEvent(event) })
+        await act(async () => {
+          guest.dispatchEvent(event)
+        })
         expect($previewTabs.get().some(tab => tab.id === id)).toBe(true)
-      } finally { $activeSessionId.set(runtime); closeRightRail() }
+      } finally {
+        $activeSessionId.set(runtime)
+        closeRightRail()
+      }
     }
   )
 
@@ -413,11 +434,15 @@ describe('PreviewPane console state', () => {
     expect(activePreviewCommittedEpoch(null, 3)).toBe(0)
     const subframe = new Event('did-navigate-in-page')
     Object.assign(subframe, { isMainFrame: false, url: 'https://frame.example/route' })
-    await act(async () => { guest.dispatchEvent(subframe) })
+    await act(async () => {
+      guest.dispatchEvent(subframe)
+    })
     expect(activePreviewCommittedEpoch(null, 3)).toBe(0)
     const main = new Event('did-navigate-in-page')
     Object.assign(main, { isMainFrame: true, url: 'https://test.example/route' })
-    await act(async () => { guest.dispatchEvent(main) })
+    await act(async () => {
+      guest.dispatchEvent(main)
+    })
     expect(activePreviewCommittedEpoch(null, 3)).toBe(1)
     closeRightRail()
   })

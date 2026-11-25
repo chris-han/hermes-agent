@@ -274,8 +274,12 @@ test('a null registry primary classifies the following runtime failure as local'
 
   const options = startupOptions({
     selectRegistryPrimary: async () => null,
-    onLocalStart: () => { target = 'local' },
-    prepareLocalBackend: async () => { throw failure }
+    onLocalStart: () => {
+      target = 'local'
+    },
+    prepareLocalBackend: async () => {
+      throw failure
+    }
   })
 
   await assert.rejects(runPrimaryBackendStartup(options), failure)
@@ -283,15 +287,26 @@ test('a null registry primary classifies the following runtime failure as local'
 })
 
 test('primary HTTP workspace descriptor retains authenticated scope and does not become a Native WS descriptor', () => {
-  const scope={userId:'a',workspaceId:'wa',organizationId:'org'}
+  const scope = { userId: 'a', workspaceId: 'wa', organizationId: 'org' }
 
-  const connection=createPrimaryRemoteConnection({baseUrl:'https://cloud.example',connectionId:'cloud-a',
-    transport:'semantier-workspace-http',workspaceScope:scope,profile:'default',registryScoped:true,
-    token:'',wsUrl:''},[],{})
+  const connection = createPrimaryRemoteConnection(
+    {
+      baseUrl: 'https://cloud.example',
+      connectionId: 'cloud-a',
+      transport: 'semantier-workspace-http',
+      workspaceScope: scope,
+      profile: 'default',
+      registryScoped: true,
+      token: '',
+      wsUrl: ''
+    },
+    [],
+    {}
+  )
 
-  assert.equal(connection.transport,'semantier-workspace-http')
-  assert.equal(connection.authMode,undefined)
-  assert.deepEqual(connection.workspaceScope,scope)
-  assert.equal(connection.profile,'default')
-  assert.equal(connection.registryScoped,true)
+  assert.equal(connection.transport, 'semantier-workspace-http')
+  assert.equal(connection.authMode, undefined)
+  assert.deepEqual(connection.workspaceScope, scope)
+  assert.equal(connection.profile, 'default')
+  assert.equal(connection.registryScoped, true)
 })

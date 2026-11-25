@@ -449,24 +449,25 @@ export function BootFailureOverlay() {
     // bundled install is not fixed by reinstalling.
     const damagedPayload: boolean = bundled && classifyLocalBootFailure(boot.error) === 'installMissing'
 
-    const fixAction: RecoveryAction | null = damagedPayload && !window.hermesDesktop?.semantierProduct
-      ? {
-          key: 'reinstall',
-          label: copy.reinstallApp,
-          onClick: () => openExternalLink(DESKTOP_DOCS_URL),
-          icon: <ExternalLink />,
-          variant: 'secondary'
-        }
-      : bundled
-        ? null
-        : {
-            key: 'repair',
-            label: copy.repairInstall,
-            onClick: () => void repair(),
-            icon: <Wrench />,
-            variant: 'secondary',
-            busy: 'repair'
+    const fixAction: RecoveryAction | null =
+      damagedPayload && !window.hermesDesktop?.semantierProduct
+        ? {
+            key: 'reinstall',
+            label: copy.reinstallApp,
+            onClick: () => openExternalLink(DESKTOP_DOCS_URL),
+            icon: <ExternalLink />,
+            variant: 'secondary'
           }
+        : bundled
+          ? null
+          : {
+              key: 'repair',
+              label: copy.repairInstall,
+              onClick: () => void repair(),
+              icon: <Wrench />,
+              variant: 'secondary',
+              busy: 'repair'
+            }
 
     actions = [retryAction, ...(fixAction ? [fixAction] : []), { ...settingsAction, variant: 'ghost' }]
     hint = damagedPayload ? copy.bundledReinstallHint : bundled ? '' : copy.repairHint

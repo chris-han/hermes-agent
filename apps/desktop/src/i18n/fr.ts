@@ -2259,7 +2259,8 @@ export const frOverrides = {
       }
     },
     providers: {
-      cloudRemoteRevokePending: "Déconnecté localement. La révocation distante n’a pas pu être confirmée ; révoquez cet appareil dans Facturation ou autorisez-le à nouveau.",
+      cloudRemoteRevokePending:
+        'Déconnecté localement. La révocation distante n’a pas pu être confirmée ; révoquez cet appareil dans Facturation ou autorisez-le à nouveau.',
       connectAccount: 'Connecter un compte',
       haveApiKey: 'Vous avez une clé API ?',
       intro:
@@ -4249,8 +4250,8 @@ export const frOverrides = {
     releaseNotes: 'Notes de version',
     onLatest: 'Vous utilisez la dernière version.',
     installing: "Une mise à jour est en cours d'installation.",
-    noPublishedRelease: "Aucune version n’est encore disponible sur ce canal.",
-    cantReach: "Impossible de vérifier les mises à jour.",
+    noPublishedRelease: 'Aucune version n’est encore disponible sur ce canal.',
+    cantReach: 'Impossible de vérifier les mises à jour.',
     tapCheck: 'Cliquez sur « Vérifier maintenant » pour rechercher des mises à jour.',
     updateReady: count => `Une nouvelle mise à jour est prête (${count} changement${count === 1 ? '' : 's'} inclus).`,
     updateReadyUnknown: 'Une nouvelle mise à jour est prête.',

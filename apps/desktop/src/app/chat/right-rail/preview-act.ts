@@ -44,7 +44,12 @@ import {
 import { activePreviewInput, type PreviewInputHandle } from './preview-input'
 import { activePreviewNav, type PreviewNavHandle } from './preview-nav'
 import { activePreviewBinding, bindingStatus, type PreviewBinding } from './preview-reader'
-import { activePreviewFrameRunner, activePreviewScriptRunner, type PreviewFrameRunner, type PreviewScriptRunner } from './preview-script-runner'
+import {
+  activePreviewFrameRunner,
+  activePreviewScriptRunner,
+  type PreviewFrameRunner,
+  type PreviewScriptRunner
+} from './preview-script-runner'
 
 /** Verbs the pane owns; a guest page cannot drive its own history. */
 const NAV_ACTIONS: readonly (keyof PreviewNavHandle)[] = ['back', 'forward', 'reload']
@@ -495,7 +500,9 @@ async function runJson(run: PreviewScriptRunner, code: string): Promise<Trip> {
   // awaits native promises only, otherwise IPC clones the thenable's state.
   // An async function adopts it into a native promise without changing the page.
   const raw = await Promise.race([
-    Promise.resolve().then(() => run(`(async () => (${code}))()`)).catch((error: unknown) => new Error(String(error))),
+    Promise.resolve()
+      .then(() => run(`(async () => (${code}))()`))
+      .catch((error: unknown) => new Error(String(error))),
     new Promise<undefined>(resolve => setTimeout(resolve, ACT_TIMEOUT_MS))
   ])
 
@@ -594,7 +601,9 @@ async function driveAction(
   if (mapFramePoint) {
     const mapped = await mapFramePoint(point)
 
-    if (!mapped.visible) {return { success: false, error: 'Frame target is hidden or obscured; no input was sent.' }}
+    if (!mapped.visible) {
+      return { success: false, error: 'Frame target is hidden or obscured; no input was sent.' }
+    }
     point = mapped
   }
 
@@ -784,21 +793,39 @@ async function driveScroll(
  *  (the requesting session's stored id; omitted = the focused session) may
  *  see. `kind` is a bare string: the verb arrives off the wire, and the
  *  history ones never reach the in-page engine. */
-function ownerCheckedRunner(raw: ReturnType<typeof activePreviewScriptRunner>, binding: PreviewBinding | undefined, assertPage: () => void) {
-  return raw && binding ? (code: string) => {assertPage();
+function ownerCheckedRunner(
+  raw: ReturnType<typeof activePreviewScriptRunner>,
+  binding: PreviewBinding | undefined,
+  assertPage: () => void
+) {
+  return raw && binding
+    ? (code: string) => {
+        assertPage()
 
- return raw(code)} : raw
+        return raw(code)
+      }
+    : raw
 }
 
-function ownerCheckedInput(raw: PreviewInputHandle | null, binding: PreviewBinding | undefined, assertPage: () => void): PreviewInputHandle | null {
-  return raw && binding ? {
-    focus: () => {assertPage();
+function ownerCheckedInput(
+  raw: PreviewInputHandle | null,
+  binding: PreviewBinding | undefined,
+  assertPage: () => void
+): PreviewInputHandle | null {
+  return raw && binding
+    ? {
+        focus: () => {
+          assertPage()
 
- return raw.focus()},
-    send: event => {assertPage();
+          return raw.focus()
+        },
+        send: event => {
+          assertPage()
 
- return raw.send(event)}
-  } : raw
+          return raw.send(event)
+        }
+      }
+    : raw
 }
 
 function isPlainScroll(action: PreviewActAction) {
@@ -810,24 +837,38 @@ const FRAME_REF = /^frame:([0-9a-f-]{36}):(.*)$/
 function prefixFrameResult(result: PreviewActResult, token: string): PreviewActResult {
   const ref = (value: string) => `frame:${token}:${value}`
 
-  if (result.elements) {result.elements = result.elements.map(item => ({ ...item, ref: ref(item.ref) }))}
+  if (result.elements) {
+    result.elements = result.elements.map(item => ({ ...item, ref: ref(item.ref) }))
+  }
 
   if (result.delta) {
     const delta = result.delta
 
-    if (delta.added) {delta.added = delta.added.map(item => ({ ...item, ref: ref(item.ref) }))}
+    if (delta.added) {
+      delta.added = delta.added.map(item => ({ ...item, ref: ref(item.ref) }))
+    }
 
-    if (delta.changed) {delta.changed = delta.changed.map(item => ({ ...item, ref: ref(item.ref) }))}
+    if (delta.changed) {
+      delta.changed = delta.changed.map(item => ({ ...item, ref: ref(item.ref) }))
+    }
 
-    if (delta.removed) {delta.removed = delta.removed.map(ref)}
+    if (delta.removed) {
+      delta.removed = delta.removed.map(ref)
+    }
 
-    if (delta.rebound) {delta.rebound = delta.rebound.map(ref)}
+    if (delta.rebound) {
+      delta.rebound = delta.rebound.map(ref)
+    }
   }
 
   return result
 }
 
-async function frameInventory(frames: PreviewFrameRunner, action: PreviewActAction, assertPage: () => void): Promise<PreviewActResult> {
+async function frameInventory(
+  frames: PreviewFrameRunner,
+  action: PreviewActAction,
+  assertPage: () => void
+): Promise<PreviewActResult> {
   assertPage()
   const list = await frames.list()
   assertPage()
@@ -838,18 +879,29 @@ async function frameInventory(frames: PreviewFrameRunner, action: PreviewActActi
   const limit = Math.min(120, Math.max(1, requestedMax))
 
   for (let i = 0; i < list.length; i++) {
-    const trip = await runJson(code => { assertPage();
+    const trip = await runJson(
+      code => {
+        assertPage()
 
- return frames.run(list[i].token, code) }, buildScriptedScript({ ...action, full: true, max: limit }, 0))
+        return frames.run(list[i].token, code)
+      },
+      buildScriptedScript({ ...action, full: true, max: limit }, 0)
+    )
 
     assertPage()
 
-    if (trip.kind !== 'answered') {return { success: false, error: trip.kind === 'failed' ? trip.error : UNANSWERED }}
+    if (trip.kind !== 'answered') {
+      return { success: false, error: trip.kind === 'failed' ? trip.error : UNANSWERED }
+    }
 
-    if (!trip.result.success) {return trip.result}
+    if (!trip.result.success) {
+      return trip.result
+    }
     const result = i === 0 ? trip.result : prefixFrameResult(trip.result, list[i].token)
 
-    if (i === 0) {rootResult = result}
+    if (i === 0) {
+      rootResult = result
+    }
     rows.push(result.elements || [])
   }
 
@@ -859,17 +911,26 @@ async function frameInventory(frames: PreviewFrameRunner, action: PreviewActActi
     let found = false
 
     for (const frameRows of rows) {
-      if (frameRows[row]) { elements.push(frameRows[row]); found = true }
+      if (frameRows[row]) {
+        elements.push(frameRows[row])
+        found = true
+      }
 
-      if (elements.length === limit) {break}
+      if (elements.length === limit) {
+        break
+      }
     }
 
-    if (!found) {break}
+    if (!found) {
+      break
+    }
   }
 
   const result = { ...rootResult, success: true, elements }
 
-  if (elements.length && result.note?.startsWith('No interactive elements found')) {delete result.note}
+  if (elements.length && result.note?.startsWith('No interactive elements found')) {
+    delete result.note
+  }
 
   return result
 }
@@ -883,12 +944,16 @@ export async function actOnActivePreview(
   let frameGuard = false
 
   const assertBoundPage = (afterInput = false) => {
-    if ((expectedBinding || frameGuard) && signal?.aborted) { throw new Error('STALE_TARGET') }
+    if ((expectedBinding || frameGuard) && signal?.aborted) {
+      throw new Error('STALE_TARGET')
+    }
     // Only a delivery receipt may tolerate navigation. Input and DOM reads
     // still require the original epoch, owner and guest.
-    const code = expectedBinding ? bindingStatus(expectedBinding,afterInput,owner,afterInput) : null
+    const code = expectedBinding ? bindingStatus(expectedBinding, afterInput, owner, afterInput) : null
 
-    if (code) { throw new Error(code) }
+    if (code) {
+      throw new Error(code)
+    }
   }
 
   assertBoundPage()
@@ -919,40 +984,61 @@ export async function actOnActivePreview(
   const frameRunner = activePreviewFrameRunner(owner)
   frameGuard = Boolean(frameRunner)
 
-  if (frameRunner && typed.kind === 'elements') {return frameInventory(frameRunner, typed, assertBoundPage)}
+  if (frameRunner && typed.kind === 'elements') {
+    return frameInventory(frameRunner, typed, assertBoundPage)
+  }
   const frameMatch = typed.ref?.match(FRAME_REF)
 
-  if (typed.ref?.startsWith('frame:') && !frameMatch) {return { success: false, code: 'STALE_TARGET', error: 'Invalid frame reference; call elements again.' }}
+  if (typed.ref?.startsWith('frame:') && !frameMatch) {
+    return { success: false, code: 'STALE_TARGET', error: 'Invalid frame reference; call elements again.' }
+  }
 
   if (frameMatch) {
-    if (!frameRunner) {return { success: false, code: 'STALE_TARGET', error: 'Frame is unavailable; call elements again.' }}
+    if (!frameRunner) {
+      return { success: false, code: 'STALE_TARGET', error: 'Frame is unavailable; call elements again.' }
+    }
     const token = frameMatch[1]
     const localAction = { ...typed, ref: frameMatch[2] }
 
-    const frameRun: PreviewScriptRunner = code => { assertBoundPage();
+    const frameRun: PreviewScriptRunner = code => {
+      assertBoundPage()
 
- return frameRunner.run(token, code) }
+      return frameRunner.run(token, code)
+    }
 
     const input = ownerCheckedInput(activePreviewInput(owner), expectedBinding, assertBoundPage)
 
-    if (!input || DRIVEN.indexOf(localAction.kind) === -1) {return { success: false, error: 'This frame action requires trusted input.' }}
+    if (!input || DRIVEN.indexOf(localAction.kind) === -1) {
+      return { success: false, error: 'This frame action requires trusted input.' }
+    }
     let targetPoint: { x: number; y: number } | undefined
 
     const frameInput: PreviewInputHandle = {
-      focus: () => { assertBoundPage();
+      focus: () => {
+        assertBoundPage()
 
- return input.focus() },
-      send: event => { assertBoundPage();
+        return input.focus()
+      },
+      send: event => {
+        assertBoundPage()
 
- return frameRunner.input(token, event, targetPoint) }
+        return frameRunner.input(token, event, targetPoint)
+      }
     }
 
-    const result = await driveAction(frameRun, frameInput, localAction, signal, point => {
-      assertBoundPage()
-      targetPoint = point
+    const result = await driveAction(
+      frameRun,
+      frameInput,
+      localAction,
+      signal,
+      point => {
+        assertBoundPage()
+        targetPoint = point
 
-      return frameRunner.mapPoint(token, point)
-    }, () => assertBoundPage(true))
+        return frameRunner.mapPoint(token, point)
+      },
+      () => assertBoundPage(true)
+    )
 
     return prefixFrameResult(result, token)
   }
@@ -981,7 +1067,7 @@ export async function actOnActivePreview(
   const input = ownerCheckedInput(activePreviewInput(owner), expectedBinding, assertBoundPage)
 
   if (expectedBinding && !input && typed.kind !== 'elements') {
-    return {success:false,error:'PANE_UNAVAILABLE'}
+    return { success: false, error: 'PANE_UNAVAILABLE' }
   }
 
   if (input && DRIVEN.indexOf(typed.kind) !== -1) {

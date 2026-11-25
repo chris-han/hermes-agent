@@ -63,9 +63,10 @@ export function connectionScopeSuffix(
   // their existing keys; authenticated Workspace caches follow server identity.
   const scope = connection.workspaceScope
 
-  const account = connection.transport === 'semantier-workspace-http'
-    ? `.workspace.${scope ? encodeURIComponent(JSON.stringify([scope.userId, scope.workspaceId, scope.organizationId])) : 'signed-out'}`
-    : ''
+  const account =
+    connection.transport === 'semantier-workspace-http'
+      ? `.workspace.${scope ? encodeURIComponent(JSON.stringify([scope.userId, scope.workspaceId, scope.organizationId])) : 'signed-out'}`
+      : ''
 
   if (!includeProfile) {
     return `.remote.${base}${account}`

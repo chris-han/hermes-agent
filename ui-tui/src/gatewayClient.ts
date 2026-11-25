@@ -556,6 +556,7 @@ export class GatewayClient extends EventEmitter {
     if (!hold || this.attachHold !== hold) {
       return
     }
+
     this.attachHold = null
 
     const fence = snapshot as { last_sequence?: unknown; replay_epoch?: unknown } | null | undefined
@@ -576,6 +577,7 @@ export class GatewayClient extends EventEmitter {
     if (!this.isCanonical) {
       return
     }
+
     const result = snapshot as { session_id: string; authority_epoch: number; prompts?: Array<Record<string, unknown>> }
 
     for (const prompt of result.prompts ?? []) {
@@ -632,6 +634,7 @@ export class GatewayClient extends EventEmitter {
         if (this.disposed || generation !== this.localGeneration) {
           return
         }
+
         this.attachUrl = grant.url
         this.isCanonical = true
         // Main's /logs opened with the sidecar's spawn line; the shared owner's equivalent is the attach.
@@ -645,6 +648,7 @@ export class GatewayClient extends EventEmitter {
         if (this.disposed || generation !== this.localGeneration) {
           return
         }
+
         this.bootstrapError = error instanceof Error ? error : new Error(String(error))
         this.clearReadyTimer()
         this.publish({
@@ -1006,11 +1010,13 @@ export class GatewayClient extends EventEmitter {
       if (method === 'session.create' && !this.creationContract) {
         await this.describeRuntime()
       }
+
       const request = canonicalRequest(method, params, this.creationContract)
 
       if (request.method === 'session.create') {
         return this.createCanonical<T>(request.params, timeoutMs)
       }
+
       const value = await this.requestOverWebSocket<T>(request.method, request.params, timeoutMs)
 
       return canonicalResult(method, value, request.params)
@@ -1024,11 +1030,13 @@ export class GatewayClient extends EventEmitter {
   private async createCanonical<T>(prepared: Record<string, unknown>, timeoutMs?: number): Promise<T> {
     const toolProgress = launchToolProgress()
     const { request_id: _fresh, ...options } = prepared
+
     const key = JSON.stringify(
       Object.keys(options)
         .sort()
         .map(name => [name, options[name]])
     )
+
     const retry = this.unsettledCreate?.key === key ? this.unsettledCreate : undefined
     // Taken, not peeked: a concurrent create never shares an identity still in flight.
     this.unsettledCreate = undefined
