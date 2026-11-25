@@ -4,7 +4,7 @@ import { BrowserWindow, ipcMain, session } from 'electron'
 
 import type {ManagedDeviceEnrollment} from './managed-device-enrollment'
 import type {PersonalCapabilitySync,PersonalPin,PersonalSnapshot} from './personal-capability-sync'
-import { assertWorkspaceScope, createSemantierWorkspaceClient, type ManagedDeviceInventory, type ManagedDevicePermission, type PersistentFollowup, requireNativeCompletion, requireWorkspaceCompletion, type WinmanCapability, WORKSPACE_USER_STOP_ERROR, workspaceDesktopRead, type WorkspaceHistory, type WorkspaceIdentity, type WorkspaceMainContext, type WorkspaceNativeCancellation, type WorkspaceNativeSnapshot, type WorkspaceNativeSubmission, type WorkspaceScope, type WorkspaceWinmanProfile } from './semantier-workspace-client'
+import { assertWorkspaceScope, createSemantierWorkspaceClient, type ManagedDeviceInventory, type ManagedDevicePermission, type PersistentFollowup, requireNativeCompletion, requireWorkspaceCompletion, type WinmanCapability, WORKSPACE_USER_STOP_ERROR, workspaceDesktopRead, type WorkspaceHistory, type WorkspaceIdentity, type WorkspaceMainContext, type WorkspaceNativeCancellation, type WorkspaceNativeSnapshot, type WorkspaceNativeSubmission, type WorkspaceScope, workspaceSidebarSessions, type WorkspaceWinmanProfile } from './semantier-workspace-client'
 import type { WorkspaceProject, WorkspaceProjectCommit, WorkspaceProjectContinuation, WorkspaceProjectHead, WorkspaceProjectMaterials, WorkspaceProjectPin } from './semantier-workspace-client'
 
 export { assertWorkspaceScope } from './semantier-workspace-client'
@@ -58,6 +58,13 @@ export function workspace(origin: string) {
   return { owned, origin: canonicalOrigin, client: createSemantierWorkspaceClient(canonicalOrigin, owned.fetch.bind(owned)) }
 }
 
+/** These local Gateway surfaces have no Workspace HTTP adapter. */
+export function isUnsupportedWorkspaceStartupRequest(method: string, pathname: string): boolean {
+  return (method === 'POST' && pathname === '/api/sessions/owner-backfill') ||
+    (method === 'GET' && (pathname === '/api/status' || pathname === '/api/cron/jobs' || pathname === '/api/profiles/active' ||
+      /^\/api\/sessions\/[^/]+\/timeline$/.test(pathname)))
+}
+
 const startupReadPaths = new Set(['/api/profiles', '/api/sessions', '/api/profiles/sessions', '/api/profiles/sessions/sidebar'])
 const pendingStartupReads = new WeakMap<object, Map<string, Promise<unknown>>>()
 
@@ -77,19 +84,37 @@ export function readPendingWorkspaceIdentity(target: ReturnType<typeof workspace
 export async function readScopedWorkspaceDesktop(
   origin: string, scope: WorkspaceScope, path: string, profile: string, resolvedScope?: WorkspaceScope
 ) {
+  const url = new URL(path, 'https://desktop.invalid')
+  const queryProfile = url.searchParams.get('profile')
+  const sidebarProfile = url.searchParams.get('recents_profile')
+  const mainSidebar = url.pathname === '/api/profiles/sessions/sidebar' && profile === 'default' &&
+    (!queryProfile || queryProfile === 'default') && (!sidebarProfile || sidebarProfile === 'default')
+  // Both entrypoints project the same server-owned Main inventory.
+  if (mainSidebar) {
+    const inventory = await readScopedWorkspaceDesktop(origin, scope, '/api/sessions', profile, resolvedScope) as { sessions: unknown[] }
+    return workspaceSidebarSessions(inventory.sessions)
+  }
+
   const target = workspace(origin)
   const { owned, client } = target
+  if (resolvedScope) {
+    // The registry dispatcher just obtained this scope from the same
+    // origin-owned cookie jar. Only its internal call may supply it.
+    if (scope?.userId !== resolvedScope.userId || scope?.workspaceId !== resolvedScope.workspaceId ||
+        scope?.organizationId !== resolvedScope.organizationId) {
+      throw new Error('The Semantier account or workspace changed. Reconnect before continuing.')
+    }
+  }
+
+  // Registry consumers may arrive together after a shared dial check.
+  // Use the same fresh coalescing boundary for Main and the Bot roster.
+  const coalescedStartupRead = profile === 'default' &&
+    (url.pathname === '/api/sessions' || url.pathname === '/api/profiles')
+  const checkBeforeRead = !resolvedScope || coalescedStartupRead
 
   const read = async (initialCheckFinished?: () => void) => {
     try {
-      if (resolvedScope) {
-        // The registry dispatcher just obtained this scope from the same
-        // origin-owned cookie jar. Only its internal call may supply it.
-        if (scope?.userId !== resolvedScope.userId || scope?.workspaceId !== resolvedScope.workspaceId ||
-            scope?.organizationId !== resolvedScope.organizationId) {
-          throw new Error('The Semantier account or workspace changed. Reconnect before continuing.')
-        }
-      } else {
+      if (checkBeforeRead) {
         assertWorkspaceScope(await readPendingWorkspaceIdentity(target), scope)
       }
     } finally {
@@ -102,7 +127,7 @@ export async function readScopedWorkspaceDesktop(
     return result
   }
 
-  if (resolvedScope || !startupReadPaths.has(new URL(path, 'https://desktop.invalid').pathname)) {return read()}
+  if (!startupReadPaths.has(url.pathname)) {return read()}
 
   let pending = pendingStartupReads.get(owned)
 
@@ -115,6 +140,7 @@ export async function readScopedWorkspaceDesktop(
   const existing = pending.get(key)
 
   if (existing) {return existing}
+  if (!checkBeforeRead) {return read()}
 
   // Join only while the initial signed check is in flight. A later caller must
   // run its own check before starting a new server read.

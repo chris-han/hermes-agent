@@ -254,7 +254,7 @@ it('withholds a Project continuation response after the Workspace account change
   expect(fetch).toHaveBeenCalledTimes(3)
 })
 
-it('shares the signed startup session inventory with the actual native Main IPC', async () => {
+it('shares the signed default sidebar inventory with the actual native Main IPC', async () => {
   const { readScopedWorkspaceDesktop } = await import('./semantier-workspace-ipc')
   let release!: (value: Response) => void
   const first = new Promise<Response>(resolve => { release = resolve })
@@ -265,13 +265,17 @@ it('shares the signed startup session inventory with the actual native Main IPC'
   vi.mocked(ipcMain.handle).mockClear()
   registerSemantierWorkspaceIpc()
   const handler = vi.mocked(ipcMain.handle).mock.calls.find(([name]) => name === 'hermes:workspace:sessions')![1]
+  const desktop = readScopedWorkspaceDesktop('https://cloud.example', scope,
+    '/api/profiles/sessions/sidebar?recents_profile=default&recents_limit=40', 'default', scope)
+  const registry = readScopedWorkspaceDesktop('https://cloud.example', scope, '/api/sessions', 'default', scope)
   const native = handler({} as never, 'https://cloud.example', scope)
-  const desktop = readScopedWorkspaceDesktop('https://cloud.example', scope, '/api/sessions', 'default')
   expect(fetch).toHaveBeenCalledTimes(1)
   release(Response.json(identity))
-  const [a, b] = await Promise.all([native, desktop])
+  const [a, b, c] = await Promise.all([native, desktop, registry])
+
+  expect(c).toEqual(a)
   expect(a).toMatchObject({ sessions: [{ key: 'main-a', id: 'main-a', title: 'Main' }] })
-  expect(b).toEqual(a)
+  expect(b).toMatchObject({ recents: { sessions: a.sessions }, cron: { unavailable: true }, messaging: { unavailable: true } })
   expect(fetch).toHaveBeenCalledTimes(3)
 })
 
@@ -315,9 +319,9 @@ it('shares only the pending initial scope check across distinct startup reads', 
 
   const origin = 'https://cloud.example'
   const sessions = () => readScopedWorkspaceDesktop(origin, scope, '/api/sessions', 'default')
-  const sidebar = () => readScopedWorkspaceDesktop(origin, scope, '/api/profiles/sessions/sidebar', 'default')
+  const profiles = () => readScopedWorkspaceDesktop(origin, scope, '/api/profiles/sessions', 'default')
   const first = sessions()
-  const second = sidebar()
+  const second = profiles()
   expect(identityReads).toBe(1)
   release(Response.json(identity))
   await Promise.all([first, second])
@@ -330,6 +334,7 @@ it('shares only the pending initial scope check across distinct startup reads', 
 it('checks a freshly resolved registry scope and revalidates after the protected read', async () => {
   const { readScopedWorkspaceDesktop } = await import('./semantier-workspace-ipc')
   const fetch = vi.fn()
+    .mockResolvedValueOnce(Response.json(identity))
     .mockResolvedValueOnce(Response.json({ sessions: [] }))
     .mockResolvedValueOnce(Response.json({ ...identity, organization_id: 'changed' }))
   vi.mocked(session.fromPartition).mockReturnValue({ fetch } as never)
@@ -339,5 +344,45 @@ it('checks a freshly resolved registry scope and revalidates after the protected
   await expect(read({ ...scope, organizationId: 'other' })).rejects.toThrow('changed')
   expect(fetch).not.toHaveBeenCalled()
   await expect(read(scope)).rejects.toThrow('changed')
-  expect(fetch.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/api/sessions', '/auth/context'])
+  expect(fetch.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/auth/context', '/api/sessions', '/auth/context'])
+})
+
+
+it('identifies unsupported Gateway startup operations without excluding Cloud history', async () => {
+  const { isUnsupportedWorkspaceStartupRequest } = await import('./semantier-workspace-ipc')
+
+  expect(isUnsupportedWorkspaceStartupRequest('POST', '/api/sessions/owner-backfill')).toBe(true)
+  expect(isUnsupportedWorkspaceStartupRequest('GET', '/api/status')).toBe(true)
+  expect(isUnsupportedWorkspaceStartupRequest('GET', '/api/profiles/active')).toBe(true)
+  expect(isUnsupportedWorkspaceStartupRequest('GET', '/api/cron/jobs')).toBe(true)
+  expect(isUnsupportedWorkspaceStartupRequest('GET', '/api/sessions/main-a/timeline')).toBe(true)
+  expect(isUnsupportedWorkspaceStartupRequest('GET', '/api/sessions/main-a/messages')).toBe(false)
+  expect(isUnsupportedWorkspaceStartupRequest('GET', '/api/profiles/sessions/sidebar')).toBe(false)
+})
+
+
+it('shares overlapping registry Bot roster reads without retaining completed results', async () => {
+  const { readScopedWorkspaceDesktop } = await import('./semantier-workspace-ipc')
+  let release!: (response: Response) => void
+  const gate = new Promise<Response>(resolve => { release = resolve })
+  const profile = { name: 'bot-a', path: '/owned-profile' }
+  const roster = () => Response.json({ bot_id: 'bot-a', native_profile_id: profile.path, profile })
+  const fetch = vi.fn().mockReturnValueOnce(gate)
+    .mockResolvedValueOnce(roster()).mockResolvedValueOnce(Response.json(identity))
+    .mockResolvedValueOnce(Response.json(identity)).mockResolvedValueOnce(roster())
+    .mockResolvedValueOnce(Response.json(identity))
+  vi.mocked(session.fromPartition).mockReturnValue({ fetch } as never)
+  const read = () => readScopedWorkspaceDesktop('https://cloud.example', scope, '/api/profiles', 'default', scope)
+  const first = read()
+  const second = read()
+
+  expect(fetch).toHaveBeenCalledTimes(1)
+  release(Response.json(identity))
+  expect(await Promise.all([first, second])).toEqual([
+    { profiles: [{ ...profile, runtime_bot_id: 'bot-a', native_profile_id: profile.path }] },
+    { profiles: [{ ...profile, runtime_bot_id: 'bot-a', native_profile_id: profile.path }] }
+  ])
+  expect(fetch.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/auth/context', '/api/winman', '/auth/context'])
+  await read()
+  expect(fetch).toHaveBeenCalledTimes(6)
 })

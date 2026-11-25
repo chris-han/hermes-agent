@@ -113,10 +113,13 @@ export function refreshProfiles(): Promise<ProfileInfo[]> {
 
   const flight = (async () => {
     const epoch = profileListEpoch
-    const source = profileListSource($connection.get())
-    const MAX_RETRIES = 2
+    const connection = $connection.get()
+    const source = profileListSource(connection)
+    // Cloud has no WebSocket-to-HTTP handoff. A failed roster read should
+    // release capacity for Main resume; the next explicit refresh can retry.
+    const maxRetries = connection?.transport === 'semantier-workspace-http' ? 0 : 2
 
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         const { profiles } = await getProfiles()
 
@@ -132,7 +135,7 @@ export function refreshProfiles(): Promise<ProfileInfo[]> {
 
         return profiles
       } catch (error) {
-        if (attempt === MAX_RETRIES || epoch !== profileListEpoch) {
+        if (attempt === maxRetries || epoch !== profileListEpoch) {
           // Surface the failure so it's visible in the console — the prior
           // silent catch in refreshActiveProfile() hid global-remote timing
           // races (#70679). A stranded epoch stops retrying against the past.

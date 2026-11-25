@@ -21,7 +21,7 @@ import { looksBinary, previewFileMetadata } from './main_file_preview'
 import {ManagedDeviceEnrollment} from './managed-device-enrollment'
 import {runManagedDeviceKey} from './managed-device-key-process'
 import { PersonalCapabilitySync } from './personal-capability-sync'
-import { assertWorkspaceScope, readPendingWorkspaceIdentity, readScopedWorkspaceDesktop, registerSemantierWorkspaceIpc, workspace as semantierWorkspace } from './semantier-workspace-ipc'
+import { assertWorkspaceScope, isUnsupportedWorkspaceStartupRequest, readPendingWorkspaceIdentity, readScopedWorkspaceDesktop, registerSemantierWorkspaceIpc, workspace as semantierWorkspace } from './semantier-workspace-ipc'
 import { registerSemantierFeedbackIpc } from './updater/semantier-feedback-ipc'
 
 const workspaceAccountGenerations = new Map<string, number>()
@@ -16601,6 +16601,17 @@ async function dispatchRegistryApiRequest(
   routeProfile = request?.profile,
   requestProfile = request?.profile
 ) {
+  const startupMethod = (request?.method || 'GET').toUpperCase()
+  const startupPath = new URL(request.path, 'https://desktop.invalid').pathname
+
+  if (isUnsupportedWorkspaceStartupRequest(startupMethod, startupPath)) {
+    const source = readDesktopConnectionsRegistry().connections.find(item => item.id === registryConnectionId)
+
+    if (source?.transport === 'semantier-workspace-http') {
+      throw Object.assign(new Error('404: This operation is unavailable on Semantier Cloud.'), { statusCode: 404 })
+    }
+  }
+
   // Claim-guarded (#90812): every registry-scoped REST call funnels through
   // here, so it can race a renderer's own WS reconnect dial for the same
   // (connectionId, profile) scope; coalescing avoids bootstrapping a second
