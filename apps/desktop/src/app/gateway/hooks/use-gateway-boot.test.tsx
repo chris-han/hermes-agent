@@ -448,9 +448,13 @@ describe('default-route profile adoption', () => {
     const config = deferred<void>()
     render(<Harness refreshHermesConfig={() => config.promise} />)
     await flushAsync()
-    expect(refreshModelsOnConnectionReady).toHaveBeenCalledWith('primary-vps', 'default', expect.objectContaining({
-      connectionId: 'primary-vps'
-    }))
+    expect(refreshModelsOnConnectionReady).toHaveBeenCalledWith(
+      'primary-vps',
+      'default',
+      expect.objectContaining({
+        connectionId: 'primary-vps'
+      })
+    )
     expect($desktopBoot.get().running).toBe(true)
     config.resolve()
     await flushAsync()
@@ -2885,12 +2889,24 @@ it('keeps authenticated Workspace boot usable when its initial session-list requ
   const desktop = fakeDesktop()
   const scope = { userId: 'actor-a', workspaceId: 'workspace-a', organizationId: 'org-a' }
   Object.assign(desktop, {
-    getConnection: vi.fn(async () => ({ ...remotePrimaryConn, transport: 'semantier-workspace-http', workspaceScope: scope })),
-    workspace: { identity: vi.fn(async () => ({ authenticated: true, user: { user_id: scope.userId },
-      workspace: { id: scope.workspaceId }, organization_id: scope.organizationId })) }
+    getConnection: vi.fn(async () => ({
+      ...remotePrimaryConn,
+      transport: 'semantier-workspace-http',
+      workspaceScope: scope
+    })),
+    workspace: {
+      identity: vi.fn(async () => ({
+        authenticated: true,
+        user: { user_id: scope.userId },
+        workspace: { id: scope.workspaceId },
+        organization_id: scope.organizationId
+      }))
+    }
   })
   ;(window as { hermesDesktop?: unknown }).hermesDesktop = desktop
-  const refreshSessions = vi.fn(async () => { throw new DOMException('Session-list request timed out', 'TimeoutError') })
+  const refreshSessions = vi.fn(async () => {
+    throw new DOMException('Session-list request timed out', 'TimeoutError')
+  })
   render(<Harness refreshSessions={refreshSessions} />)
   await flushAsync()
   expect(refreshSessions).toHaveBeenCalled()

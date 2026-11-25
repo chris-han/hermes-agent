@@ -42,6 +42,7 @@ it('does not restore stale same-session paste results after editing away and bac
 
   try {
     composer.actions.setInput('old')
+
     const pending = composer.actions.handleTextPaste({
       bracketed: true,
       hotkey: false,
@@ -49,11 +50,13 @@ it('does not restore stale same-session paste results after editing away and bac
       value: 'old',
       cursor: 3
     })
+
     composer.actions.setInput('new')
     composer.actions.setInput('old')
     finish({ attached: true, name: 'image', path: '/tmp/owned-image.png' })
     expect(await pending).toBeNull()
     expect(composer.refs.tokensRef.current).toEqual([])
+
     const fresh = composer.actions.handleTextPaste({
       bracketed: true,
       hotkey: false,
@@ -61,6 +64,7 @@ it('does not restore stale same-session paste results after editing away and bac
       value: 'old',
       cursor: 3
     })
+
     finish({ attached: true, name: 'image', path: '/tmp/owned-image.png' })
     expect(await fresh).toEqual(expect.objectContaining({ value: expect.stringContaining('Image') }))
     expect(composer.refs.tokensRef.current).toHaveLength(1)

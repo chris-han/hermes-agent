@@ -307,11 +307,20 @@ test('explicit userData never consults or creates the default Windows appData ro
   const setPath = vi.fn()
 
   try {
-    runtime.applyDesktopIdentity({
-      getPath: (): never => { throw new Error('Default OS profile must not be resolved') },
-      setPath, setName: vi.fn()
-    }, identity, { HERMES_DESKTOP_USER_DATA_DIR: path.join(root, 'owned') })
+    runtime.applyDesktopIdentity(
+      {
+        getPath: (): never => {
+          throw new Error('Default OS profile must not be resolved')
+        },
+        setPath,
+        setName: vi.fn()
+      },
+      identity,
+      { HERMES_DESKTOP_USER_DATA_DIR: path.join(root, 'owned') }
+    )
     assert.equal(setPath.mock.calls[0][1], path.join(root, 'owned'))
     assert.equal(fs.statSync(path.join(root, 'owned')).isDirectory(), true)
-  } finally { fs.rmSync(root, { recursive: true, force: true }) }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
 })

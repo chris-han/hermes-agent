@@ -305,7 +305,10 @@ function SavedProviderConnectionTest({
       const result = await validateSavedProviderCredential(candidate[1].provider, candidate[0], profile)
 
       if (generation === testGeneration.current) {
-        setTestResult({ ...result, message: result.status ? providerTestStatus(locale, result.status) : result.message })
+        setTestResult({
+          ...result,
+          message: result.status ? providerTestStatus(locale, result.status) : result.message
+        })
       }
     } catch {
       if (generation === testGeneration.current) {
@@ -453,13 +456,7 @@ export function ProviderKeyRows({ expanded, group, onExpand, onToggle, rowProps 
             })}
 
             {docsUrl && <CredentialDocsLink href={docsUrl} />}
-            {candidate && (
-              <SavedProviderConnectionTest
-                candidate={candidate}
-                identity={group}
-                rowProps={rowProps}
-              />
-            )}
+            {candidate && <SavedProviderConnectionTest candidate={candidate} identity={group} rowProps={rowProps} />}
           </div>
         )}
       </div>

@@ -65,7 +65,12 @@ function persist(next: readonly CustomModel[]): void {
 const sameEntry = (entry: CustomModel, provider: string, model: string, scope?: string): boolean =>
   entry.provider === provider && entry.model === model && entry.scope === scope
 
-export function isCustomModel(customs: readonly CustomModel[], provider: string, model: string, scope?: string): boolean {
+export function isCustomModel(
+  customs: readonly CustomModel[],
+  provider: string,
+  model: string,
+  scope?: string
+): boolean {
   return customs.some(entry => sameEntry(entry, provider, model, scope))
 }
 
@@ -108,7 +113,9 @@ export function withCustomModels(
 
   const next = providers.map(provider => {
     const models = provider.models ?? []
-    const extra = customs.filter(entry => entry.scope === scope && entry.provider === provider.slug && !models.includes(entry.model))
+    const extra = customs.filter(
+      entry => entry.scope === scope && entry.provider === provider.slug && !models.includes(entry.model)
+    )
 
     if (extra.length === 0) {
       return provider

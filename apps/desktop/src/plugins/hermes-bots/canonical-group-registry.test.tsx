@@ -6,17 +6,23 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 const discover = vi.hoisted(() => vi.fn())
 vi.mock('@hermes/plugin-sdk', () => ({
-  atom, useValue: useStore,
+  atom,
+  useValue: useStore,
   Button: ({ variant: _variant, ...props }: ComponentProps<'button'> & { variant?: string }) => <button {...props} />,
   host: { state: { connectionId: atom('cloud'), profile: atom('default') } }
 }))
-vi.mock('./canonical-group-labels', () => ({ useCanonicalGroupLabels: () => ({ refreshGroups: 'Refresh gateway groups' }) }))
+vi.mock('./canonical-group-labels', () => ({
+  useCanonicalGroupLabels: () => ({ refreshGroups: 'Refresh gateway groups' })
+}))
 vi.mock('./canonical-groups', () => ({
   captureCanonicalGroupRoute: () => ({ connectionId: 'cloud', profile: 'default' }),
   discoverCanonicalGroups: discover
 }))
 import { CanonicalGroupList } from './canonical-group-registry'
-afterEach(() => { cleanup(); discover.mockReset() })
+afterEach(() => {
+  cleanup()
+  discover.mockReset()
+})
 
 it('omits unavailable group controls when the host explicitly has no group method', async () => {
   discover.mockRejectedValue(Object.assign(new Error('groups.capabilities unavailable'), { code: -32601 }))
@@ -35,5 +41,5 @@ it.each(['connection lost', 'permission denied'])('retains retry and error for %
 it('keeps native groups visible when the authority supports them', async () => {
   discover.mockResolvedValue({ driver: false, rooms: [{ room_id: 'room', name: 'Team', members: [] }] })
   render(<CanonicalGroupList onOpen={vi.fn()} />)
-  expect((await screen.findByRole('button', { name: 'Team' }) as HTMLButtonElement).disabled).toBe(false)
+  expect(((await screen.findByRole('button', { name: 'Team' })) as HTMLButtonElement).disabled).toBe(false)
 })

@@ -20,7 +20,9 @@ const scope = { userId: 'owner', workspaceId: 'workspace', organizationId: 'org'
 
 function workspaceApi() {
   const identity = vi.fn().mockResolvedValue({
-    authenticated: true, user: { user_id: scope.userId }, workspace: { id: scope.workspaceId },
+    authenticated: true,
+    user: { user_id: scope.userId },
+    workspace: { id: scope.workspaceId },
     organization_id: scope.organizationId
   })
 

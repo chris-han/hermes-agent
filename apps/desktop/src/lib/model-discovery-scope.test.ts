@@ -12,7 +12,11 @@ describe('model discovery connection scope', () => {
 
   it('partitions legacy remotes stably without exposing their address or credentials', async () => {
     Object.defineProperty(globalThis.crypto, 'subtle', { configurable: true, value: webcrypto.subtle })
-    const remote = { mode: 'remote' as const, baseUrl: 'https://secret.example/path?token=private', remoteIdentity: 'actor' }
+    const remote = {
+      mode: 'remote' as const,
+      baseUrl: 'https://secret.example/path?token=private',
+      remoteIdentity: 'actor'
+    }
     const first = await modelDiscoveryScope(null, remote)
     const same = await modelDiscoveryScope(null, { ...remote })
     const second = await modelDiscoveryScope(null, { ...remote, baseUrl: 'https://other.example/path' })
@@ -36,16 +40,28 @@ describe('model discovery connection scope', () => {
 })
 
 it('partitions the same Cloud connection by current server identity and refuses signed-out discovery', async () => {
-  const cloud = {baseUrl:'https://cloud.example',connectionId:'cloud',transport:'semantier-workspace-http' as const,workspaceScope:{userId:'a',workspaceId:'wa',organizationId:'org'}}
-  const other = {...cloud,workspaceScope:{...cloud.workspaceScope,userId:'b',workspaceId:'wb'}}
-  expect(modelDiscoveryOwnerKey(null,cloud)).not.toBe(modelDiscoveryOwnerKey(null,{...cloud,baseUrl:'https://other.example'}))
-  expect(modelDiscoveryOwnerKey(null,cloud)).not.toBe(modelDiscoveryOwnerKey(null,other))
-  expect(await modelDiscoveryScope(null,cloud)).not.toBe(await modelDiscoveryScope(null,other))
-  await expect(modelDiscoveryScope(null,{...cloud,workspaceScope:undefined})).rejects.toThrow(/Sign in/)
+  const cloud = {
+    baseUrl: 'https://cloud.example',
+    connectionId: 'cloud',
+    transport: 'semantier-workspace-http' as const,
+    workspaceScope: { userId: 'a', workspaceId: 'wa', organizationId: 'org' }
+  }
+  const other = { ...cloud, workspaceScope: { ...cloud.workspaceScope, userId: 'b', workspaceId: 'wb' } }
+  expect(modelDiscoveryOwnerKey(null, cloud)).not.toBe(
+    modelDiscoveryOwnerKey(null, { ...cloud, baseUrl: 'https://other.example' })
+  )
+  expect(modelDiscoveryOwnerKey(null, cloud)).not.toBe(modelDiscoveryOwnerKey(null, other))
+  expect(await modelDiscoveryScope(null, cloud)).not.toBe(await modelDiscoveryScope(null, other))
+  await expect(modelDiscoveryScope(null, { ...cloud, workspaceScope: undefined })).rejects.toThrow(/Sign in/)
 })
 
 it('keeps a different Native tile owner independent of the ambient Cloud account', async () => {
- const cloud={baseUrl:'https://cloud.example',connectionId:'cloud',transport:'semantier-workspace-http' as const,workspaceScope:{userId:'a',workspaceId:'wa',organizationId:'org'}}
- expect(modelDiscoveryOwnerKey('native-owner',cloud)).toBe('native-owner')
- expect(await modelDiscoveryScope('native-owner',cloud)).toBe('native-owner')
+  const cloud = {
+    baseUrl: 'https://cloud.example',
+    connectionId: 'cloud',
+    transport: 'semantier-workspace-http' as const,
+    workspaceScope: { userId: 'a', workspaceId: 'wa', organizationId: 'org' }
+  }
+  expect(modelDiscoveryOwnerKey('native-owner', cloud)).toBe('native-owner')
+  expect(await modelDiscoveryScope('native-owner', cloud)).toBe('native-owner')
 })

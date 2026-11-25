@@ -93,6 +93,7 @@ it('resumes a successor with a reset epoch while retaining original attempted ad
   const home = mkdtempSync(join(tmpdir(), 'ink-resume-epoch-'))
   vi.stubEnv('HERMES_HOME', home)
   resetUiState()
+
   const info = {
     model: 'test',
     skills: {},
@@ -102,6 +103,7 @@ it('resumes a successor with a reset epoch while retaining original attempted ad
     execution_generation: 9,
     running: true
   }
+
   patchUiState({ sid: 'old-session', info, busy: true })
   let queue!: ReturnType<typeof useQueue>
   let lifecycle!: ReturnType<typeof useSessionLifecycle>

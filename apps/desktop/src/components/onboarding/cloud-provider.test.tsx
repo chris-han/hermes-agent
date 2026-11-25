@@ -17,7 +17,10 @@ it('features the real Cloud provider and sends its scoped start rather than open
     configured: false,
     flow: { status: 'idle' },
     mode: 'oauth',
-    providers: [makeOAuthProvider('nous', 'Nous Portal'), makeOAuthProvider('semantier-cloud', 'Semantier Model Provider')],
+    providers: [
+      makeOAuthProvider('nous', 'Nous Portal'),
+      makeOAuthProvider('semantier-cloud', 'Semantier Model Provider')
+    ],
     reason: null,
     requested: false,
     firstRunSkipped: false,
@@ -37,9 +40,27 @@ it('features the real Cloud provider and sends its scoped start rather than open
   )
 })
 
-
 it('asks Cloud users for browser approval without a non-existent device code', () => {
-  render(<FlowPanel ctx={{requestGateway:async () => undefined as never}} flow={{status:'polling',provider:makeOAuthProvider('semantier-cloud','Semantier Model Provider'),start:{session_id:'fixture-session',flow:'device_code',user_code:'',verification_url:'https://fixture.invalid/billing/connect?intent_ref=fixture',expires_in:600,poll_interval:5},copied:false}} leaving={false} onBegin={() => undefined} />)
+  render(
+    <FlowPanel
+      ctx={{ requestGateway: async () => undefined as never }}
+      flow={{
+        status: 'polling',
+        provider: makeOAuthProvider('semantier-cloud', 'Semantier Model Provider'),
+        start: {
+          session_id: 'fixture-session',
+          flow: 'device_code',
+          user_code: '',
+          verification_url: 'https://fixture.invalid/billing/connect?intent_ref=fixture',
+          expires_in: 600,
+          poll_interval: 5
+        },
+        copied: false
+      }}
+      leaving={false}
+      onBegin={() => undefined}
+    />
+  )
   expect(screen.getByText(/Approve this device in your browser/)).toBeTruthy()
   expect(screen.queryByText(/Enter this code/)).toBeNull()
 })

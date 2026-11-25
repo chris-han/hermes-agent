@@ -553,11 +553,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const availableThemes = useMemo(
     () =>
-      listAllThemes().filter(theme => !window.hermesDesktop?.semantierProduct || theme.name !== 'nous').map(({ name, label, description }) => ({
-        name,
-        label,
-        description
-      })),
+      listAllThemes()
+        .filter(theme => !window.hermesDesktop?.semantierProduct || theme.name !== 'nous')
+        .map(({ name, label, description }) => ({
+          name,
+          label,
+          description
+        })),
     // userThemes + backendThemes + registryVersion ARE listAllThemes' reactivity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [userThemes, backendThemes, registryVersion]

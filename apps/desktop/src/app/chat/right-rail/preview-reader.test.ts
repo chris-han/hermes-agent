@@ -12,7 +12,12 @@ import { resolveActivePreviewTab } from './preview-active-tab'
 import { activePreviewInput, registerPreviewInput } from './preview-input'
 import { activePreviewNav, registerPreviewNav } from './preview-nav'
 import { PREVIEW_READ_MAX_CHARS, readActivePreview, registerPreviewPageReader } from './preview-reader'
-import { activePreviewFrameRunner, activePreviewScriptRunner, registerPreviewFrameRunner, registerPreviewScriptRunner } from './preview-script-runner'
+import {
+  activePreviewFrameRunner,
+  activePreviewScriptRunner,
+  registerPreviewFrameRunner,
+  registerPreviewScriptRunner
+} from './preview-script-runner'
 
 function urlTarget(url: string): PreviewTarget {
   return { kind: 'url', label: 'Browser', source: url, url }
@@ -224,7 +229,12 @@ describe('agent preview reads stay inside the session (#73890)', () => {
     const unbindNav = registerPreviewNav(hidden, navA)
     const unbindInput = registerPreviewInput(hidden, inputA)
     const unbindRun = registerPreviewScriptRunner(hidden, runA)
-    const framesA = { list: async () => [], run: async () => 'a', mapPoint: async () => ({ visible: true, x: 0, y: 0 }), input: async () => {} }
+    const framesA = {
+      list: async () => [],
+      run: async () => 'a',
+      mapPoint: async () => ({ visible: true, x: 0, y: 0 }),
+      input: async () => {}
+    }
     const unbindFrames = registerPreviewFrameRunner(hidden, framesA)
 
     try {
@@ -308,34 +318,57 @@ function mountSplit(fileId: string, browserId: string) {
 describe('native bound preview lease', () => {
   it('records a live guest and rejects stale or foreign window metadata before reading', async () => {
     closeRightRail()
-    const tabId=openPreview(urlTarget('http://localhost/lease'))!
-    let epoch=1
-    let reads=0
+    const tabId = openPreview(urlTarget('http://localhost/lease'))!
+    let epoch = 1
+    let reads = 0
 
-    const unregister=registerPreviewPageReader(tabId,async()=>{reads++;
+    const unregister = registerPreviewPageReader(
+      tabId,
+      async () => {
+        reads++
 
-return {text:'live',title:'lease',url:'http://localhost/lease'}},()=>({guest_id:17,page_epoch:epoch,loading:false}))
+        return { text: 'live', title: 'lease', url: 'http://localhost/lease' }
+      },
+      () => ({ guest_id: 17, page_epoch: epoch, loading: false })
+    )
 
     try {
-      const initial=await readActivePreview({require_live:true})
-      expect(initial?.binding).toMatchObject({tab_id:tabId,guest_id:17,page_epoch:1})
-      const binding=initial!.binding!
-      const count=reads
-      await expect(readActivePreview({require_live:true,expected_binding:{...binding,profile_id:'foreign-profile'}})).rejects.toThrow('WRONG_OWNER')
-      await expect(readActivePreview({require_live:true,expected_binding:{...binding,window_id:'another-window'}})).rejects.toThrow('WRONG_OWNER')
+      const initial = await readActivePreview({ require_live: true })
+      expect(initial?.binding).toMatchObject({ tab_id: tabId, guest_id: 17, page_epoch: 1 })
+      const binding = initial!.binding!
+      const count = reads
+      await expect(
+        readActivePreview({ require_live: true, expected_binding: { ...binding, profile_id: 'foreign-profile' } })
+      ).rejects.toThrow('WRONG_OWNER')
+      await expect(
+        readActivePreview({ require_live: true, expected_binding: { ...binding, window_id: 'another-window' } })
+      ).rejects.toThrow('WRONG_OWNER')
       expect(reads).toBe(count)
-      await expect(readActivePreview({require_live:true,expected_binding:{...binding,session_id:'different-session'}})).rejects.toThrow('WRONG_OWNER')
-      epoch=2
-      await expect(readActivePreview({require_live:true,expected_binding:binding})).rejects.toThrow('STALE_TARGET')
-      const refreshed=await readActivePreview({require_live:true,expected_binding:binding,refresh_binding:true})
+      await expect(
+        readActivePreview({ require_live: true, expected_binding: { ...binding, session_id: 'different-session' } })
+      ).rejects.toThrow('WRONG_OWNER')
+      epoch = 2
+      await expect(readActivePreview({ require_live: true, expected_binding: binding })).rejects.toThrow('STALE_TARGET')
+      const refreshed = await readActivePreview({
+        require_live: true,
+        expected_binding: binding,
+        refresh_binding: true
+      })
       expect(refreshed?.binding?.page_epoch).toBe(2)
-    } finally {unregister();closeRightRail()}
+    } finally {
+      unregister()
+      closeRightRail()
+    }
   })
 
   it('does not substitute the requested address when a live page URL is unavailable', async () => {
     closeRightRail()
     const tabId = openPreview(urlTarget('http://localhost/requested'))!
-    const unregister = registerPreviewPageReader(tabId, async () => ({ text: 'live', title: '', url: '' }), () => ({ guest_id: 2, page_epoch: 1, loading: false }))
+    const unregister = registerPreviewPageReader(
+      tabId,
+      async () => ({ text: 'live', title: '', url: '' }),
+      () => ({ guest_id: 2, page_epoch: 1, loading: false })
+    )
 
     try {
       await expect(readActivePreview({ require_live: true })).rejects.toThrow('PANE_UNAVAILABLE')
@@ -345,28 +378,44 @@ return {text:'live',title:'lease',url:'http://localhost/lease'}},()=>({guest_id:
     }
   })
 
-  it('never treats an identity-only or loading page as live access', async()=>{
+  it('never treats an identity-only or loading page as live access', async () => {
     closeRightRail()
-    const tabId=openPreview(urlTarget('http://localhost/loading'))!
-    await expect(readActivePreview({require_live:true})).rejects.toThrow('PANE_UNAVAILABLE')
-    const unregister=registerPreviewPageReader(tabId,async()=>({text:'old',title:'loading',url:'http://localhost/loading'}),()=>({guest_id:2,page_epoch:1,loading:true}))
+    const tabId = openPreview(urlTarget('http://localhost/loading'))!
+    await expect(readActivePreview({ require_live: true })).rejects.toThrow('PANE_UNAVAILABLE')
+    const unregister = registerPreviewPageReader(
+      tabId,
+      async () => ({ text: 'old', title: 'loading', url: 'http://localhost/loading' }),
+      () => ({ guest_id: 2, page_epoch: 1, loading: true })
+    )
 
-    try {await expect(readActivePreview({require_live:true})).rejects.toThrow('PANE_UNAVAILABLE')}
-    finally {unregister();closeRightRail()}
+    try {
+      await expect(readActivePreview({ require_live: true })).rejects.toThrow('PANE_UNAVAILABLE')
+    } finally {
+      unregister()
+      closeRightRail()
+    }
   })
 })
 
-it('does not label old document text with a new navigation epoch', async()=>{
+it('does not label old document text with a new navigation epoch', async () => {
   closeRightRail()
-  const tabId=openPreview(urlTarget('http://localhost/navigation-race'))!
-  let epoch=1
+  const tabId = openPreview(urlTarget('http://localhost/navigation-race'))!
+  let epoch = 1
 
-  const unregister=registerPreviewPageReader(tabId,async()=>{
-    epoch=2
+  const unregister = registerPreviewPageReader(
+    tabId,
+    async () => {
+      epoch = 2
 
-    return {text:'old document',title:'race',url:'http://localhost/navigation-race'}
-  },()=>({guest_id:5,page_epoch:epoch,loading:false}))
+      return { text: 'old document', title: 'race', url: 'http://localhost/navigation-race' }
+    },
+    () => ({ guest_id: 5, page_epoch: epoch, loading: false })
+  )
 
-  try {await expect(readActivePreview({require_live:true})).rejects.toThrow('STALE_TARGET')}
-  finally {unregister();closeRightRail()}
+  try {
+    await expect(readActivePreview({ require_live: true })).rejects.toThrow('STALE_TARGET')
+  } finally {
+    unregister()
+    closeRightRail()
+  }
 })

@@ -416,8 +416,16 @@ export function TreeGroup({
   // Only suppress the ordinary titlebar control when the compact strip really
   // renders its replacement; hidden strips and page headers need the fallback.
   const integratedSessionsHeader =
-    isWindowsPlatform() && leftSideOpen && topEdge && railSide === 'left' && sidebarGroup && !narrow && !node.minimized &&
-    shown.includes('sessions') && headerVisible && !pageHeader
+    isWindowsPlatform() &&
+    leftSideOpen &&
+    topEdge &&
+    railSide === 'left' &&
+    sidebarGroup &&
+    !narrow &&
+    !node.minimized &&
+    shown.includes('sessions') &&
+    headerVisible &&
+    !pageHeader
 
   const tabsBelowControls = topEdge && !integratedSessionsHeader && (sidebarGroup || measuredBelowControls)
   const tabsInTitlebar = topEdge && !tabsBelowControls
@@ -538,7 +546,9 @@ export function TreeGroup({
               // Strip line faces the content the zone collapsed away from.
               railSide === 'right' ? PANE_TAB_STRIP_LINE_LEFT : PANE_TAB_STRIP_LINE_RIGHT
             )}
-            data-collapsed-sessions-rail={isWindowsPlatform() && railSide === 'left' && shown.includes('sessions') || undefined}
+            data-collapsed-sessions-rail={
+              (isWindowsPlatform() && railSide === 'left' && shown.includes('sessions')) || undefined
+            }
             onClick={() => restoreTreePane(activeId)}
             title={t.zones.restore}
           >
@@ -583,7 +593,11 @@ export function TreeGroup({
           style={topEdge ? { height: TITLEBAR_HEIGHT + (tabsBelowControls && headerVisible ? 28 : 0) } : undefined}
         >
           {topEdge && (
-            <div aria-hidden="true" className="shrink-0" style={{ width: integratedSessionsHeader ? 0 : 'var(--panel-titlebar-left, 100%)' }} />
+            <div
+              aria-hidden="true"
+              className="shrink-0"
+              style={{ width: integratedSessionsHeader ? 0 : 'var(--panel-titlebar-left, 100%)' }}
+            />
           )}
           {integratedSessionsHeader && (
             <div
@@ -677,12 +691,19 @@ export function TreeGroup({
                       data-tree-tab={paneId}
                       key={paneId}
                       onClose={closeable ? () => closeTab(paneId) : undefined}
-                      onKeyDown={integratedSessionsHeader ? event => {
-                        if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
-                          event.preventDefault()
-                          onTap()
-                        }
-                      } : undefined}
+                      onKeyDown={
+                        integratedSessionsHeader
+                          ? event => {
+                              if (
+                                event.target === event.currentTarget &&
+                                (event.key === 'Enter' || event.key === ' ')
+                              ) {
+                                event.preventDefault()
+                                onTap()
+                              }
+                            }
+                          : undefined
+                      }
                       onPointerDown={e => {
                         // Chrome's tab-selection grammar, ahead of activate/drag:
                         // Shift-click ranges from the anchor, ⌥-click (Ctrl-click

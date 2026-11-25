@@ -119,8 +119,8 @@ export const arBoot = {
     releaseNotes: 'ملاحظات الإصدار',
     onLatest: 'أنت على أحدث إصدار',
     installing: 'جار التثبيت...',
-    noPublishedRelease: "لا يتوفر إصدار في هذه القناة بعد.",
-    cantReach: "تعذر التحقق من التحديثات.",
+    noPublishedRelease: 'لا يتوفر إصدار في هذه القناة بعد.',
+    cantReach: 'تعذر التحقق من التحديثات.',
     tapCheck: 'اضغط للتحقق من التحديثات.',
     updateReady: count => `${count} تحديث متاح`,
     updateReadyUnknown: 'تحديث جديد جاهز.',
@@ -261,7 +261,7 @@ export const arBoot = {
     reloadRetry: 'إعادة التحميل وإعادة المحاولة'
   },
   onboarding: {
-    cloudBrowserOpened: "وافق على هذا الجهاز في المتصفح، ثم عد إلى هذا الملف الشخصي لإكمال الاتصال.",
+    cloudBrowserOpened: 'وافق على هذا الجهاز في المتصفح، ثم عد إلى هذا الملف الشخصي لإكمال الاتصال.',
     headerTitle: 'لنُعِدّ لك Semantier Agent',
     headerDesc: 'اربط مزوّد نماذج لبدء المحادثة. معظم الخيارات تتطلب نقرة واحدة.',
     preparingInstall: 'يُكمل Semantier التثبيت. عادة ما يستغرق ذلك أقل من دقيقة في أول تشغيل.',
@@ -347,5 +347,12 @@ export const arBoot = {
   }
 } satisfies Pick<
   TranslationOverrides,
-  'boot' | 'remoteDisplayBanner' | 'butterbar' | 'keepAwakeOffer' | 'promptNotices' | 'updates' | 'install' | 'onboarding'
+  | 'boot'
+  | 'remoteDisplayBanner'
+  | 'butterbar'
+  | 'keepAwakeOffer'
+  | 'promptNotices'
+  | 'updates'
+  | 'install'
+  | 'onboarding'
 >

@@ -128,17 +128,22 @@ describe('ConfirmingModelPanel model pick', () => {
   })
 })
 
-
 describe('Cloud sign-in localized recovery', () => {
   it.each(['en', 'zh'] as const)('keeps safe recovery and retry/API-key controls in %s', locale => {
     const t = TRANSLATIONS[locale].onboarding
 
-    const flow = { status: 'error' as const, provider: { ...makeOAuthProvider('semantier-cloud'), flow: 'device_code' as const },
-      message: t.cloudSignInError('cloud_http3_unavailable', 'default'), detail: 'cloud_http3_unavailable · HTTP 503' }
+    const flow = {
+      status: 'error' as const,
+      provider: { ...makeOAuthProvider('semantier-cloud'), flow: 'device_code' as const },
+      message: t.cloudSignInError('cloud_http3_unavailable', 'default'),
+      detail: 'cloud_http3_unavailable · HTTP 503'
+    }
 
-    render(<I18nProvider configClient={null} initialLocale={locale}>
-      <FlowPanel ctx={ctx} flow={flow} leaving={false} onBegin={() => undefined} />
-    </I18nProvider>)
+    render(
+      <I18nProvider configClient={null} initialLocale={locale}>
+        <FlowPanel ctx={ctx} flow={flow} leaving={false} onBegin={() => undefined} />
+      </I18nProvider>
+    )
     expect(screen.getByText(flow.message)).toBeTruthy()
     expect(screen.getByRole('button', { name: t.tryAgain })).toBeTruthy()
     expect(screen.getByRole('button', { name: t.useApiKeyInstead })).toBeTruthy()
