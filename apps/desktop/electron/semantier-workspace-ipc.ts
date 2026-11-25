@@ -70,6 +70,21 @@ export function isUnsupportedWorkspaceStartupRequest(method: string, pathname: s
 const startupReadPaths = new Set(['/api/profiles', '/api/sessions', '/api/profiles/sessions', '/api/profiles/sessions/sidebar'])
 const pendingStartupReads = new WeakMap<object, Map<string, Promise<unknown>>>()
 
+// The catalog, Main history and Bot binding compete for the same protected
+// SessionDB reader. Start each signed operation when its partition is free.
+const protectedReadTail = new WeakMap<object, Promise<void>>()
+
+function scheduleProtectedRead<T>(partition: object, read: () => Promise<T>): Promise<T> {
+  const prior = protectedReadTail.get(partition)
+  const result = prior ? prior.then(read) : read()
+  const tail = result.then(() => {}, () => {})
+  protectedReadTail.set(partition, tail)
+  void tail.then(() => {
+    if (protectedReadTail.get(partition) === tail) {protectedReadTail.delete(partition)}
+  })
+  return result
+}
+
 const pendingReadContexts = new WeakMap<object, Promise<WorkspaceIdentity>>()
 
 export function readPendingWorkspaceIdentity(target: ReturnType<typeof workspace>) {
@@ -113,12 +128,9 @@ export async function readScopedWorkspaceDesktop(
     }
   }
 
-  // Registry consumers may arrive together after a shared dial check.
-  // Use the same fresh coalescing boundary for Main and the Bot roster.
-  const coalescedStartupRead = profile === 'default' &&
-    (url.pathname === '/api/sessions' || url.pathname === '/api/profiles')
-
-  const checkBeforeRead = !resolvedScope || coalescedStartupRead
+  const sessionDetail = /^\/api\/sessions\/[^/]+(?:\/messages)?$/.test(url.pathname)
+  const protectedRead = startupReadPaths.has(url.pathname) || sessionDetail
+  const checkBeforeRead = !resolvedScope || protectedRead
 
   const read = async (initialCheckFinished?: () => void) => {
     try {
@@ -135,7 +147,8 @@ export async function readScopedWorkspaceDesktop(
     return result
   }
 
-  if (!startupReadPaths.has(url.pathname)) {return read()}
+  if (!protectedRead) {return read()}
+  if (sessionDetail) {return scheduleProtectedRead(owned, () => read())}
 
   let pending = pendingStartupReads.get(owned)
 
@@ -149,11 +162,9 @@ export async function readScopedWorkspaceDesktop(
 
   if (existing) {return existing}
 
-  if (!checkBeforeRead) {return read()}
-
   // Join only while the initial signed check is in flight. A later caller must
   // run its own check before starting a new server read.
-  const operation = read(() => pending.delete(key))
+  const operation = scheduleProtectedRead(owned, () => read(() => pending.delete(key)))
   pending.set(key, operation)
 
   return operation
@@ -369,20 +380,24 @@ return personal}
   ipcMain.handle('hermes:workspace:history', async (_event, origin: string, scope: WorkspaceScope, sessionId: string, afterId?: string) => {
     const target = workspace(origin)
     const { client } = target
-    assertWorkspaceScope(await readPendingWorkspaceIdentity(target), scope)
-    const result = await client.history(sessionId, ...(afterId === undefined ? [] : [afterId]))
-    assertWorkspaceScope(await client.identity(), scope)
+    return scheduleProtectedRead(target.owned, async () => {
+      assertWorkspaceScope(await readPendingWorkspaceIdentity(target), scope)
+      const result = await client.history(sessionId, ...(afterId === undefined ? [] : [afterId]))
+      assertWorkspaceScope(await client.identity(), scope)
 
-    return result
+      return result
+    })
   })
   ipcMain.handle('hermes:workspace:native-context', async (_event, origin: string, scope: WorkspaceScope, sessionId: string) => {
     const target = workspace(origin)
     const { client } = target
-    assertWorkspaceScope(await readPendingWorkspaceIdentity(target), scope)
-    const result = await client.nativeContext(sessionId)
-    assertWorkspaceScope(await client.identity(), scope)
+    return scheduleProtectedRead(target.owned, async () => {
+      assertWorkspaceScope(await readPendingWorkspaceIdentity(target), scope)
+      const result = await client.nativeContext(sessionId)
+      assertWorkspaceScope(await client.identity(), scope)
 
-    return result
+      return result
+    })
   })
   ipcMain.handle('hermes:workspace:bind-native-context', async (_event, origin: string, scope: WorkspaceScope, sessionId: string, originalSessionKey: string) => {
     const { client } = workspace(origin)
