@@ -29,13 +29,24 @@ import type {
   StaleAuxAssignment
 } from '@/hermes'
 import { useI18n } from '@/i18n'
-import { modelEligibilityUnknownCopy, modelUnavailableCopy, savedModelUnavailableCopy } from '@/i18n/model-selection-copy'
+import {
+  modelEligibilityUnknownCopy,
+  modelUnavailableCopy,
+  savedModelUnavailableCopy
+} from '@/i18n/model-selection-copy'
 import { modelProviderName, providerJourneyCopy } from '@/i18n/model-service'
 import { isCodeSkewRestartRequired } from '@/lib/code-skew-error'
 import { AlertTriangle, Cpu, Loader2 } from '@/lib/icons'
 import { isSubmitEnter } from '@/lib/ime'
 import { modelDiscoveryOwnerKey } from '@/lib/model-discovery-scope'
-import { catalogProviderMatches, findCatalogProvider, modelOptionsQueryKey, providerManualModels, providerSelectableModels, requestDiscoveredModelOptions } from '@/lib/model-options'
+import {
+  catalogProviderMatches,
+  findCatalogProvider,
+  modelOptionsQueryKey,
+  providerManualModels,
+  providerSelectableModels,
+  requestDiscoveredModelOptions
+} from '@/lib/model-options'
 import { composerServiceTier } from '@/lib/model-status-label'
 import { refreshModelsOnConnectionReady } from '@/lib/startup-model-discovery'
 import { normalize } from '@/lib/text'
@@ -112,14 +123,22 @@ function isProviderReady(p?: ModelOptionProvider): boolean {
 
 function isStillEligible(row: ModelOptionProvider | undefined, previous: ModelOptionProvider, model: string): boolean {
   if (previous.discovery_state != null) {
-    return row?.discovery_state === 'fresh' && !!row.discovery_source_id &&
-      row.discovery_source_id === previous.discovery_source_id && providerSelectableModels(row).includes(model)
+    return (
+      row?.discovery_state === 'fresh' &&
+      !!row.discovery_source_id &&
+      row.discovery_source_id === previous.discovery_source_id &&
+      providerSelectableModels(row).includes(model)
+    )
   }
 
-  return isProviderReady(row) && row?.eligible_models != null && row.eligible_models.includes(model) &&
+  return (
+    isProviderReady(row) &&
+    row?.eligible_models != null &&
+    row.eligible_models.includes(model) &&
     (row.models ?? []).includes(model) &&
     !(row.unavailable_models ?? []).some(item => normalize(item) === normalize(model)) &&
     (row.api_url ?? '') === (previous.api_url ?? '')
+  )
 }
 
 function availableMainModels(provider?: ModelOptionProvider): string[] {
@@ -127,7 +146,9 @@ function availableMainModels(provider?: ModelOptionProvider): string[] {
 }
 
 function providerHasUnknownEligibility(provider?: ModelOptionProvider): boolean {
-  if (provider?.eligible_models == null) { return false }
+  if (provider?.eligible_models == null) {
+    return false
+  }
 
   return provider.discovery_state != null
     ? !provider.discovery_source_id || !['fresh', 'cached', 'stale'].includes(provider.discovery_state)
@@ -135,9 +156,13 @@ function providerHasUnknownEligibility(provider?: ModelOptionProvider): boolean 
 }
 
 function selectedModelUnavailable(provider: ModelOptionProvider | undefined, model: string, unknown: boolean): boolean {
-  if (catalogModelIssue(provider, model)) { return true }
+  if (catalogModelIssue(provider, model)) {
+    return true
+  }
 
-  if ((provider?.unavailable_models ?? []).some(value => normalize(value) === normalize(model))) { return true }
+  if ((provider?.unavailable_models ?? []).some(value => normalize(value) === normalize(model))) {
+    return true
+  }
 
   return provider?.eligible_models != null && !unknown && !!model && !availableMainModels(provider).includes(model)
 }
@@ -146,13 +171,32 @@ function mainModelChoices(providers: readonly ModelOptionProvider[], selectedPro
   const provider = findCatalogProvider(providers, selectedProvider)
   const unknown = providerHasUnknownEligibility(provider)
 
-  return { provider, unknown, models: availableMainModels(provider), unavailable: selectedModelUnavailable(provider, model, unknown) }
+  return {
+    provider,
+    unknown,
+    models: availableMainModels(provider),
+    unavailable: selectedModelUnavailable(provider, model, unknown)
+  }
 }
 
-function ManualModelStatus({ model, provider, locale }: { model: string; provider?: ModelOptionProvider; locale: string }) {
-  if (!model || provider?.eligible_models || providerSelectableModels(provider).includes(model)) { return null }
+function ManualModelStatus({
+  model,
+  provider,
+  locale
+}: {
+  model: string
+  provider?: ModelOptionProvider
+  locale: string
+}) {
+  if (!model || provider?.eligible_models || providerSelectableModels(provider).includes(model)) {
+    return null
+  }
 
-  return <p className="mt-2 text-xs text-muted-foreground" role="status">{providerJourneyCopy(locale).manual}</p>
+  return (
+    <p className="mt-2 text-xs text-muted-foreground" role="status">
+      {providerJourneyCopy(locale).manual}
+    </p>
+  )
 }
 
 const NO_PROVIDERS: readonly ModelOptionProvider[] = [{ name: '—', slug: '', models: [] }]
@@ -162,13 +206,15 @@ const NO_PROVIDERS: readonly ModelOptionProvider[] = [{ name: '—', slug: '', m
 // controlled value has no matching item) while remaining out of the real
 // inventory used for readiness/setup metadata.
 function mainProviderOptionsFor(providers: readonly ModelOptionProvider[], selectedProvider: string) {
-  const options = providers.filter(provider =>
-    isProviderReady(provider) ||
-    catalogProviderMatches(provider, selectedProvider))
+  const options = providers.filter(
+    provider => isProviderReady(provider) || catalogProviderMatches(provider, selectedProvider)
+  )
 
   return selectedProvider && !findCatalogProvider(providers, selectedProvider)
     ? [{ name: selectedProvider, slug: selectedProvider, models: [] as string[], authenticated: false }, ...options]
-    : options.length ? options : NO_PROVIDERS
+    : options.length
+      ? options
+      : NO_PROVIDERS
 }
 
 // User-driven provider switch for the main picker: a provider's model list is
@@ -179,9 +225,13 @@ function mainProviderOptionsFor(providers: readonly ModelOptionProvider[], selec
 // activate-key auto-select) set state directly and keep their own model
 // restore semantics.
 function mainProviderSelectOptions(providers: readonly ModelOptionProvider[], locale: string) {
-  return providers.filter(provider => provider.slug).map(provider => ({
-    value: provider.slug, label: modelProviderName(provider, locale), disabled: !isProviderReady(provider)
-  }))
+  return providers
+    .filter(provider => provider.slug)
+    .map(provider => ({
+      value: provider.slug,
+      label: modelProviderName(provider, locale),
+      disabled: !isProviderReady(provider)
+    }))
 }
 
 function switchProviderFor(
@@ -321,18 +371,24 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
   const scopeBinding = JSON.stringify([searchSource, searchProfile, ownerKey])
   const catalogKey = useMemo(() => modelOptionsQueryKey(searchProfile, null, ownerKey), [searchProfile, ownerKey])
 
-  const requestDiscovery = useCallback((forceRefresh = false) => requestDiscoveredModelOptions({
-    connection,
-    ownerConnectionId: connection?.connectionId,
-    profile: searchProfile,
-    refresh: forceRefresh,
-    request: <T,>(method: string, params?: Record<string, unknown>) =>
-      requestGatewayForAgent<T>(connection?.connectionId ?? null, searchProfile, method, params)
-  }), [connection, searchProfile])
+  const requestDiscovery = useCallback(
+    (forceRefresh = false) =>
+      requestDiscoveredModelOptions({
+        connection,
+        ownerConnectionId: connection?.connectionId,
+        profile: searchProfile,
+        refresh: forceRefresh,
+        request: <T,>(method: string, params?: Record<string, unknown>) =>
+          requestGatewayForAgent<T>(connection?.connectionId ?? null, searchProfile, method, params)
+      }),
+    [connection, searchProfile]
+  )
 
   const catalogQuery = useQuery({ queryKey: catalogKey, queryFn: () => requestDiscovery(), enabled: !!ownerKey })
   useEffect(() => {
-    if (ownerKey) {void refreshModelsOnConnectionReady(connection?.connectionId ?? null, searchProfile, connection)}
+    if (ownerKey) {
+      void refreshModelsOnConnectionReady(connection?.connectionId ?? null, searchProfile, connection)
+    }
   }, [connection, ownerKey, searchProfile])
   const m = t.settings.model
   const showMain = subpage === undefined || subpage === 'main'
@@ -379,7 +435,9 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
   const profileEpoch = useRef(0)
 
   useEffect(() => {
-    if (catalogQuery.data) {setCatalogProviders(catalogQuery.data.providers ?? [])}
+    if (catalogQuery.data) {
+      setCatalogProviders(catalogQuery.data.providers ?? [])
+    }
   }, [catalogQuery.data])
 
   const setCaughtError = useCallback(
@@ -392,7 +450,10 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
   )
 
   const refresh = useCallback(
-    async ({ replaceSelection = false, forceRefresh = false }: { replaceSelection?: boolean; forceRefresh?: boolean } = {}) => {
+    async ({
+      replaceSelection = false,
+      forceRefresh = false
+    }: { replaceSelection?: boolean; forceRefresh?: boolean } = {}) => {
       const epoch = profileEpoch.current
       setLoading(true)
       setError('')
@@ -404,7 +465,9 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
         const [modelOptionsResult, auxiliaryModelsResult, moaModelsResult] = await Promise.allSettled([
           forceRefresh
             ? requestDiscovery(true).then(options => {
-                if (ownerKey) {queryClient.setQueryData(catalogKey, options)}
+                if (ownerKey) {
+                  queryClient.setQueryData(catalogKey, options)
+                }
 
                 return options
               })
@@ -438,9 +501,10 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
 
         // The main assignment also lives in the auxiliary config read, so the
         // saved configuration remains visible when the inventory is unavailable.
-        const resolvedMain = modelOptions && (modelOptions.model || modelOptions.provider)
-          ? { model: modelOptions.model ?? '', provider: modelOptions.provider ?? '' }
-          : auxiliaryModels?.main ?? null
+        const resolvedMain =
+          modelOptions && (modelOptions.model || modelOptions.provider)
+            ? { model: modelOptions.model ?? '', provider: modelOptions.provider ?? '' }
+            : (auxiliaryModels?.main ?? null)
 
         if (resolvedMain) {
           setMainModel({ model: resolvedMain.model, provider: resolvedMain.provider })
@@ -528,23 +592,25 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
   const mainProviderOptions = mainProviderOptionsFor(providers, selectedProvider)
 
   // User-driven switch: never carries the old provider's model over (#59063).
-  const switchProvider = useMemo(
-    () =>
-      switchProviderFor(setSelectedProvider, setSelectedModel),
-    []
-  )
+  const switchProvider = useMemo(() => switchProviderFor(setSelectedProvider, setSelectedModel), [])
 
   // MoA reference/aggregator slots must never be the moa virtual provider —
   // that would create a recursive MoA tree (the backend rejects it on save).
   // Hide it from the slot selectors so it isn't offered as a dead choice.
   const moaSlotProviderOptions = providerOptions.filter(provider => (provider.slug || '').toLowerCase() !== 'moa')
 
-  const { provider: selectedProviderRow, unknown: eligibilityUnknown, models: selectedProviderModels, unavailable: selectedUnavailable } = mainModelChoices(providers, selectedProvider, selectedModel)
+  const {
+    provider: selectedProviderRow,
+    unknown: eligibilityUnknown,
+    models: selectedProviderModels,
+    unavailable: selectedUnavailable
+  } = mainModelChoices(providers, selectedProvider, selectedModel)
 
   // An unconfigured provider was picked: no credentials yet, so there are no
   // models to choose. `api_key` providers can be activated inline (paste key);
   // OAuth / external flows hand off to the onboarding sign-in.
-  const needsSetup = connection?.transport !== 'semantier-workspace-http' && !!selectedProvider && !isProviderReady(selectedProviderRow)
+  const needsSetup =
+    connection?.transport !== 'semantier-workspace-http' && !!selectedProvider && !isProviderReady(selectedProviderRow)
   const setupIsApiKey = needsSetup && selectedProviderRow?.auth_type === 'api_key' && !!selectedProviderRow?.key_env
 
   // Clear any half-typed key when switching provider so it can't leak across.
@@ -552,8 +618,12 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
     setApiKeyDraft('')
   }, [selectedProvider])
 
-  const { provider: auxDraftProvider, models: auxDraftProviderModels, unknown: auxEligibilityUnknown, unavailable: auxUnavailable } =
-    mainModelChoices(providers, auxDraft.provider, auxDraft.model)
+  const {
+    provider: auxDraftProvider,
+    models: auxDraftProviderModels,
+    unknown: auxEligibilityUnknown,
+    unavailable: auxUnavailable
+  } = mainModelChoices(providers, auxDraft.provider, auxDraft.model)
 
   const modelsForProvider = useCallback(
     (provider: string) => findCatalogProvider(providers, provider)?.models ?? [],
@@ -850,18 +920,26 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
   }
 
   const applyMainModel = useCallback(async () => {
-    if (!selectedProvider || !selectedModel || selectedUnavailable || eligibilityUnknown || !isProviderReady(selectedProviderRow)) {
+    if (
+      !selectedProvider ||
+      !selectedModel ||
+      selectedUnavailable ||
+      eligibilityUnknown ||
+      !isProviderReady(selectedProviderRow)
+    ) {
       return
     }
 
     const epoch = profileEpoch.current
     setApplying(true)
     setError('')
-    let checkingEligibility = !!selectedProviderRow && (selectedProviderRow.eligible_models != null)
+    let checkingEligibility = !!selectedProviderRow && selectedProviderRow.eligible_models != null
 
     try {
       if (checkingEligibility && selectedProviderRow) {
-        if (ownerKey) {await queryClient.cancelQueries({ queryKey: catalogKey, exact: true })}
+        if (ownerKey) {
+          await queryClient.cancelQueries({ queryKey: catalogKey, exact: true })
+        }
         const latest = await requestDiscovery(true)
 
         if (profileEpoch.current !== epoch || modelSearchSource($connection.get()) !== searchSource) {
@@ -870,7 +948,9 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
 
         const refreshed = findCatalogProvider(latest.providers ?? [], selectedProvider)
 
-        if (ownerKey) {queryClient.setQueryData(catalogKey, latest)}
+        if (ownerKey) {
+          queryClient.setQueryData(catalogKey, latest)
+        }
 
         // Do not downgrade a known eligibility set to an ambiguous legacy row.
         if (refreshed?.eligible_models != null || refreshed?.discovery_state != null) {
@@ -951,7 +1031,9 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
     setApplying(true)
 
     try {
-      if (ownerKey) {await queryClient.cancelQueries({ queryKey: catalogKey, exact: true })}
+      if (ownerKey) {
+        await queryClient.cancelQueries({ queryKey: catalogKey, exact: true })
+      }
       const latest = await requestDiscovery(true)
 
       if (profileEpoch.current !== epoch || modelSearchSource($connection.get()) !== searchSource) {
@@ -960,7 +1042,9 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
 
       const refreshed = findCatalogProvider(latest.providers ?? [], selectedProvider)
 
-      if (ownerKey) {queryClient.setQueryData(catalogKey, latest)}
+      if (ownerKey) {
+        queryClient.setQueryData(catalogKey, latest)
+      }
 
       if (refreshed?.eligible_models != null || refreshed?.discovery_state != null) {
         setCatalogProviders(latest.providers ?? [])
@@ -981,7 +1065,20 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
         setApplying(false)
       }
     }
-  }, [catalogKey, locale, m.loadFailed, ownerKey, queryClient, requestDiscovery, scopeProfile, searchSource, selectedModel, selectedProvider, selectedProviderRow, setCaughtError])
+  }, [
+    catalogKey,
+    locale,
+    m.loadFailed,
+    ownerKey,
+    queryClient,
+    requestDiscovery,
+    scopeProfile,
+    searchSource,
+    selectedModel,
+    selectedProvider,
+    selectedProviderRow,
+    setCaughtError
+  ])
 
   // Sibling of the applyMainModel endpoint passthrough (#65254): auxiliary
   // assignments targeting a user-defined provider must carry that provider's
@@ -1016,7 +1113,13 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
 
   const applyAuxiliaryDraft = useCallback(
     async (task: string) => {
-      if (!auxDraft.provider || !auxDraft.model || auxEligibilityUnknown || auxUnavailable || !isProviderReady(auxDraftProvider)) {
+      if (
+        !auxDraft.provider ||
+        !auxDraft.model ||
+        auxEligibilityUnknown ||
+        auxUnavailable ||
+        !isProviderReady(auxDraftProvider)
+      ) {
         return
       }
 
@@ -1043,7 +1146,17 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
         setApplying(false)
       }
     },
-    [auxDraft, auxDraftProvider, auxEligibilityUnknown, auxUnavailable, endpointForProvider, m.loadFailed, refresh, scopeProfile, setCaughtError]
+    [
+      auxDraft,
+      auxDraftProvider,
+      auxEligibilityUnknown,
+      auxUnavailable,
+      endpointForProvider,
+      m.loadFailed,
+      refresh,
+      scopeProfile,
+      setCaughtError
+    ]
   )
 
   const beginAuxiliaryEdit = useCallback(
@@ -1205,7 +1318,14 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
                   value={selectedModel}
                 />
                 <Button
-                  disabled={!selectedProvider || !selectedModel || selectedUnavailable || eligibilityUnknown || eligibilityRetry || applying}
+                  disabled={
+                    !selectedProvider ||
+                    !selectedModel ||
+                    selectedUnavailable ||
+                    eligibilityUnknown ||
+                    eligibilityRetry ||
+                    applying
+                  }
                   onClick={() => void applyMainModel()}
                   size="sm"
                 >
@@ -1221,7 +1341,12 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
           {!needsSetup && eligibilityUnknown && (
             <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground" role="status">
               <span>{modelEligibilityUnknownCopy[locale] ?? modelEligibilityUnknownCopy.en}</span>
-              <Button disabled={loading || applying} onClick={() => void refresh({ forceRefresh: true })} size="sm" variant="textStrong">
+              <Button
+                disabled={loading || applying}
+                onClick={() => void refresh({ forceRefresh: true })}
+                size="sm"
+                variant="textStrong"
+              >
                 {t.common.retry}
               </Button>
             </div>
@@ -1387,9 +1512,14 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
                               aria-label={`${copy.label} provider`}
                               disabled={applying}
                               onChange={value => {
-                                if (value !== auxDraft.provider) {setAuxDraft(prev => ({ ...prev, provider: value, model: '' }))}
+                                if (value !== auxDraft.provider) {
+                                  setAuxDraft(prev => ({ ...prev, provider: value, model: '' }))
+                                }
                               }}
-                              options={mainProviderSelectOptions(mainProviderOptionsFor(providers, auxDraft.provider), locale)}
+                              options={mainProviderSelectOptions(
+                                mainProviderOptionsFor(providers, auxDraft.provider),
+                                locale
+                              )}
                               placeholder={m.provider}
                               value={auxDraftProvider?.slug ?? auxDraft.provider}
                             />
@@ -1432,7 +1562,14 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
                           </div>
                           <div className="flex flex-wrap items-center gap-2">
                             <Button
-                              disabled={!auxDraft.provider || !auxDraft.model || auxEligibilityUnknown || auxUnavailable || !isProviderReady(auxDraftProvider) || applying}
+                              disabled={
+                                !auxDraft.provider ||
+                                !auxDraft.model ||
+                                auxEligibilityUnknown ||
+                                auxUnavailable ||
+                                !isProviderReady(auxDraftProvider) ||
+                                applying
+                              }
                               onClick={() => void applyAuxiliaryDraft(meta.key)}
                               size="sm"
                             >

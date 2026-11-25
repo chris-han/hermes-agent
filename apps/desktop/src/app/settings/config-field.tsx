@@ -131,7 +131,7 @@ export function ConfigField({
   const selectOptions =
     (schemaKey === 'stt.provider' || schemaKey === 'tts.provider') && schemaOptions
       ? [...new Set([...(enumOptions ?? []), ...schemaOptions])]
-      : enumOptions ?? schemaOptions
+      : (enumOptions ?? schemaOptions)
 
   // Large closed-world lists (e.g. ~590 IANA timezones) get a searchable
   // Popover + cmdk combobox instead of a closed Select dropdown.  The schema

@@ -17,6 +17,7 @@ afterEach(() => {
   for (const unmount of mounted.splice(0)) {
     unmount()
   }
+
   vi.useRealTimers()
   resetUiState()
 })
@@ -46,12 +47,14 @@ it('an offline session stops the refresh poll and reports the lost connection on
   const stream = () => Object.assign(new PassThrough(), { columns: 80, isTTY: false, rows: 24 })
   // useMainApp's input hooks need raw mode, or Ink swaps the tree for an error panel.
   const stdin = Object.assign(new PassThrough(), { isTTY: true, ref: () => {}, setRawMode: () => {}, unref: () => {} })
+
   const instance = renderSync(React.createElement(Harness), {
     patchConsole: false,
     stderr: stream() as never,
     stdin: stdin as never,
     stdout: stream() as never
   })
+
   mounted.push(() => {
     instance.unmount()
     instance.cleanup()
@@ -65,6 +68,7 @@ it('an offline session stops the refresh poll and reports the lost connection on
   for (let attempt = 0; attempt < 3; attempt++) {
     gw.emit('exit', 1006)
   }
+
   await vi.advanceTimersByTimeAsync(0)
   expect(getUiState().gatewayConnected).toBe(false)
   const offline = polls()

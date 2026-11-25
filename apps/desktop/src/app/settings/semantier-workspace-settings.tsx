@@ -93,7 +93,10 @@ export function SemantierWorkspaceSettings({
       }
 
       setIdentity(actual)
-      if (projectsOnly) return
+
+      if (projectsOnly) {
+        return
+      }
       const normalized = new URL(origin).origin
 
       const saved = connections.find(
@@ -154,7 +157,13 @@ export function SemantierWorkspaceSettings({
       }}
     >
       <ListRow
-        description={projectsOnly ? (locale === 'zh' ? '通过工作区账户继续项目。' : 'Use your Workspace account to continue a project.') : copy.description}
+        description={
+          projectsOnly
+            ? locale === 'zh'
+              ? '通过工作区账户继续项目。'
+              : 'Use your Workspace account to continue a project.'
+            : copy.description
+        }
         title={projectsOnly ? (locale === 'zh' ? '项目' : 'Projects') : copy.title}
       />
       <div className="grid gap-1.5">
@@ -181,7 +190,15 @@ export function SemantierWorkspaceSettings({
       <div className="flex flex-wrap gap-2">
         {(!projectsOnly || !identity?.authenticated) && (
           <Button disabled={checking || busy} type="submit">
-            {busy ? copy.waiting : projectsOnly ? (locale === 'zh' ? '登录工作区' : 'Sign in to Workspace') : identity?.authenticated ? copy.open : copy.signIn}
+            {busy
+              ? copy.waiting
+              : projectsOnly
+                ? locale === 'zh'
+                  ? '登录工作区'
+                  : 'Sign in to Workspace'
+                : identity?.authenticated
+                  ? copy.open
+                  : copy.signIn}
           </Button>
         )}
         {identity?.authenticated ? (
@@ -191,21 +208,37 @@ export function SemantierWorkspaceSettings({
         ) : null}
       </div>
       {identity?.authenticated && identity.user?.user_id && identity.workspace?.id && identity.organization_id ? (
-        projectsOnly ? <SemantierDesktopProjects
-          key={JSON.stringify([origin, identity.user.user_id, identity.workspace.id, identity.organization_id])}
-          origin={origin}
-          scope={{userId: identity.user.user_id, workspaceId: identity.workspace.id, organizationId: identity.organization_id}}
-        /> : <>
-        <SemantierPersonalSync key={JSON.stringify([origin,identity.user.user_id,identity.workspace.id,identity.organization_id])} origin={origin} scope={{userId:identity.user.user_id,workspaceId:identity.workspace.id,organizationId:identity.organization_id}} />
-        <SemantierManagedDevices
-          origin={origin}
-          scope={{
-            userId: identity.user.user_id,
-            workspaceId: identity.workspace.id,
-            organizationId: identity.organization_id
-          }}
-        />
-        </>
+        projectsOnly ? (
+          <SemantierDesktopProjects
+            key={JSON.stringify([origin, identity.user.user_id, identity.workspace.id, identity.organization_id])}
+            origin={origin}
+            scope={{
+              userId: identity.user.user_id,
+              workspaceId: identity.workspace.id,
+              organizationId: identity.organization_id
+            }}
+          />
+        ) : (
+          <>
+            <SemantierPersonalSync
+              key={JSON.stringify([origin, identity.user.user_id, identity.workspace.id, identity.organization_id])}
+              origin={origin}
+              scope={{
+                userId: identity.user.user_id,
+                workspaceId: identity.workspace.id,
+                organizationId: identity.organization_id
+              }}
+            />
+            <SemantierManagedDevices
+              origin={origin}
+              scope={{
+                userId: identity.user.user_id,
+                workspaceId: identity.workspace.id,
+                organizationId: identity.organization_id
+              }}
+            />
+          </>
+        )
       ) : null}
     </form>
   )

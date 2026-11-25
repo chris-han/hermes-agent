@@ -77,12 +77,13 @@ export function ConfigSettings({
   // Cloud Main owns a query-only inventory and its validated assignment route.
   // The unrelated Native configuration schema is not a prerequisite for it.
   if (connection?.transport === 'semantier-workspace-http' && activeSectionId === 'model' && subpage === 'main') {
-    return <SettingsContent>
-      <SettingsProfileScope className="mb-5" />
-      <ModelSettings onMainModelChanged={onMainModelChanged} scopeProfile={scopeProfile} subpage={subpage} />
-    </SettingsContent>
+    return (
+      <SettingsContent>
+        <SettingsProfileScope className="mb-5" />
+        <ModelSettings onMainModelChanged={onMainModelChanged} scopeProfile={scopeProfile} subpage={subpage} />
+      </SettingsContent>
+    )
   }
-
 
   return (
     <ConfigSettingsInner
@@ -175,12 +176,22 @@ function ConfigSettingsInner({
   // data — each save's diff+request only starts once the previous one lands.
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve())
   const scopeEpoch = useRef(0)
-  useEffect(() => () => { scopeEpoch.current += 1 }, [])
+  useEffect(
+    () => () => {
+      scopeEpoch.current += 1
+    },
+    []
+  )
 
   // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
   useEffect(() => {
-    if (loadedConfig && (!configSeeded.current ||
-      (config && configBaselineRef.current && Object.keys(diffConfig(configBaselineRef.current, config)).length === 0))) {
+    if (
+      loadedConfig &&
+      (!configSeeded.current ||
+        (config &&
+          configBaselineRef.current &&
+          Object.keys(diffConfig(configBaselineRef.current, config)).length === 0))
+    ) {
       configSeeded.current = true
       configBaselineRef.current = loadedConfig
       savedDiscoverySignatureRef.current = repoDiscoveryPolicySignature(repoDiscoveryPolicyFromConfig(loadedConfig))
@@ -245,14 +256,19 @@ function ConfigSettingsInner({
       // has fully resolved.
       saveQueueRef.current = saveQueueRef.current.then(async () => {
         try {
-          if (scopeEpoch.current !== epoch) {return}
+          if (scopeEpoch.current !== epoch) {
+            return
+          }
           // The explicit chain Apply owns this field. A queued generic snapshot
           // must never revert a fallback chain acknowledged after it was captured.
           const committed = { ...snapshot }
           const baseline = configBaselineRef.current ?? {}
 
-          if ('fallback_providers' in baseline) {committed.fallback_providers = baseline.fallback_providers}
-          else {delete committed.fallback_providers}
+          if ('fallback_providers' in baseline) {
+            committed.fallback_providers = baseline.fallback_providers
+          } else {
+            delete committed.fallback_providers
+          }
 
           const patch = diffConfig(baseline, committed)
 
@@ -270,7 +286,9 @@ function ConfigSettingsInner({
           // diffs against what's actually on disk instead of the page-load
           // (or last-baseline) copy — otherwise reverting a field to its
           // pre-save value diffs to nothing and the revert never reaches disk.
-          if (scopeEpoch.current !== epoch) {return}
+          if (scopeEpoch.current !== epoch) {
+            return
+          }
           configBaselineRef.current = committed
 
           // Mirror the saved record into the shared cache so MCP/model surfaces
@@ -312,14 +330,20 @@ function ConfigSettingsInner({
     const requestScope = writeScope ?? scopeProfile
 
     const pending = saveQueueRef.current.then(async () => {
-      if (scopeEpoch.current !== epoch) {throw new Error(c.autosaveFailed)}
+      if (scopeEpoch.current !== epoch) {
+        throw new Error(c.autosaveFailed)
+      }
       const snapshot = setNested(configBaselineRef.current ?? config ?? {}, key, value)
       const patch = setNested({}, key, value)
       const result = await saveHermesConfig(patch, requestScope)
 
-      if (!result.ok) {throw new Error(c.autosaveFailed)}
+      if (!result.ok) {
+        throw new Error(c.autosaveFailed)
+      }
 
-      if (scopeEpoch.current !== epoch) {return}
+      if (scopeEpoch.current !== epoch) {
+        return
+      }
       configBaselineRef.current = snapshot
       writeConfigCache(snapshot)
       setConfig(current => setNested(current ?? snapshot, key, value))

@@ -40,19 +40,17 @@ it('requires source/context selection, then keeps share, admission and installat
     personalPreview: vi.fn().mockResolvedValue(preview),
     personalShare: vi.fn().mockResolvedValue({ receipt }),
     personalSources: vi.fn().mockResolvedValue({ sources: [source], has_more: false }),
-    personalPrepare: vi
-      .fn()
-      .mockResolvedValue({
-        receipt,
-        candidate,
-        source: {
-          artifact_hash: source.source_transfer.artifact_hash,
-          skill: {
-            files: [{ relative_path: 'SKILL.md', content_base64: btoa('Check the report and present a table.') }]
-          },
-          decision_context: { content: context.content }
-        }
-      }),
+    personalPrepare: vi.fn().mockResolvedValue({
+      receipt,
+      candidate,
+      source: {
+        artifact_hash: source.source_transfer.artifact_hash,
+        skill: {
+          files: [{ relative_path: 'SKILL.md', content_base64: btoa('Check the report and present a table.') }]
+        },
+        decision_context: { content: context.content }
+      }
+    }),
     personalAdmit: vi.fn().mockResolvedValue({ receipt, candidate }),
     personalInstall: vi.fn().mockResolvedValue({ status: 'installed' })
   }

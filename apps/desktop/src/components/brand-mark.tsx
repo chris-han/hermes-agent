@@ -19,7 +19,11 @@ export function BrandMark({ className, ...props }: React.ComponentProps<'span'>)
       <img
         alt=""
         className="size-full object-contain"
-        src={window.hermesDesktop?.semantierProduct ? semantierLogo : assetPath(dark ? 'nous-girl-dark.png' : 'nous-girl.png')}
+        src={
+          window.hermesDesktop?.semantierProduct
+            ? semantierLogo
+            : assetPath(dark ? 'nous-girl-dark.png' : 'nous-girl.png')
+        }
       />
     </span>
   )

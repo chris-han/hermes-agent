@@ -1306,7 +1306,9 @@ export function ContribWiring({ children }: { children: ReactNode }) {
       {/* One host for every free-tier sign-in entry point (Settings › Billing,
           the statusbar chip, the first-launch intro). It owns the flow; the
           entry points only record the intent. */}
-      {!window.hermesDesktop?.semantierProduct && !isAuxiliaryWindow() && <FreeTierSignInDialog onSelectModel={selectModel} />}
+      {!window.hermesDesktop?.semantierProduct && !isAuxiliaryWindow() && (
+        <FreeTierSignInDialog onSelectModel={selectModel} />
+      )}
       <ModelPickerOverlay
         gateway={gateway || undefined}
         onSelect={selectModel}

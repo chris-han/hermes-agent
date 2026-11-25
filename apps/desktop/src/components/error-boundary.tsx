@@ -188,13 +188,16 @@ function RootErrorFallback({ error, reset }: ErrorBoundaryFallbackProps) {
         <Button onClick={() => void window.hermesDesktop?.revealLogs()?.catch(() => undefined)} variant="text">
           {t.errors.openLogs}
         </Button>
-        <Button onClick={() =>
+        <Button
+          onClick={() =>
             requestSendDiagnostics(window.hermesDesktop?.semantierProduct ? undefined : error.stack || error.message, {
               source: 'error_boundary',
               code: 'renderer_error',
               layer: 'renderer'
             })
-          } variant="text">
+          }
+          variant="text"
+        >
           {t.errors.sendDiagnostics}
         </Button>
       </ErrorState>

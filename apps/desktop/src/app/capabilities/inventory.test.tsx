@@ -46,7 +46,11 @@ it('clamps a long toolset description once in cards while list keeps its compact
 })
 
 it('uses one sliding Asimov selection indicator while preserving keyboard buttons', () => {
-  const { container } = render(<CapabilityInventory tab="sliding-view"><span>Inventory</span></CapabilityInventory>)
+  const { container } = render(
+    <CapabilityInventory tab="sliding-view">
+      <span>Inventory</span>
+    </CapabilityInventory>
+  )
   expect(container.querySelector('[data-slot="segmented-control-indicator"]')).not.toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Cards' }))
   expect(screen.getByRole('button', { name: 'Cards' }).getAttribute('aria-pressed')).toBe('true')

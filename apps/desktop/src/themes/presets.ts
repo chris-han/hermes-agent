@@ -20,7 +20,15 @@
 
 import { THEME_PRESET_PALETTES } from '@hermes/shared'
 
-import { ACTION_INK, ACTION_YELLOW, SEMANTIER_DARK_COLORS, SEMANTIER_FONT_SANS, SEMANTIER_LIGHT_COLORS, SYSTEM_MONO, SYSTEM_SANS } from '../../semantier-palette'
+import {
+  ACTION_INK,
+  ACTION_YELLOW,
+  SEMANTIER_DARK_COLORS,
+  SEMANTIER_FONT_SANS,
+  SEMANTIER_LIGHT_COLORS,
+  SYSTEM_MONO,
+  SYSTEM_SANS
+} from '../../semantier-palette'
 
 import { mixOklab } from './color'
 import { skinToDesktopTheme } from './skin'

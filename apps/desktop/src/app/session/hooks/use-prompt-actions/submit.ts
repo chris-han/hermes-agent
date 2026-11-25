@@ -57,7 +57,11 @@ import {
   writePreparedSubmission
 } from './prepared-submissions'
 import { registerRecoveredRuntime, singleFlightSessionResume, takeRecoveredRuntime } from './single-flight-resume'
-import { captureSubmissionDestination, destinationAfterCreate, sameAuthorityPublishedOwner } from './submission-destination'
+import {
+  captureSubmissionDestination,
+  destinationAfterCreate,
+  sameAuthorityPublishedOwner
+} from './submission-destination'
 import {
   acquireSubmitInFlight,
   type GatewayRequest,
@@ -459,8 +463,14 @@ export function useSubmitPrompt(deps: SubmitPromptDeps) {
         // the retry is refused once, visibly, and the entry is retired: sending
         // the words again afterwards is the user's informed new turn.
         if (retained?.legacyAttempted && retainedKey) {
-          await removePreparedSubmission(retainedKey, retained.id).catch(error => console.warn('[prepared-submission-retire]', error))
-          notify({ kind: 'warning', title: copy.promptFailed, message: translateNow('promptNotices.legacySendUnconfirmed') })
+          await removePreparedSubmission(retainedKey, retained.id).catch(error =>
+            console.warn('[prepared-submission-retire]', error)
+          )
+          notify({
+            kind: 'warning',
+            title: copy.promptFailed,
+            message: translateNow('promptNotices.legacySendUnconfirmed')
+          })
 
           return false
         }
@@ -1073,7 +1083,8 @@ export function useSubmitPrompt(deps: SubmitPromptDeps) {
 
         const prepared: NonNullable<typeof retained> = retained ?? {
           id: submissionId,
-          owner: destination.owner ?? sameAuthorityPublishedOwner(destination, targetStoredSessionId, ambientRequestGateway),
+          owner:
+            destination.owner ?? sameAuthorityPublishedOwner(destination, targetStoredSessionId, ambientRequestGateway),
           displayText: options?.displayText,
           attachments: syncedAttachments,
           text,
@@ -1212,7 +1223,10 @@ export function useSubmitPrompt(deps: SubmitPromptDeps) {
                   receiptSessionId,
                   state => ({
                     ...state,
-                    messages: result.status === 'unknown' ? state.messages : state.messages.filter(message => message.id !== optimisticId),
+                    messages:
+                      result.status === 'unknown'
+                        ? state.messages
+                        : state.messages.filter(message => message.id !== optimisticId),
                     ...(!state.turnLive &&
                       !state.streamId &&
                       !state.sawAssistantPayload && {
@@ -1278,7 +1292,9 @@ export function useSubmitPrompt(deps: SubmitPromptDeps) {
         // The gateway admitted it: a failed journal retirement (ENOSPC/EIO) must not report a
         // delivered prompt as failed and invite a resend. The identity is tombstoned first, so the
         // stale entry is never adopted again — not after a reload either.
-        await removePreparedSubmission(retryKey, prepared.id).catch(error => console.warn('[prepared-submission-retire]', error))
+        await removePreparedSubmission(retryKey, prepared.id).catch(error =>
+          console.warn('[prepared-submission-retire]', error)
+        )
 
         // The prompt is now accepted. Report the EXACT identity it landed on
         // (recovered id included) so a caller that must prove delivery — the
@@ -1308,15 +1324,27 @@ export function useSubmitPrompt(deps: SubmitPromptDeps) {
 
         if (err instanceof WorkspaceRequestStopped && err.requestId === submissionId) {
           // Withdraw only this local retry. No receipt or rollback of server effects is inferred.
-          const admitted = sessionId && $sessionStates.get()[sessionId]?.messages.some(
-            message => message.id === optimisticId && typeof message.rowId === 'number' && message.rowId > 0)
+          const admitted =
+            sessionId &&
+            $sessionStates
+              .get()
+              [sessionId]?.messages.some(
+                message => message.id === optimisticId && typeof message.rowId === 'number' && message.rowId > 0
+              )
 
-          if (!admitted) {dropOptimistic(sessionId)}
+          if (!admitted) {
+            dropOptimistic(sessionId)
+          }
 
-          if (options?.fromQueue) {removeQueuedPrompt(targetStoredSessionId ?? sessionId, submissionId)}
+          if (options?.fromQueue) {
+            removeQueuedPrompt(targetStoredSessionId ?? sessionId, submissionId)
+          }
 
-          if (attemptedJournalKey) {await removePreparedSubmission(attemptedJournalKey, submissionId)
-            .catch(error => console.warn('[prepared-submission-retire]', error))}
+          if (attemptedJournalKey) {
+            await removePreparedSubmission(attemptedJournalKey, submissionId).catch(error =>
+              console.warn('[prepared-submission-retire]', error)
+            )
+          }
 
           throw err
         }

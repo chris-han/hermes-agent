@@ -1,5 +1,11 @@
 import type { ModelOptionProvider, ModelOptionsResult, ModelPricing } from '@hermes/shared'
-import { catalogModelIssue, catalogModelMetadata, catalogModelSearchText, catalogSearchMatches, DEFAULT_REASONING_EFFORT } from '@hermes/shared'
+import {
+  catalogModelIssue,
+  catalogModelMetadata,
+  catalogModelSearchText,
+  catalogSearchMatches,
+  DEFAULT_REASONING_EFFORT
+} from '@hermes/shared'
 import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -39,7 +45,14 @@ import { modelProviderName, providerJourneyCopy } from '@/i18n/model-service'
 import { triggerHaptic } from '@/lib/haptics'
 import { isSubmitEnter } from '@/lib/ime'
 import { modelDiscoveryOwnerKey } from '@/lib/model-discovery-scope'
-import { catalogProviderMatches, modelOptionsQueryKey, providerManualModels, providerSelectableModels, requestDiscoveredModelOptions, withManualModelChoices } from '@/lib/model-options'
+import {
+  catalogProviderMatches,
+  modelOptionsQueryKey,
+  providerManualModels,
+  providerSelectableModels,
+  requestDiscoveredModelOptions,
+  withManualModelChoices
+} from '@/lib/model-options'
 import { displayModelName, modelDisplayParts } from '@/lib/model-status-label'
 import { accountResetMs, formatReset, modelResetMs } from '@/lib/provider-limit'
 import { reasoningEffortLabel } from '@/lib/reasoning-effort'
@@ -73,18 +86,34 @@ import { ModelMenuRowIcon, useModelMenuRowDecoration } from './model-menu-row-de
 export const ModelMenuCloseContext = createContext<() => void>(() => {})
 
 function canSelectModel(provider: ModelOptionProvider, model: string, manual: boolean): boolean {
-  if (catalogModelIssue(provider, model)) { return false }
+  if (catalogModelIssue(provider, model)) {
+    return false
+  }
   const isManual = manual || providerManualModels(provider).includes(model)
 
-  if ((provider.unavailable_models ?? []).some(value => normalize(value) === normalize(model))) { return false }
+  if ((provider.unavailable_models ?? []).some(value => normalize(value) === normalize(model))) {
+    return false
+  }
 
-  if (provider.eligible_models != null) { return provider.eligible_models.includes(model) }
+  if (provider.eligible_models != null) {
+    return provider.eligible_models.includes(model)
+  }
 
   return isManual || providerSelectableModels(provider).includes(model)
 }
 
-function ManualModelChip({ provider, model, locale }: { provider: ModelOptionProvider; model: string; locale: string }) {
-  if (!providerManualModels(provider).includes(model) || providerSelectableModels(provider).includes(model)) { return null }
+function ManualModelChip({
+  provider,
+  model,
+  locale
+}: {
+  provider: ModelOptionProvider
+  model: string
+  locale: string
+}) {
+  if (!providerManualModels(provider).includes(model) || providerSelectableModels(provider).includes(model)) {
+    return null
+  }
 
   return <ModelChip>{providerJourneyCopy(locale).unverified}</ModelChip>
 }
@@ -94,7 +123,12 @@ function omitUnavailable(provider: ModelOptionProvider): ModelOptionProvider {
   const allowed = provider.eligible_models == null ? null : new Set(provider.eligible_models)
 
   return excluded.size || allowed
-    ? { ...provider, models: (provider.models ?? []).filter(model => !excluded.has(normalize(model)) && (!allowed || allowed.has(model))) }
+    ? {
+        ...provider,
+        models: (provider.models ?? []).filter(
+          model => !excluded.has(normalize(model)) && (!allowed || allowed.has(model))
+        )
+      }
     : provider
 }
 
@@ -243,7 +277,9 @@ export function ModelCatalogMenu({
   const connection = useStore($connection)
   const ownerKey = modelDiscoveryOwnerKey(ownerConnectionId, connection)
   useEffect(() => {
-    if (ownerKey) {void refreshModelsOnConnectionReady(ownerConnectionId ?? connection?.connectionId ?? null, profile, connection)}
+    if (ownerKey) {
+      void refreshModelsOnConnectionReady(ownerConnectionId ?? connection?.connectionId ?? null, profile, connection)
+    }
   }, [connection, ownerConnectionId, ownerKey, profile])
   const closeMenu = useContext(ModelMenuCloseContext)
   const [search, setSearch] = useState<string>('')
@@ -269,11 +305,18 @@ export function ModelCatalogMenu({
     // Gateway-first even with no session: a connected (possibly remote)
     // gateway owns the model catalog, including virtual providers the local
     // REST fallback can't know about (#53817).
-    queryFn: (): Promise<ModelOptionsResult> => requestDiscoveredModelOptions({
-      connection, gateway, ownerConnectionId, profile, sessionId,
-      request: request ?? (<T,>(method: string, params?: Record<string, unknown>) =>
-        requestGatewayForAgent<T>(ownerConnectionId ?? connection?.connectionId ?? null, profile, method, params))
-    }),
+    queryFn: (): Promise<ModelOptionsResult> =>
+      requestDiscoveredModelOptions({
+        connection,
+        gateway,
+        ownerConnectionId,
+        profile,
+        sessionId,
+        request:
+          request ??
+          (<T,>(method: string, params?: Record<string, unknown>) =>
+            requestGatewayForAgent<T>(ownerConnectionId ?? connection?.connectionId ?? null, profile, method, params))
+      }),
     enabled: !!ownerKey
   })
 
@@ -281,10 +324,7 @@ export function ModelCatalogMenu({
 
   const error = queryErrorMessage(modelOptions.error)
 
-  const providers = useMemo(
-    () => modelOptions.data?.providers.map(omitUnavailable),
-    [modelOptions.data?.providers]
-  )
+  const providers = useMemo(() => modelOptions.data?.providers.map(omitUnavailable), [modelOptions.data?.providers])
 
   // The catalog carries MoA presets as a virtual `moa` provider row. Keep it
   // out of the main groups so presets never show up twice.
@@ -297,13 +337,16 @@ export function ModelCatalogMenu({
   const manualScope = `${ownerKey}:${profile}`
 
   const pickerProviders = useMemo(
-    () => (providers ?? [])
-      .filter(provider => provider.slug.toLowerCase() !== 'moa' && provider.authenticated !== false)
-      .map(provider => {
-        const scopedManual = customModels.filter(value => value.scope === manualScope && value.provider === provider.slug).map(value => value.model)
+    () =>
+      (providers ?? [])
+        .filter(provider => provider.slug.toLowerCase() !== 'moa' && provider.authenticated !== false)
+        .map(provider => {
+          const scopedManual = customModels
+            .filter(value => value.scope === manualScope && value.provider === provider.slug)
+            .map(value => value.model)
 
-        return withManualModelChoices(provider, scopedManual)
-      }),
+          return withManualModelChoices(provider, scopedManual)
+        }),
     [providers, customModels, manualScope]
   )
 
@@ -381,8 +424,11 @@ export function ModelCatalogMenu({
     () =>
       customSlug
         ? pickerProviders
-            .filter(provider => provider.eligible_models == null &&
-              !(provider.unavailable_models ?? []).some(model => normalize(model) === normalize(customSlug)))
+            .filter(
+              provider =>
+                provider.eligible_models == null &&
+                !(provider.unavailable_models ?? []).some(model => normalize(model) === normalize(customSlug))
+            )
             .sort(
               (a, b) =>
                 Number(catalogProviderMatches(b, current.provider)) -
@@ -402,7 +448,9 @@ export function ModelCatalogMenu({
     const variantFast = !(caps?.fast ?? false) && !!family.fastId
     const targetId = variantFast && preset.fast === true ? family.fastId! : family.id
 
-    if (!canSelectModel(provider, targetId, manual)) { return false }
+    if (!canSelectModel(provider, targetId, manual)) {
+      return false
+    }
 
     if ((await controller.select(targetId, provider.slug)) === false) {
       return false
@@ -695,9 +743,10 @@ export function ModelCatalogMenu({
 
       {!hideCatalog && <ModelDiscoveryRefreshStatus ownerKey={ownerKey} profile={profile} />}
 
-      {!hideCatalog && providers?.filter(provider => catalogProviderMatches(provider, current.provider)).map(provider => (
-        <ModelDiscoveryStatus key={provider.slug} provider={provider} />
-      ))}
+      {!hideCatalog &&
+        providers
+          ?.filter(provider => catalogProviderMatches(provider, current.provider))
+          .map(provider => <ModelDiscoveryStatus key={provider.slug} provider={provider} />)}
 
       {hideCatalog ? null : loading ? (
         <DropdownMenuGroup className="py-1">
@@ -716,7 +765,10 @@ export function ModelCatalogMenu({
         <DropdownMenuItem className={dropdownMenuRow} disabled>
           {error}
         </DropdownMenuItem>
-      ) : groups.length === 0 && favoriteRows.length === 0 && moaPresets.length === 0 && customProviders.length === 0 ? (
+      ) : groups.length === 0 &&
+        favoriteRows.length === 0 &&
+        moaPresets.length === 0 &&
+        customProviders.length === 0 ? (
         <DropdownMenuItem className={dropdownMenuRow} disabled>
           {copy.noModels}
         </DropdownMenuItem>
@@ -731,7 +783,9 @@ export function ModelCatalogMenu({
               {favoriteRows.map(({ family, provider }, index) => (
                 <Fragment key={`${provider.slug}:${family.id}`}>
                   {favoritesSpanProviders && favoriteRows[index - 1]?.provider.slug !== provider.slug ? (
-                    <DropdownMenuLabel className={favoriteProviderLabel}>{modelProviderName(provider, locale)}</DropdownMenuLabel>
+                    <DropdownMenuLabel className={favoriteProviderLabel}>
+                      {modelProviderName(provider, locale)}
+                    </DropdownMenuLabel>
                   ) : null}
                   <ModelFamilyRow
                     controller={controller}
@@ -779,14 +833,22 @@ export function ModelCatalogMenu({
                   />
                   <ProviderStatusChip className="ml-auto mr-0.5" provider={group.provider} />
                 </DropdownMenuItem>
-                {!collapsed &&
+                {!collapsed && (
                   <ProviderModelFamilies
                     families={group.families}
                     favoriteSet={favoriteSet}
                     kbRowProps={kbRowProps}
-                    rowProps={{ controller, current, defaultEffort, onSelect: selectFamily,
-                      onSubOpenChange: handleSubOpenChange, provider: group.provider, search }}
-                  />}
+                    rowProps={{
+                      controller,
+                      current,
+                      defaultEffort,
+                      onSelect: selectFamily,
+                      onSubOpenChange: handleSubOpenChange,
+                      provider: group.provider,
+                      search
+                    }}
+                  />
+                )}
               </DropdownMenuGroup>
             )
           })}
@@ -819,18 +881,23 @@ export function ModelCatalogMenu({
         </div>
       ) : null}
 
-      {!hideCatalog && pickerProviders.filter(provider => !(provider.models?.length) &&
-        (!q || foldIncludes(`${provider.name} ${provider.slug}`, q))).map(provider => (
-        <DropdownMenuItem key={`empty:${provider.slug}`} onSelect={event => {
-          event.preventDefault()
-          setSlugEntry(true)
-          setSearch('')
-          window.setTimeout(() => searchRef.current?.focus(), 0)
-        }}>
-          <span className="min-w-0 flex-1 truncate">{modelProviderName(provider, locale)}</span>
-          <span className="text-xs text-(--ui-text-tertiary)">{providerJourneyCopy(locale).enterModel}</span>
-        </DropdownMenuItem>
-      ))}
+      {!hideCatalog &&
+        pickerProviders
+          .filter(provider => !provider.models?.length && (!q || foldIncludes(`${provider.name} ${provider.slug}`, q)))
+          .map(provider => (
+            <DropdownMenuItem
+              key={`empty:${provider.slug}`}
+              onSelect={event => {
+                event.preventDefault()
+                setSlugEntry(true)
+                setSearch('')
+                window.setTimeout(() => searchRef.current?.focus(), 0)
+              }}
+            >
+              <span className="min-w-0 flex-1 truncate">{modelProviderName(provider, locale)}</span>
+              <span className="text-xs text-(--ui-text-tertiary)">{providerJourneyCopy(locale).enterModel}</span>
+            </DropdownMenuItem>
+          ))}
 
       {customSlug && customProviders.length > 0 ? (
         <div>
@@ -862,20 +929,22 @@ export function ModelCatalogMenu({
           trailing block it has always rendered. */}
       <DropdownMenuSeparator className="mx-0" />
       {footer}
-      {pickerProviders.some(provider => provider.eligible_models == null) && <DropdownMenuItem
-        className={cn(dropdownMenuRow, 'text-(--ui-text-tertiary)', slugEntry && 'text-foreground')}
-        onSelect={event => {
-          event.preventDefault()
-          setSearch('')
-          setKbOverride(null)
-          setSlugEntry(true)
-          // Radix hands focus back to the row after onSelect; refocus after.
-          window.setTimeout(() => searchRef.current?.focus(), 0)
-        }}
-      >
-        <Codicon name="add" size="0.75rem" />
-        {copyPicker.addCustomModelAction}
-      </DropdownMenuItem>}
+      {pickerProviders.some(provider => provider.eligible_models == null) && (
+        <DropdownMenuItem
+          className={cn(dropdownMenuRow, 'text-(--ui-text-tertiary)', slugEntry && 'text-foreground')}
+          onSelect={event => {
+            event.preventDefault()
+            setSearch('')
+            setKbOverride(null)
+            setSlugEntry(true)
+            // Radix hands focus back to the row after onSelect; refocus after.
+            window.setTimeout(() => searchRef.current?.focus(), 0)
+          }}
+        >
+          <Codicon name="add" size="0.75rem" />
+          {copyPicker.addCustomModelAction}
+        </DropdownMenuItem>
+      )}
       <DropdownMenuItem
         className={cn(dropdownMenuRow, 'text-(--ui-text-tertiary)')}
         onSelect={() => setModelVisibilityOpen(true)}
@@ -959,24 +1028,37 @@ interface ProviderModelFamiliesProps {
   rowProps: Omit<ModelFamilyRowProps, 'family' | 'favorite' | 'kbProps'>
 }
 
-function ProviderModelFamilies({ families, favoriteSet, kbRowProps, rowProps }: ProviderModelFamiliesProps): ReactElement {
+function ProviderModelFamilies({
+  families,
+  favoriteSet,
+  kbRowProps,
+  rowProps
+}: ProviderModelFamiliesProps): ReactElement {
   const { provider } = rowProps
 
-  return <>{families.map((family, index) => {
-    const upstream = catalogModelMetadata(provider, family.id)?.provider_display
-    const previous = index ? catalogModelMetadata(provider, families[index - 1].id)?.provider_display : undefined
+  return (
+    <>
+      {families.map((family, index) => {
+        const upstream = catalogModelMetadata(provider, family.id)?.provider_display
+        const previous = index ? catalogModelMetadata(provider, families[index - 1].id)?.provider_display : undefined
 
-    return (
-      <Fragment key={`${provider.slug}:${family.id}`}>
-        {upstream && upstream !== previous ? <DropdownMenuLabel className={favoriteProviderLabel}>{upstream}</DropdownMenuLabel> : null}
-        <ModelFamilyRow {...rowProps} family={family}
-          favorite={favoriteSet.has(favoriteModelKey(provider.slug, family.id))}
-          kbProps={kbRowProps(`${provider.slug}:${family.id}`)} />
-      </Fragment>
-    )
-  })}</>
+        return (
+          <Fragment key={`${provider.slug}:${family.id}`}>
+            {upstream && upstream !== previous ? (
+              <DropdownMenuLabel className={favoriteProviderLabel}>{upstream}</DropdownMenuLabel>
+            ) : null}
+            <ModelFamilyRow
+              {...rowProps}
+              family={family}
+              favorite={favoriteSet.has(favoriteModelKey(provider.slug, family.id))}
+              kbProps={kbRowProps(`${provider.slug}:${family.id}`)}
+            />
+          </Fragment>
+        )
+      })}
+    </>
+  )
 }
-
 
 function catalogRowLabel(provider: ModelOptionProvider, model: string, fallback: string, locale: string): string {
   const metadata = catalogModelMetadata(provider, model)
@@ -1261,9 +1343,11 @@ function groupModels(
       continue
     }
 
-    const matches = (family: ModelFamily) => catalogSearchMatches(
-      `${catalogModelSearchText(provider, family.id)} ${family.fastId ?? ''} ${displayModelName(family.id)}`, q
-    )
+    const matches = (family: ModelFamily) =>
+      catalogSearchMatches(
+        `${catalogModelSearchText(provider, family.id)} ${family.fastId ?? ''} ${displayModelName(family.id)}`,
+        q
+      )
 
     let shown: Set<string>
 
@@ -1296,7 +1380,11 @@ function groupModels(
 
     if (families.length > 0) {
       if (provider.slug === 'semantier-cloud') {
-        families.sort((a, b) => (catalogModelMetadata(provider, a.id)?.provider_display ?? '').localeCompare(catalogModelMetadata(provider, b.id)?.provider_display ?? ''))
+        families.sort((a, b) =>
+          (catalogModelMetadata(provider, a.id)?.provider_display ?? '').localeCompare(
+            catalogModelMetadata(provider, b.id)?.provider_display ?? ''
+          )
+        )
       }
 
       groups.push({ families, provider })

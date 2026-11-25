@@ -319,7 +319,6 @@ describe('ErrorBoundary portal teardown recovery', () => {
   })
 })
 
-
 it('opens the Semantier workflow from the root fallback without copying the raw exception', () => {
   const desktop = Object.getOwnPropertyDescriptor(window, 'hermesDesktop')
   Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: { semantierProduct: true } })
@@ -329,17 +328,26 @@ it('opens the Semantier workflow from the root fallback without copying the raw 
 
   try {
     const Bomb = makeBomb({ error: new Error('private credentials in error') })
-    render(<RootErrorBoundary><Bomb /></RootErrorBoundary>)
+    render(
+      <RootErrorBoundary>
+        <Bomb />
+      </RootErrorBoundary>
+    )
     fireEvent.click(screen.getByRole('button', { name: /send diagnostics/i }))
     expect(open.mock.calls[0][0].detail).toEqual({
-      source: 'error_boundary', code: 'renderer_error', layer: 'renderer'
+      source: 'error_boundary',
+      code: 'renderer_error',
+      layer: 'renderer'
     })
   } finally {
     cleanup()
     log.mockRestore()
     window.removeEventListener('semantier:send-diagnostics', open)
 
-    if (desktop) {Object.defineProperty(window, 'hermesDesktop', desktop)}
-    else {Reflect.deleteProperty(window, 'hermesDesktop')}
+    if (desktop) {
+      Object.defineProperty(window, 'hermesDesktop', desktop)
+    } else {
+      Reflect.deleteProperty(window, 'hermesDesktop')
+    }
   }
 })
