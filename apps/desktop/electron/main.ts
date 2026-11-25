@@ -16623,7 +16623,7 @@ async function dispatchRegistryApiRequest(
 
     if (method === 'GET') {
       const response = await readScopedWorkspaceDesktop(
-        connection.baseUrl, request.workspaceScope, request.path, connection.profile
+        connection.baseUrl, request.workspaceScope, request.path, connection.profile, connection.workspaceScope
       )
 
       return tagRegistrySessionResponse(request.path, response, registryConnectionId)

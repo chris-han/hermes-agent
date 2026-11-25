@@ -74,13 +74,24 @@ export function readPendingWorkspaceIdentity(target: ReturnType<typeof workspace
   return current
 }
 
-export async function readScopedWorkspaceDesktop(origin: string, scope: WorkspaceScope, path: string, profile: string) {
+export async function readScopedWorkspaceDesktop(
+  origin: string, scope: WorkspaceScope, path: string, profile: string, resolvedScope?: WorkspaceScope
+) {
   const target = workspace(origin)
   const { owned, client } = target
 
   const read = async (initialCheckFinished?: () => void) => {
     try {
-      assertWorkspaceScope(await readPendingWorkspaceIdentity(target), scope)
+      if (resolvedScope) {
+        // The registry dispatcher just obtained this scope from the same
+        // origin-owned cookie jar. Only its internal call may supply it.
+        if (scope?.userId !== resolvedScope.userId || scope?.workspaceId !== resolvedScope.workspaceId ||
+            scope?.organizationId !== resolvedScope.organizationId) {
+          throw new Error('The Semantier account or workspace changed. Reconnect before continuing.')
+        }
+      } else {
+        assertWorkspaceScope(await readPendingWorkspaceIdentity(target), scope)
+      }
     } finally {
       initialCheckFinished?.()
     }
@@ -91,7 +102,7 @@ export async function readScopedWorkspaceDesktop(origin: string, scope: Workspac
     return result
   }
 
-  if (!startupReadPaths.has(new URL(path, 'https://desktop.invalid').pathname)) {return read()}
+  if (resolvedScope || !startupReadPaths.has(new URL(path, 'https://desktop.invalid').pathname)) {return read()}
 
   let pending = pendingStartupReads.get(owned)
 

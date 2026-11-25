@@ -326,3 +326,18 @@ it('shares only the pending initial scope check across distinct startup reads', 
   await sessions()
   expect(identityReads).toBe(5)
 })
+
+it('checks a freshly resolved registry scope and revalidates after the protected read', async () => {
+  const { readScopedWorkspaceDesktop } = await import('./semantier-workspace-ipc')
+  const fetch = vi.fn()
+    .mockResolvedValueOnce(Response.json({ sessions: [] }))
+    .mockResolvedValueOnce(Response.json({ ...identity, organization_id: 'changed' }))
+  vi.mocked(session.fromPartition).mockReturnValue({ fetch } as never)
+  const origin = 'https://cloud.example'
+  const read = (resolved: typeof scope) => readScopedWorkspaceDesktop(origin, scope, '/api/sessions', 'default', resolved)
+
+  await expect(read({ ...scope, organizationId: 'other' })).rejects.toThrow('changed')
+  expect(fetch).not.toHaveBeenCalled()
+  await expect(read(scope)).rejects.toThrow('changed')
+  expect(fetch.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/api/sessions', '/auth/context'])
+})
