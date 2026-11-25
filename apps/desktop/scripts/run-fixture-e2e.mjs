@@ -223,6 +223,7 @@ export async function runFixtureE2E(options) {
       HERMES_PYTHON: python,
       HERMES_DESKTOP_PYTHON: python,
       HERMES_DESKTOP_DEV_SERVER: receipt.renderer,
+      HERMES_DESKTOP_CDP_PORT: 'off',
       PLAYWRIGHT_JSON_OUTPUT_FILE: path.join(output, 'results.json'),
       HERMES_E2E_RUN_TMP: tmp,
       TMPDIR: tmp,
