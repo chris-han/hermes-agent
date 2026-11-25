@@ -6,6 +6,8 @@ import http from 'node:http'
 import path from 'node:path'
 
 import { expect, test } from '@playwright/test'
+import type { OnCompletedListenerDetails } from 'electron'
+import { parse } from 'yaml'
 
 import { writeEnvFile } from '../../../tests-js/scripts/mock-provider-config'
 
@@ -20,7 +22,15 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
   expect(['localhost', '127.0.0.1']).toContain(new URL(origin!).hostname)
   const outage = process.env.HERMES_E2E_CATALOG_OUTAGE === '1'
   const noAccess = process.env.HERMES_E2E_EXPECT_NO_ACCESS === '1'
-  expect(outage && noAccess).toBe(false)
+  const payerRefusal = process.env.HERMES_E2E_EXPECT_PAYER_REFUSAL === '1'
+  expect([outage, noAccess, payerRefusal].filter(Boolean).length).toBeLessThanOrEqual(1)
+  const credentialsFile = process.env.HERMES_E2E_BILLING_IDENTITY_FILE
+
+  if (payerRefusal) {
+    expect(process.platform).toBe('win32')
+    expect(credentialsFile, 'Explicit disposable Billing fixture identity required').toBeTruthy()
+  }
+
   const docker = process.env.HERMES_E2E_DOCKER_CLI
 
   if (outage) { expect(docker, 'Explicit native Docker CLI required for owned network fault').toBeTruthy() }
@@ -84,6 +94,8 @@ print(hashlib.sha256((ref+'\\0'+base+'\\0'+secret).encode()).hexdigest())
     await new Promise<void>(resolve => existingSite.listen(0, '127.0.0.1', resolve))
     const existingUrl = `http://localhost:${(existingSite.address() as any).port}/login`
     const { app, page } = await fixture.launch()
+    const configPath = path.join(sandbox.hermesHome, 'config.yaml')
+    const initialModel = payerRefusal ? parse(fs.readFileSync(configPath, 'utf8')).model : undefined
     await app.evaluate(({ ipcMain, app }, trust) => {
       if (trust.fingerprint) {
         app.on('certificate-error', (event: { preventDefault(): void }, _contents: unknown, url: string, _error: string, certificate: { data: string }, callback: (trusted: boolean) => void) => {
@@ -134,7 +146,19 @@ print(hashlib.sha256((ref+'\\0'+base+'\\0'+secret).encode()).hexdigest())
       await page.mouse.click(host!.x + rect.x + rect.width / 2, host!.y + rect.y + rect.height / 2)
     }
 
-    const credentialsFile = process.env.HERMES_E2E_BILLING_IDENTITY_FILE
+    if (payerRefusal) {
+      await app.evaluate(({ webContents }, { guestId, origin }) => {
+        const guest = webContents.fromId(guestId)!
+
+        const completed: { method: string; path: string; status: number }[] = []
+
+        ;(globalThis as any).__payerRefusalRequests = completed
+        guest.session.webRequest.onCompleted({ urls: [origin + '/api/cloud-provider/device/*'] }, (details: OnCompletedListenerDetails) => {
+          if (details.webContentsId !== guestId) {return}
+          completed.push({ method: details.method, path: new URL(details.url).pathname, status: details.statusCode })
+        })
+      }, { guestId: await guest.evaluate((view: any) => view.getWebContentsId()), origin: origin! })
+    }
 
     if (credentialsFile) {
       await fixture.stage('billing.real-login', async () => {
@@ -158,6 +182,48 @@ print(hashlib.sha256((ref+'\\0'+base+'\\0'+secret).encode()).hexdigest())
         await clickGuest(['Continue With Password', '使用密码继续'], 'form button[type="submit"]')
         await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText')), { timeout: 60_000 }).toMatch(/Log out|退出登录/)
       })
+
+      if (payerRefusal) {
+        await fixture.stage('billing.payer-refusal', async () => {
+          await expect.poll(
+            () => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText')),
+            { timeout: 60_000 }
+          ).toMatch(/Billing account does not match your identity|账单账户与当前身份不匹配/)
+
+          const enabled = await guest.evaluate((view: any) => view.executeJavaScript(
+            `Array.from(document.querySelectorAll('button:not(:disabled)')).some(button =>
+              /Authorize this device|Approve device|授权此设备/.test(button.textContent))`
+          ))
+
+          expect(enabled).toBe(false)
+
+          const requests = await app.evaluate(() => (globalThis as any).__payerRefusalRequests as {
+            method: string; path: string; status: number
+          }[])
+
+          expect(requests.some(request =>
+            request.method === 'GET' && /\/device\/dci_[\w-]+$/.test(request.path) && request.status === 403
+          )).toBe(true)
+          expect(requests.some(request => request.method === 'POST' && request.path.endsWith('/approve'))).toBe(false)
+
+          const primary = await page.evaluate(async () => {
+            const desktop = (window as Window & {
+              hermesDesktop?: { connections: { list: () => Promise<{ primary: string }> } }
+            }).hermesDesktop
+
+            return (await desktop?.connections.list())?.primary
+          })
+
+          expect(primary).toBe('local')
+          const config = fs.readFileSync(configPath, 'utf8')
+          expect(parse(config).model).toEqual(initialModel)
+          expect(config).not.toContain('credential_ref:')
+          expect(fs.existsSync(path.join(sandbox.hermesHome, '.cloud-device.bin'))).toBe(false)
+        })
+
+        return
+      }
+
       await fixture.stage('billing.embedded-static-en-zh', async () => {
         await app.evaluate(({ BrowserWindow }) => {const window = BrowserWindow.getAllWindows()[0]; window.unmaximize(); window.setSize(1280, 900)})
         await expect.poll(async () => { const box=await guest.boundingBox(); const width=await guest.evaluate((view: any)=>view.executeJavaScript('innerWidth'));
@@ -205,7 +271,6 @@ print(hashlib.sha256((ref+'\\0'+base+'\\0'+secret).encode()).hexdigest())
 
     if (credentialsFile) {
       await fixture.stage('cloud.native-install-and-model', async () => {
-        const configPath = sandbox.hermesHome + '/config.yaml'
         await expect.poll(() => fs.readFileSync(configPath, 'utf8').includes('credential_ref:'), { timeout: 60_000 }).toBe(true)
         expect(fs.existsSync(sandbox.hermesHome + '/.cloud-device.bin')).toBe(true)
 
