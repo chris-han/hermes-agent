@@ -22,11 +22,12 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
   expect(['localhost', '127.0.0.1']).toContain(new URL(origin!).hostname)
   const outage = process.env.HERMES_E2E_CATALOG_OUTAGE === '1'
   const noAccess = process.env.HERMES_E2E_EXPECT_NO_ACCESS === '1'
+  const deviceBilling = process.env.HERMES_E2E_EXPECT_DEVICE_BILLING === '1'
   const payerRefusal = process.env.HERMES_E2E_EXPECT_PAYER_REFUSAL === '1'
-  expect([outage, noAccess, payerRefusal].filter(Boolean).length).toBeLessThanOrEqual(1)
+  expect([outage, noAccess, payerRefusal, deviceBilling].filter(Boolean).length).toBeLessThanOrEqual(1)
   const credentialsFile = process.env.HERMES_E2E_BILLING_IDENTITY_FILE
 
-  if (payerRefusal) {
+  if (payerRefusal || deviceBilling) {
     expect(process.platform).toBe('win32')
     expect(credentialsFile, 'Explicit disposable Billing fixture identity required').toBeTruthy()
   }
@@ -245,6 +246,42 @@ print(json.dumps({'status': state.get('status'), 'installed': bool(state.get('cr
 `], { cwd: path.resolve(import.meta.dirname, '../../..'), env: { ...env, PYTHONPATH: path.resolve(import.meta.dirname, '../../..') }, encoding: 'utf8', timeout: 20_000 })
 
           expect(JSON.parse(protectedState)).toEqual({ status: 'pending', installed: false })
+        })
+
+        return
+      }
+
+      if (deviceBilling) {
+        await fixture.stage('billing.session-payer-and-revoked-device', async () => {
+          const sessionPayer = await guest.evaluate((view: any) => view.executeJavaScript(`(async () => {
+            const response = await fetch('/api/billing/commerce/state')
+            if (!response.ok) throw new Error('Signed session billing unavailable')
+            return (await response.json()).billing_account_id
+          })()`))
+          expect(typeof sessionPayer).toBe('string')
+          expect(sessionPayer.length).toBeGreaterThan(0)
+          await clickGuest(['Authorize this device for my billing account', '授权此设备使用我的账单账户'])
+          await expect.poll(() => fs.readFileSync(configPath, 'utf8').includes('credential_ref:'), { timeout: 90_000 }).toBe(true)
+          const readDeviceBilling = () => page.evaluate(async () => {
+            const gateway = await import(/* @vite-ignore */ String('/src/store/gateway.ts'))
+            const state = await gateway.requestGatewayForProfile('default', 'billing.state', { schema_version: 'semantier.billing.v2' }, 30_000)
+
+            return { ok: state.ok, payer: state.billing_account_id ?? null, error: state.error ?? null }
+          })
+          expect(await readDeviceBilling()).toEqual({ ok: true, payer: sessionPayer, error: null })
+          // Revoke only this fixture's DPAPI-bound device. The renderer never receives its bearer.
+          const result = execFileSync(process.env.HERMES_PYTHON!, ['-P', '-c', `
+from hermes_cli.cloud_device_client import _read, credential
+import requests
+state = _read()
+origin = state['origin']
+token = credential(state['credential_ref'], base_url=origin+'/v1')
+response = requests.post(origin+'/api/cloud-provider/device/revoke', headers={'Authorization':'Bearer '+token}, json={}, allow_redirects=False, timeout=10)
+response.raise_for_status()
+print(response.json()['status'])
+`], { cwd: path.resolve(import.meta.dirname, '../../..'), env: { ...env, PYTHONPATH: path.resolve(import.meta.dirname, '../../..') }, encoding: 'utf8', timeout: 20_000 })
+          expect(result.trim()).toBe('revoked')
+          expect(await readDeviceBilling()).toEqual({ ok: false, payer: null, error: 'unauthenticated' })
         })
 
         return
