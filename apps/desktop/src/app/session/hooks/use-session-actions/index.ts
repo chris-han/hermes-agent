@@ -2043,13 +2043,15 @@ export function useSessionActions({
         let prefetchedStoredSessionId: string | null = null
         let prefetchedTranscriptMessages: ChatMessage[] | null = null
 
-        // REST transcript prefetch and the gateway resume RPC are independent
-        // — run them concurrently so a big session's wall time is
-        // max(prefetch, resume) instead of their sum. The prefetch paints the
-        // transcript as soon as it lands; the RPC binds the runtime id.
-        // Watch windows skip the prefetch — lazy resume attaches the live mirror.
+        // For native gateways, the REST transcript can paint while resume
+        // binds the runtime. Cloud Main resume already reads that persisted
+        // transcript through the signed bridge, so avoid a second cold read.
+        // Watch windows use lazy resume to attach their live mirror.
+        const connection = $connection.get()
+        const mainResumeReadsPersistedHistory = connection?.transport === 'semantier-workspace-http' &&
+          connection.connectionId === resolvedConnectionId && normalizeProfileKey(sessionProfile) === 'default'
         const prefetchPromise =
-          watchWindow || options?.authoritativeSnapshot
+          watchWindow || options?.authoritativeSnapshot || mainResumeReadsPersistedHistory
             ? null
             : getLatestSessionMessages(storedSessionId, sessionRestScope)
 
