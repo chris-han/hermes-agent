@@ -185,12 +185,13 @@ export type WorkspaceProjectHead = WorkspaceProjectDraft & {
 export type TutorCitation = { evidence: WorkspaceProjectPin; source_version: string; source_block_id: string; locator: {selector: {exact_quote?: string}} | null }
 
 export type TutorProgress = {
+  release: {id: string; source: string; path: string; version: string; package_ref: string; content_hash: string}
   project_ref: string
   plan_ref: string
   revision: number
-  objectives: { objective_ref: string; title?: string; archived: boolean
+  objectives: { objective_ref: string; title?: string; archived: boolean; status: string; knowledge_type?: string; mastery?: {estimate: number | null}
     lessons: { lesson: WorkspaceProjectPin; explanation: string | null; sources: TutorCitation[] }[]
-    assessments: { attempt_ref: string; feedback: string; result: string; sources: TutorCitation[] }[] }[]
+    assessments: { attempt_ref: string; feedback: string; result: string; assistance: string; submitted_at: string; assessment: WorkspaceProjectPin; sources: TutorCitation[] }[] }[]
 }
 
 export type WorkspaceProjectContinuation = {

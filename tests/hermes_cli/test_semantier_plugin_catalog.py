@@ -27,3 +27,13 @@ def test_selected_release_survives_lookup_and_tree_check(monkeypatch, tmp_path):
     (tmp_path / "plugin.yaml").write_bytes(data + b" ")
     with pytest.raises(ValueError):
         catalog.verify_release_tree(release, manifest, tmp_path)
+
+
+def test_connected_progress_requires_exact_installed_provider(monkeypatch):
+    from hermes_cli import plugins_cmd_git
+    release = {"id": f"{catalog.REPO}/plugins/tutor", "package_ref": "a"*40}
+    monkeypatch.setattr(plugins_cmd_git, "_read_install_metadata", lambda: {
+        "tutor": {"pinned": True, "revision": release["package_ref"], "catalog": {"name": "tutor"}}
+    })
+    with pytest.raises(ValueError, match="matching Semantier Tutor"):
+        catalog.project_installed_tutor_progress(release, "project", "plan", [])

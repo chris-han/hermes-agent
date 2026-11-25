@@ -55,3 +55,41 @@ def verify_release_tree(release, manifest, root):
             digest.update(relative.as_posix().encode() + b"\0" + file.read_bytes() + b"\0")
     if "sha256:" + digest.hexdigest() != release["content_hash"]:
         raise ValueError("Semantier package differs from the selected content hash")
+
+
+def project_installed_tutor_progress(release, project_ref, plan_ref, objectives):
+    """Use installed Tutor to project grades supplied by the connected Workspace."""
+    import inspect
+    from pathlib import Path
+
+    from hermes_cli.plugins import discover_plugins, get_plugin_manager
+    from hermes_cli.plugins_cmd_git import _read_install_metadata
+    from hermes_cli.plugins_cmd_install import _read_manifest_for_install
+    from tools.registry import registry
+
+    record = _read_install_metadata().get("tutor", {})
+    if (not isinstance(release, dict) or release.get("id") != f"{REPO}/plugins/tutor"
+            or record.get("semantier_release") != release or record.get("revision") != release.get("package_ref")
+            or record.get("pinned") is not True):
+        raise ValueError("Install the matching Semantier Tutor release in this profile")
+    manager = get_plugin_manager()
+    installed = manager.home_path / "plugins" / "tutor"
+    verify_release_tree(release, _read_manifest_for_install(installed), installed)
+    discover_plugins()
+    entry = registry.snapshot_registration("tutor_progress", scope=manager.scope_key)
+    if not entry or entry.toolset != "tutor" or not any(
+            row["name"] == "tutor" and row["enabled"] and row["version"] == release["version"]
+            for row in manager.list_plugins()):
+        raise ValueError("Enable the installed Tutor toolset")
+    origin = inspect.getsourcefile(entry.handler)
+    if not origin or not Path(origin).resolve().is_relative_to(installed.resolve()):
+        raise ValueError("Tutor handler origin mismatch")
+    args = {"project_ref": project_ref, "plan_ref": plan_ref}
+
+    def progress(name, arguments):
+        if name != "tutor_progress" or arguments != args:
+            raise ValueError("Invalid Tutor operation")
+        return {"objectives": objectives}
+
+    result = json.loads(registry.dispatch("tutor_progress", args, scope=manager.scope_key, tutor_core=progress))
+    return {"mastery": [objective["mastery"] for objective in result["objectives"]], "release": release}

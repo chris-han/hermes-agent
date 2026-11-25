@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useI18n } from '@/i18n'
+import { activeGatewayProfileKey, requestGatewayForAgent } from '@/store/gateway'
 
 import type {
   TutorCitation, TutorProgress, WorkspaceProject, WorkspaceProjectContinuation, WorkspaceProjectDraft,
@@ -38,7 +39,21 @@ function TutorResume({ origin, scope, project, plan, title }: {
     setFailed(false)
     setProgress(null)
     void window.hermesDesktop.workspace!.tutorProgress(origin, { userId, organizationId, workspaceId }, project, plan)
-      .then(value => { if (active) {setProgress(value)} }).catch(() => { if (active) {setFailed(true)} })
+      .then(async value => {
+        if (!active) {return}
+
+        const objectives = value.objectives.map(obj => ({status: obj.status, knowledge_type: obj.knowledge_type,
+          assessments: obj.assessments.map(({result, assistance, submitted_at, assessment}) => ({result, assistance, submitted_at, assessment}))}))
+
+        const local = await requestGatewayForAgent<{mastery: {estimate: number | null}[]; release: TutorProgress['release']}>(
+          'local', activeGatewayProfileKey(), 'plugins.semantier.tutor.progress',
+          {project_ref: project, plan_ref: plan, release: value.release, objectives}, 20000)
+
+        if (local.release.package_ref !== value.release.package_ref || local.mastery.length !== objectives.length)
+          {throw new Error('Tutor release or progress mismatch')}
+
+        if (active) {setProgress({...value, objectives: value.objectives.map((obj,index) => ({...obj, mastery: local.mastery[index]}))})}
+      }).catch(() => { if (active) {setFailed(true)} })
 
     return () => { active = false }
   }, [open, origin, userId, organizationId, workspaceId, project, plan])
@@ -49,6 +64,7 @@ function TutorResume({ origin, scope, project, plan, title }: {
     {progress?.objectives.map(obj => <section key={obj.objective_ref}>
       <h3>{obj.title ?? (locale === 'zh' ? '材料不可用' : 'Material unavailable')}
         {obj.archived && (locale === 'zh' ? '（历史目标）' : ' (archived)')}</h3>
+      {obj.mastery?.estimate != null && <p>{locale === 'zh' ? '掌握度估计' : 'Estimated mastery'} · {Math.round(obj.mastery.estimate * 100)}%</p>}
       {obj.lessons.map(item => <div key={item.lesson.artifact_ref}><p>{item.explanation}</p>
         <TutorCitations locale={locale} sources={item.sources} />
       </div>)}

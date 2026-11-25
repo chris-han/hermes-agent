@@ -74,5 +74,17 @@ def list_catalog(rid, params: dict) -> dict:
     ]})
 
 
+@method("plugins.semantier.tutor.progress")
+@_profile_scoped
+def project_tutor_progress(rid, params: dict) -> dict:
+    from hermes_cli.semantier_plugin_catalog import project_installed_tutor_progress
+    try:
+        result = project_installed_tutor_progress(params["release"], params["project_ref"], params["plan_ref"],
+                                                  params["objectives"])
+    except (KeyError, TypeError, OSError, ValueError) as exc:
+        return _err(rid, 5026, str(exc))
+    return _ok(rid, result)
+
+
 def register(server) -> None:
     bind_module(globals(), server, skip=("_",))
