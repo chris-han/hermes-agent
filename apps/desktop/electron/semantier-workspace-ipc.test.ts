@@ -253,3 +253,27 @@ it('withholds a Project continuation response after the Workspace account change
   await expect(handler({} as never, 'https://cloud.example', scope, 'project:' + 'a'.repeat(32))).rejects.toThrow('changed')
   expect(fetch).toHaveBeenCalledTimes(3)
 })
+
+it('joins overlapping startup inventory reads and rejects a changed scope before delivery', async () => {
+  const { readScopedWorkspaceDesktop } = await import('./semantier-workspace-ipc')
+  let release!: (value: Response) => void
+  const first = new Promise<Response>(resolve => { release = resolve })
+
+  const fetch = vi.fn().mockReturnValueOnce(first)
+    .mockResolvedValueOnce(Response.json({ sessions: [] }))
+    .mockResolvedValueOnce(Response.json({ ...identity, organization_id: 'changed' }))
+    .mockResolvedValueOnce(Response.json(identity))
+    .mockResolvedValueOnce(Response.json({ sessions: [] }))
+    .mockResolvedValueOnce(Response.json(identity))
+
+  vi.mocked(session.fromPartition).mockReturnValue({ fetch } as unknown as ReturnType<typeof session.fromPartition>)
+  const read = () => readScopedWorkspaceDesktop('https://cloud.example', scope, '/api/profiles/sessions/sidebar', 'default')
+  const requests = [read(), read()]
+  expect(fetch).toHaveBeenCalledTimes(1)
+  release(Response.json(identity))
+  const results = await Promise.allSettled(requests)
+  expect(results.every(result => result.status === 'rejected' && /changed/.test(String(result.reason)))).toBe(true)
+  expect(fetch).toHaveBeenCalledTimes(3)
+  await expect(read()).resolves.toMatchObject({ recents: { sessions: [] } })
+  expect(fetch).toHaveBeenCalledTimes(6)
+})

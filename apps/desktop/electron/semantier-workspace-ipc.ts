@@ -4,8 +4,7 @@ import { BrowserWindow, ipcMain, session } from 'electron'
 
 import type {ManagedDeviceEnrollment} from './managed-device-enrollment'
 import type {PersonalCapabilitySync,PersonalPin,PersonalSnapshot} from './personal-capability-sync'
-import { assertWorkspaceScope, createSemantierWorkspaceClient, type ManagedDeviceInventory, type ManagedDevicePermission, requireNativeCompletion, requireWorkspaceCompletion, WORKSPACE_USER_STOP_ERROR, type WorkspaceHistory, type WorkspaceIdentity, type WorkspaceMainContext, type WorkspaceNativeCancellation, type WorkspaceNativeSnapshot, type WorkspaceNativeSubmission, type WorkspaceScope, type WorkspaceWinmanProfile, type WinmanCapability, type PersistentFollowup } from './semantier-workspace-client'
-
+import { assertWorkspaceScope, createSemantierWorkspaceClient, type ManagedDeviceInventory, type ManagedDevicePermission, type PersistentFollowup, requireNativeCompletion, requireWorkspaceCompletion, type WinmanCapability, WORKSPACE_USER_STOP_ERROR, workspaceDesktopRead, type WorkspaceHistory, type WorkspaceIdentity, type WorkspaceMainContext, type WorkspaceNativeCancellation, type WorkspaceNativeSnapshot, type WorkspaceNativeSubmission, type WorkspaceScope, type WorkspaceWinmanProfile } from './semantier-workspace-client'
 import type { WorkspaceProject, WorkspaceProjectCommit, WorkspaceProjectContinuation, WorkspaceProjectHead, WorkspaceProjectMaterials, WorkspaceProjectPin } from './semantier-workspace-client'
 
 export { assertWorkspaceScope } from './semantier-workspace-client'
@@ -57,6 +56,47 @@ export function workspace(origin: string) {
   const owned = session.fromPartition(partition)
 
   return { owned, origin: canonicalOrigin, client: createSemantierWorkspaceClient(canonicalOrigin, owned.fetch.bind(owned)) }
+}
+
+const startupReadPaths = new Set(['/api/profiles', '/api/sessions', '/api/profiles/sessions', '/api/profiles/sessions/sidebar'])
+const pendingStartupReads = new WeakMap<object, Map<string, Promise<unknown>>>()
+
+export async function readScopedWorkspaceDesktop(origin: string, scope: WorkspaceScope, path: string, profile: string) {
+  const { owned, client } = workspace(origin)
+
+  const read = async (initialCheckFinished?: () => void) => {
+    try {
+      assertWorkspaceScope(await client.identity(), scope)
+    } finally {
+      initialCheckFinished?.()
+    }
+
+    const result = await workspaceDesktopRead(client, path, profile)
+    assertWorkspaceScope(await client.identity(), scope)
+
+    return result
+  }
+
+  if (!startupReadPaths.has(new URL(path, 'https://desktop.invalid').pathname)) {return read()}
+
+  let pending = pendingStartupReads.get(owned)
+
+  if (!pending) {
+    pending = new Map()
+    pendingStartupReads.set(owned, pending)
+  }
+
+  const key = JSON.stringify([scope?.userId, scope?.organizationId, scope?.workspaceId, profile, path])
+  const existing = pending.get(key)
+
+  if (existing) {return existing}
+
+  // Join only while the initial signed check is in flight. A later caller must
+  // run its own check before starting a new server read.
+  const operation = read(() => pending.delete(key))
+  pending.set(key, operation)
+
+  return operation
 }
 
 export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string, authenticated: boolean) => void, beforeAccountChange?: (origin:string)=>Promise<void>, enrollment?:ManagedDeviceEnrollment, personal?:PersonalCapabilitySync): void {

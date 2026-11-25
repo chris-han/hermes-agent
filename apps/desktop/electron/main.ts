@@ -21,12 +21,11 @@ import { looksBinary, previewFileMetadata } from './main_file_preview'
 import {ManagedDeviceEnrollment} from './managed-device-enrollment'
 import {runManagedDeviceKey} from './managed-device-key-process'
 import { PersonalCapabilitySync } from './personal-capability-sync'
-import { assertWorkspaceScope, registerSemantierWorkspaceIpc, workspace as semantierWorkspace } from './semantier-workspace-ipc'
+import { assertWorkspaceScope, readScopedWorkspaceDesktop, registerSemantierWorkspaceIpc, workspace as semantierWorkspace } from './semantier-workspace-ipc'
 import { registerSemantierFeedbackIpc } from './updater/semantier-feedback-ipc'
 
 const workspaceAccountGenerations = new Map<string, number>()
 import { JourneyObservations } from './journey-observations'
-import { workspaceDesktopRead } from './semantier-workspace-client'
 let journeyObservations: JourneyObservations | null = null
 import { SemantierObservations } from './updater/semantier-observations'
 const localGatewayDials = createLocalGatewayDials()
@@ -15831,12 +15830,7 @@ async function fetchJsonForBackend(
       throw new Error('This Semantier Workspace Desktop mutation is not implemented.')
     }
 
-    const { client } = semantierWorkspace(descriptor.baseUrl)
-    assertWorkspaceScope(await client.identity(), descriptor.workspaceScope)
-    const result = await workspaceDesktopRead(client, path, descriptor.profile)
-    assertWorkspaceScope(await client.identity(), descriptor.workspaceScope)
-
-    return result
+    return readScopedWorkspaceDesktop(descriptor.baseUrl, descriptor.workspaceScope, path, descriptor.profile)
   }
 
   const url = `${descriptor.baseUrl}${path}`
@@ -16626,12 +16620,14 @@ async function dispatchRegistryApiRequest(
       throw new Error('This Semantier Workspace Desktop mutation is not implemented.')
     }
 
+    if (method === 'GET') {
+      return readScopedWorkspaceDesktop(connection.baseUrl, request.workspaceScope, request.path, connection.profile)
+    }
+
     const { client } = semantierWorkspace(connection.baseUrl)
     assertWorkspaceScope(await client.identity(), request.workspaceScope)
 
-    const result = method === 'GET'
-      ? await workspaceDesktopRead(client, request.path, connection.profile)
-      : await client.setMainModel(request.body, request.workspaceScope)
+    const result = await client.setMainModel(request.body, request.workspaceScope)
 
     assertWorkspaceScope(await client.identity(), request.workspaceScope)
 
