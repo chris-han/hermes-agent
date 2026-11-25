@@ -139,9 +139,14 @@ function FollowupScope({ origin }: { origin?: string }) {
       {enabled && status?.execution === 'ready' && <details className="text-xs text-muted-foreground">
         <summary className="cursor-pointer">{zh ? '如何安排跟进' : 'How to schedule a follow-up'}</summary>
         <p className="mt-1">{zh
-          ? '在 Main 的来源会话中，用下列命令为已确认的来源安排提醒，时间须带时区。'
-          : 'In the original Main conversation, schedule the confirmed source using a time with its time zone.'}</p>
-        <code className="mt-1 block break-words">/followup create selected &lt;ISO 8601&gt;</code>
+          ? '在原始 Main 会话中确认来源 SHA-256、选择已授权的 Cloud 模型，并从该会话打开对应 Winman Bot Chat。时间使用带时区的 ISO 8601 格式。'
+          : 'In the original Main conversation, confirm the source SHA-256, select an entitled Cloud model, and open its linked Winman Bot Chat. Use an ISO 8601 time with a time zone.'}</p>
+        <p className="mt-2">{zh ? '仅创建提醒' : 'Reminder only'}</p>
+        <code className="mt-1 block break-words">/followup create selected &lt;ISO_8601_WITH_TZ&gt;</code>
+        <p className="mt-2">{zh ? '授权一次自主延续（原预算上限 CNY 0.01）' : 'Authorize one autonomous continuation (existing CNY 0.01 cap)'}</p>
+        <code className="mt-1 block break-words">/followup arm &lt;SOURCE_SHA256&gt; &lt;ISO_8601_WITH_TZ&gt; CNY0.01 &lt;EVENT&gt;</code>
+        <p className="mt-2">{zh ? '在 Main 中读取同一任务的结果' : 'Read the same task result in Main'}</p>
+        <code className="mt-1 block break-words">/followup read &lt;WORK_ID&gt;</code>
       </details>}
       {readyForWork && items.length > 0 && <ul className="grid max-h-40 gap-2 overflow-auto">
         {items.map(item => <li className="grid gap-1 border-t pt-2" data-work-id={item.id} key={item.id}>

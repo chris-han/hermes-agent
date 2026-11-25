@@ -73,3 +73,16 @@ it('keeps capability visible when the separate work read is denied', async () =>
   expect(toggle.getAttribute('aria-checked')).toBe('true')
   expect(toggle.hasAttribute('disabled')).toBe(false)
 })
+
+it('shows explicit scheduled Winman arming and readback commands in the ready panel', async () => {
+  const api = workspaceApi()
+  api.winmanCapability.mockResolvedValue({ desired: { enabled: true, revision: 1 }, execution: 'ready' })
+  api.persistentFollowups.mockResolvedValue({ items: [] })
+
+  render(<PersistentFollowupPanel />)
+  expect(await screen.findByText('On · Ready')).toBeTruthy()
+  fireEvent.click(screen.getByText('How to schedule a follow-up'))
+  expect(screen.getByText('/followup arm <SOURCE_SHA256> <ISO_8601_WITH_TZ> CNY0.01 <EVENT>')).toBeTruthy()
+  expect(screen.getByText('/followup read <WORK_ID>')).toBeTruthy()
+  expect(screen.getByText('/followup create selected <ISO_8601_WITH_TZ>')).toBeTruthy()
+})
