@@ -144,6 +144,20 @@ print(hashlib.sha256((ref+'\\0'+base+'\\0'+secret).encode()).hexdigest())
     }
 
     if (payerRefusal) {
+      // Hold the genuine account response at the guest boundary until the user sees the denial.
+      await guest.evaluate((view: any) => view.executeJavaScript(`(() => {
+        const original = window.fetch.bind(window)
+        const gate = new Promise(resolve => { window.releaseBillingAccountRead = resolve })
+        window.fetch = async (...args) => {
+          const response = await original(...args)
+          if (new URL(response.url).pathname.endsWith('/self-account') && response.ok) {
+            window.billingAccountReadHeld = true
+            await gate
+            window.billingAccountReadReleased = true
+          }
+          return response
+        }
+      })()`))
       await app.evaluate(({ webContents }, { guestId, origin }) => {
         const guest = webContents.fromId(guestId)!
 
@@ -186,6 +200,13 @@ print(hashlib.sha256((ref+'\\0'+base+'\\0'+secret).encode()).hexdigest())
             () => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText')),
             { timeout: 60_000 }
           ).toMatch(/Billing account does not match your identity|账单账户与当前身份不匹配/)
+
+          await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('window.billingAccountReadHeld === true'))).toBe(true)
+          await guest.evaluate((view: any) => view.executeJavaScript('window.releaseBillingAccountRead()'))
+          await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('window.billingAccountReadReleased === true'))).toBe(true)
+          await guest.evaluate((view: any) => view.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))'))
+          await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText')))
+            .toMatch(/Billing account does not match your identity|账单账户与当前身份不匹配/)
 
           const enabled = await guest.evaluate((view: any) => view.executeJavaScript(
             `Array.from(document.querySelectorAll('button:not(:disabled)')).some(button =>
