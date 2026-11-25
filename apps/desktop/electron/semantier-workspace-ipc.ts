@@ -99,9 +99,13 @@ export async function readScopedWorkspaceDesktop(
     }
   }
 
+  // The registry's two inventory consumers can arrive after its own dial
+  // check. Give those reads the same fresh coalescing boundary as Main IPC.
+  const checkBeforeRead = !resolvedScope || (url.pathname === '/api/sessions' && profile === 'default')
+
   const read = async (initialCheckFinished?: () => void) => {
     try {
-      if (!resolvedScope) {
+      if (checkBeforeRead) {
         assertWorkspaceScope(await readPendingWorkspaceIdentity(target), scope)
       }
     } finally {
@@ -127,7 +131,7 @@ export async function readScopedWorkspaceDesktop(
   const existing = pending.get(key)
 
   if (existing) {return existing}
-  if (resolvedScope) {return read()}
+  if (!checkBeforeRead) {return read()}
 
   // Join only while the initial signed check is in flight. A later caller must
   // run its own check before starting a new server read.

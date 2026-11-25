@@ -265,12 +265,15 @@ it('shares the signed default sidebar inventory with the actual native Main IPC'
   vi.mocked(ipcMain.handle).mockClear()
   registerSemantierWorkspaceIpc()
   const handler = vi.mocked(ipcMain.handle).mock.calls.find(([name]) => name === 'hermes:workspace:sessions')![1]
-  const native = handler({} as never, 'https://cloud.example', scope)
   const desktop = readScopedWorkspaceDesktop('https://cloud.example', scope,
     '/api/profiles/sessions/sidebar?recents_profile=default&recents_limit=40', 'default', scope)
+  const registry = readScopedWorkspaceDesktop('https://cloud.example', scope, '/api/sessions', 'default', scope)
+  const native = handler({} as never, 'https://cloud.example', scope)
   expect(fetch).toHaveBeenCalledTimes(1)
   release(Response.json(identity))
-  const [a, b] = await Promise.all([native, desktop])
+  const [a, b, c] = await Promise.all([native, desktop, registry])
+
+  expect(c).toEqual(a)
   expect(a).toMatchObject({ sessions: [{ key: 'main-a', id: 'main-a', title: 'Main' }] })
   expect(b).toMatchObject({ recents: { sessions: a.sessions }, cron: { unavailable: true }, messaging: { unavailable: true } })
   expect(fetch).toHaveBeenCalledTimes(3)
@@ -331,6 +334,7 @@ it('shares only the pending initial scope check across distinct startup reads', 
 it('checks a freshly resolved registry scope and revalidates after the protected read', async () => {
   const { readScopedWorkspaceDesktop } = await import('./semantier-workspace-ipc')
   const fetch = vi.fn()
+    .mockResolvedValueOnce(Response.json(identity))
     .mockResolvedValueOnce(Response.json({ sessions: [] }))
     .mockResolvedValueOnce(Response.json({ ...identity, organization_id: 'changed' }))
   vi.mocked(session.fromPartition).mockReturnValue({ fetch } as never)
@@ -340,5 +344,5 @@ it('checks a freshly resolved registry scope and revalidates after the protected
   await expect(read({ ...scope, organizationId: 'other' })).rejects.toThrow('changed')
   expect(fetch).not.toHaveBeenCalled()
   await expect(read(scope)).rejects.toThrow('changed')
-  expect(fetch.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/api/sessions', '/auth/context'])
+  expect(fetch.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/auth/context', '/api/sessions', '/auth/context'])
 })
