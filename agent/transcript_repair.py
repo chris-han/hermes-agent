@@ -8,7 +8,7 @@ import hashlib
 import sqlite3
 from typing import Any, Callable, Dict, List, Mapping
 
-from agent.context_compressor import _DB_PERSISTED_MARKER
+from agent.compression_marker import _DB_PERSISTED_MARKER
 from agent.message_metadata import (
     CANONICAL_ROW, DB_ROW_SNAPSHOT, MESSAGE_UID, copy_identity_fields, message_uid_or_none)
 from hermes_state_common import _id_chunks, _placeholders

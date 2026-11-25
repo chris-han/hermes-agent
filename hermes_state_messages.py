@@ -11,10 +11,7 @@ import re
 import time
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from agent.context_compressor import (
-    _DB_PERSISTED_MARKER as _DB_PERSISTED_MARKER_KEY, MODEL_ONLY_DISPLAY_METADATA_KEY, _is_checkpoint_item,
-    _newest_checkpoint_carrier, split_user_originated_turn)
-from agent.memory_manager import sanitize_context
+from agent.compression_marker import _DB_PERSISTED_MARKER as _DB_PERSISTED_MARKER_KEY, MODEL_ONLY_DISPLAY_METADATA_KEY
 from agent.message_metadata import (
     CANONICAL_ROW, DB_ROW_SNAPSHOT, MESSAGE_UID, TOOL_CALL_UID, TOOL_CALL_UIDS,
     index_tool_call_uids, message_uid_or_none, resolve_tool_call_uid, mint_uid, stamp_message_uid)
@@ -836,6 +833,8 @@ class SessionMessagesMixin(SessionMessageCleanupMixin):
 
     def _prune_shadowed_checkpoints(self, conn, session_id: str, live_messages: list[dict[str, Any]]) -> None:
         """Keep only the newest checkpoint among *live_messages* (inserted rows carrying ``_row_id``)."""
+        from agent.context_compressor import _newest_checkpoint_carrier
+
         carrier = _newest_checkpoint_carrier(live_messages, "codex_reasoning_items")
         if carrier >= 0 and isinstance(live_messages[carrier].get("_row_id"), int):
             self._drop_shadowed_checkpoint_rows(conn, session_id, live_messages[carrier]["_row_id"])
@@ -846,6 +845,8 @@ class SessionMessagesMixin(SessionMessageCleanupMixin):
         every assistant response re-persists a ~120 KB checkpoint the wire builder will never replay once a
         newer one lands, and local compaction — the only other prune site — rarely fires (#102374).
         Non-checkpoint items stay; returns rows rewritten."""
+        from agent.context_compressor import _is_checkpoint_item
+
         rewritten = 0
         for row_id, raw in conn.execute(_SHADOWED_CHECKPOINT_ROWS_SQL, (session_id, carrier_row_id)).fetchall():
             items = _json_or(raw, None, "Ignoring malformed codex_reasoning_items on message row")
@@ -933,6 +934,8 @@ class SessionMessagesMixin(SessionMessageCleanupMixin):
         """Content as ``_rows_to_messages`` hands it to callers: user/assistant strings are sanitized and
         stripped on load, so a reloaded session's messages must be compared to rows through the same lens."""
         if role in {"user", "assistant"} and isinstance(content, str):
+            from agent.memory_manager import sanitize_context
+
             return sanitize_context(content).strip()
         return content
 
@@ -1240,6 +1243,8 @@ class SessionMessagesMixin(SessionMessageCleanupMixin):
         """Historical display identity, including normalized live content from user handoff carriers."""
         dedupe_content = row["content"]
         if row["role"] == "user":
+            from agent.context_compressor import split_user_originated_turn
+
             handoff, live_view = split_user_originated_turn({
                 "role": "user", "content": self._decode_content(row["content"]),
                 "display_kind": row["display_kind"],
@@ -1826,6 +1831,8 @@ class SessionMessagesMixin(SessionMessageCleanupMixin):
         """Return canonical live content and whether *msg* is composite."""
         if msg.get("role") != "user":
             return None, False
+        from agent.context_compressor import split_user_originated_turn
+
         handoff, live_view = split_user_originated_turn(msg)
         is_composite = handoff is not None and live_view is not None
         return live_view.get("content") if is_composite else msg.get("content"), is_composite
@@ -1880,6 +1887,9 @@ class SessionMessagesMixin(SessionMessageCleanupMixin):
         non-user-originated / missing composite carrier; ``RuntimeError``: live payload changed."""
         if not target_row.get("active"):
             raise ValueError("rewind target is not active")
+        from agent.context_compressor import split_user_originated_turn
+        from agent.memory_manager import sanitize_context
+
         handoff, live_view = split_user_originated_turn({
             **target_row, "content": self._decode_content(target_row.get("content")),
             "display_metadata": self._decode_display_metadata(target_row.get("display_metadata"))})
