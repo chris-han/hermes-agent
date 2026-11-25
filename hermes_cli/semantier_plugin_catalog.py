@@ -1,15 +1,15 @@
 """Resolve pinned Semantier plugin releases from the provider's public index."""
 import json
 import re
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 
 REPO = "chris-han/semantier-skills"
-INDEX = f"https://raw.githubusercontent.com/{REPO}/main/marketplace/index.json"
+INDEX = f"https://api.github.com/repos/{REPO}/contents/marketplace/index.json?ref=main"
 
 
 def load_semantier_plugin_catalog():
-    with urlopen(INDEX, timeout=10) as response:
+    with urlopen(Request(INDEX, headers={"Accept": "application/vnd.github.raw+json"}), timeout=10) as response:
         document = json.load(response)
     rows = {}
     for row in document["skills"]:
