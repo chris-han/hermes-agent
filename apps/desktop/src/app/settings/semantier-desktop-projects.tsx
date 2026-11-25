@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input'
 import { useI18n } from '@/i18n'
 
 import type {
-  TutorProgress, WorkspaceProject, WorkspaceProjectContinuation, WorkspaceProjectDraft,
+  TutorCitation, TutorProgress, WorkspaceProject, WorkspaceProjectContinuation, WorkspaceProjectDraft,
   WorkspaceProjectHead, WorkspaceProjectMaterials, WorkspaceProjectPin, WorkspaceScope
 } from '../../../electron/semantier-workspace-client'
 
@@ -15,6 +15,14 @@ const initial = { goal: '', question: '', claim: '', rationale: '' }
 const headPin = (head: WorkspaceProjectHead): WorkspaceProjectPin => ({
   artifact_kind: 'project_semantic_head', artifact_ref: head.artifact_ref, artifact_hash: head.artifact_hash
 })
+
+function TutorCitations({ sources, locale }: { sources: TutorCitation[]; locale: string }) {
+  return <>{sources.map(source => <details key={source.evidence.artifact_ref}>
+    <summary>{locale === 'zh' ? '查看原文' : 'View source passage'} · {source.source_block_id}</summary>
+    <blockquote className="border-l pl-3">{source.locator?.selector.exact_quote}</blockquote>
+    <small className="block break-all">{source.evidence.artifact_ref} · {source.source_version}</small>
+  </details>)}</>
+}
 
 function TutorResume({ origin, scope, project, plan, title }: {
   origin: string; scope: WorkspaceScope; project: string; plan: string; title: string
@@ -42,11 +50,10 @@ function TutorResume({ origin, scope, project, plan, title }: {
       <h3>{obj.title ?? (locale === 'zh' ? '材料不可用' : 'Material unavailable')}
         {obj.archived && (locale === 'zh' ? '（历史目标）' : ' (archived)')}</h3>
       {obj.lessons.map(item => <div key={item.lesson.artifact_ref}><p>{item.explanation}</p>
-        {item.sources.map(source => <small className="block break-all" key={source.evidence.artifact_ref}>
-          {source.evidence.artifact_ref} · {source.source_version}
-        </small>)}
+        <TutorCitations locale={locale} sources={item.sources} />
       </div>)}
-      {obj.assessments.map(item => <p key={item.attempt_ref}>{item.result} · {item.feedback}</p>)}
+      {obj.assessments.map(item => <div key={item.attempt_ref}><p>{item.result} · {item.feedback}</p>
+        <TutorCitations locale={locale} sources={item.sources} /></div>)}
     </section>)}
   </details>
 }

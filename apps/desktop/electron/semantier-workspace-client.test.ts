@@ -236,6 +236,7 @@ it('surfaces an exact Project conflict through the signed Workspace transport', 
   const transport = vi.fn<typeof fetch>().mockResolvedValue(
     Response.json({ detail: 'PROJECT_HEAD_CONFLICT' }, { status: 409 })
   )
+
   const client = createSemantierWorkspaceClient('https://cloud.example', transport)
   const ref = 'project:' + 'a'.repeat(32)
   const note = { artifact_kind: 'workspace_artifact', artifact_ref: 'note', artifact_hash: 'sha256:' + 'b'.repeat(64) }
@@ -249,4 +250,25 @@ it('surfaces an exact Project conflict through the signed Workspace transport', 
   expect(init).toMatchObject({ method: 'POST', credentials: 'include', redirect: 'error' })
   expect(new Headers(init?.headers).get('X-Semantier-CSRF')).toBe('1')
   expect(JSON.parse(String(init?.body))).toEqual(decision)
+})
+
+it('resumes the requested Tutor plan with its exact source entry', async () => {
+  const project = 'project:' + 'a'.repeat(32)
+  const plan = 'tutor_plan:24'
+
+  const progress = {project_ref: project, plan_ref: plan, revision: 3, objectives: [
+    {lessons: [{sources: [{evidence: {artifact_ref: 'evidence:1'}, source_version: '2',
+      locator: {selector: {exact_quote: 'The selected passage.'}}}]}]}]}
+
+  const transport = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(Response.json(progress))
+    .mockResolvedValueOnce(Response.json({...progress, plan_ref: 'other'}))
+
+  const client = createSemantierWorkspaceClient('https://cloud.example', transport)
+  expect(await client.tutorProgress(project, plan)).toEqual(progress)
+  const [url, options] = transport.mock.calls[0]
+  expect(url).toBe('https://cloud.example/api/workbench/projects/' + encodeURIComponent(project) +
+    '/tutor/progress?plan_ref=' + encodeURIComponent(plan))
+  expect(options).toMatchObject({credentials: 'include', redirect: 'error'})
+  await expect(client.tutorProgress(project, plan)).rejects.toThrow('Tutor plan mismatch')
 })

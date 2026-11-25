@@ -182,11 +182,15 @@ export type WorkspaceProjectHead = WorkspaceProjectDraft & {
   decision: WorkspaceProjectPin
 }
 
+export type TutorCitation = { evidence: WorkspaceProjectPin; source_version: string; source_block_id: string; locator: {selector: {exact_quote?: string}} | null }
+
 export type TutorProgress = {
+  project_ref: string
+  plan_ref: string
   revision: number
   objectives: { objective_ref: string; title?: string; archived: boolean
-    lessons: { lesson: WorkspaceProjectPin; explanation: string | null; sources: { evidence: WorkspaceProjectPin; source_version: string }[] }[]
-    assessments: { attempt_ref: string; feedback: string; result: string }[] }[]
+    lessons: { lesson: WorkspaceProjectPin; explanation: string | null; sources: TutorCitation[] }[]
+    assessments: { attempt_ref: string; feedback: string; result: string; sources: TutorCitation[] }[] }[]
 }
 
 export type WorkspaceProjectContinuation = {
@@ -292,7 +296,13 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
       return (await request(projectPath(projectRef))).json()
     },
     async tutorProgress(projectRef: string, planRef: string): Promise<TutorProgress> {
-      return (await request(projectPath(projectRef) + '/tutor/progress?plan_ref=' + encodeURIComponent(planRef))).json()
+      const progress: TutorProgress = await (await request(projectPath(projectRef) + '/tutor/progress?plan_ref=' + encodeURIComponent(planRef))).json()
+
+      if (progress.project_ref !== projectRef || progress.plan_ref !== planRef) {
+        throw new Error('Tutor plan mismatch')
+      }
+
+      return progress
     },
     async commitProject(projectRef: string, decision: WorkspaceProjectCommit): Promise<WorkspaceProjectHead> {
       return (await request(projectPath(projectRef) + '/heads', decision)).json()
