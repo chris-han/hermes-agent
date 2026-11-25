@@ -61,12 +61,26 @@ export function workspace(origin: string) {
 const startupReadPaths = new Set(['/api/profiles', '/api/sessions', '/api/profiles/sessions', '/api/profiles/sessions/sidebar'])
 const pendingStartupReads = new WeakMap<object, Map<string, Promise<unknown>>>()
 
+const pendingReadContexts = new WeakMap<object, Promise<WorkspaceIdentity>>()
+
+async function assertInitialReadScope(target: ReturnType<typeof workspace>, scope: WorkspaceScope) {
+  const { owned, client } = target
+  let current = pendingReadContexts.get(owned)
+  if (!current) {
+    current = client.identity().finally(() => pendingReadContexts.delete(owned))
+    pendingReadContexts.set(owned, current)
+  }
+
+  assertWorkspaceScope(await current, scope)
+}
+
 export async function readScopedWorkspaceDesktop(origin: string, scope: WorkspaceScope, path: string, profile: string) {
-  const { owned, client } = workspace(origin)
+  const target = workspace(origin)
+  const { owned, client } = target
 
   const read = async (initialCheckFinished?: () => void) => {
     try {
-      assertWorkspaceScope(await client.identity(), scope)
+      await assertInitialReadScope(target, scope)
     } finally {
       initialCheckFinished?.()
     }
@@ -300,16 +314,18 @@ return personal}
     return readScopedWorkspaceDesktop(origin, scope, '/api/sessions', 'default')
   })
   ipcMain.handle('hermes:workspace:history', async (_event, origin: string, scope: WorkspaceScope, sessionId: string, afterId?: string) => {
-    const { client } = workspace(origin)
-    assertWorkspaceScope(await client.identity(), scope)
+    const target = workspace(origin)
+    const { client } = target
+    await assertInitialReadScope(target, scope)
     const result = await client.history(sessionId, ...(afterId === undefined ? [] : [afterId]))
     assertWorkspaceScope(await client.identity(), scope)
 
     return result
   })
   ipcMain.handle('hermes:workspace:native-context', async (_event, origin: string, scope: WorkspaceScope, sessionId: string) => {
-    const { client } = workspace(origin)
-    assertWorkspaceScope(await client.identity(), scope)
+    const target = workspace(origin)
+    const { client } = target
+    await assertInitialReadScope(target, scope)
     const result = await client.nativeContext(sessionId)
     assertWorkspaceScope(await client.identity(), scope)
 

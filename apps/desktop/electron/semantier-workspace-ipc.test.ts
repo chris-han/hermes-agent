@@ -298,3 +298,31 @@ it('joins overlapping startup inventory reads and rejects a changed scope before
   await expect(read()).resolves.toMatchObject({ recents: { sessions: [] } })
   expect(fetch).toHaveBeenCalledTimes(6)
 })
+
+it('shares only the pending initial scope check across distinct startup reads', async () => {
+  const { readScopedWorkspaceDesktop } = await import('./semantier-workspace-ipc')
+  let release!: (value: Response) => void
+  const initial = new Promise<Response>(resolve => { release = resolve })
+  let identityReads = 0
+  const fetch = vi.fn(async (input: string) => {
+    if (new URL(input).pathname === '/auth/context') {
+      identityReads += 1
+      return identityReads === 1 ? initial : Response.json(identity)
+    }
+    return Response.json({ sessions: [] })
+  })
+  vi.mocked(session.fromPartition).mockReturnValue({ fetch } as never)
+
+  const origin = 'https://cloud.example'
+  const sessions = () => readScopedWorkspaceDesktop(origin, scope, '/api/sessions', 'default')
+  const sidebar = () => readScopedWorkspaceDesktop(origin, scope, '/api/profiles/sessions/sidebar', 'default')
+  const first = sessions()
+  const second = sidebar()
+  expect(identityReads).toBe(1)
+  release(Response.json(identity))
+  await Promise.all([first, second])
+  expect(identityReads).toBe(3)
+
+  await sessions()
+  expect(identityReads).toBe(5)
+})
