@@ -275,6 +275,16 @@ print(json.dumps({'status': state.get('status'), 'installed': bool(state.get('cr
             return { ok: state.ok, payer: state.billing_account_id ?? null, error: state.error ?? null }
           })
           expect(await readDeviceBilling()).toEqual({ ok: true, payer: sessionPayer, error: null })
+          const setPayerHint = (payer: string) => execFileSync(process.env.HERMES_PYTHON!, [
+            '-P', '-c', "import sys; from hermes_cli.config import set_config_value; set_config_value('billing.account_id', sys.argv[1])", payer
+          ], { cwd: path.resolve(import.meta.dirname, '../../..'), env: { ...env, PYTHONPATH: path.resolve(import.meta.dirname, '../../..') }, timeout: 20_000 })
+          try {
+            setPayerHint('native-fixture-foreign-account')
+            expect(await readDeviceBilling()).toEqual({ ok: false, payer: null, error: 'insufficient_scope' })
+          } finally {
+            setPayerHint(sessionPayer)
+          }
+          expect(await readDeviceBilling()).toEqual({ ok: true, payer: sessionPayer, error: null })
           // Revoke only this fixture's DPAPI-bound device. The renderer never receives its bearer.
           const result = execFileSync(process.env.HERMES_PYTHON!, ['-P', '-c', `
 from hermes_cli.cloud_device_client import _read, credential
