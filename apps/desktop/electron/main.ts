@@ -16621,7 +16621,11 @@ async function dispatchRegistryApiRequest(
     }
 
     if (method === 'GET') {
-      return readScopedWorkspaceDesktop(connection.baseUrl, request.workspaceScope, request.path, connection.profile)
+      const response = await readScopedWorkspaceDesktop(
+        connection.baseUrl, request.workspaceScope, request.path, connection.profile
+      )
+
+      return tagRegistrySessionResponse(request.path, response, registryConnectionId)
     }
 
     const { client } = semantierWorkspace(connection.baseUrl)
