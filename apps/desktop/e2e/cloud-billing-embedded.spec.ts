@@ -218,7 +218,15 @@ print(hashlib.sha256((ref+'\\0'+base+'\\0'+secret).encode()).hexdigest())
           const config = fs.readFileSync(configPath, 'utf8')
           expect(parse(config).model).toEqual(initialModel)
           expect(config).not.toContain('credential_ref:')
-          expect(fs.existsSync(path.join(sandbox.hermesHome, '.cloud-device.bin'))).toBe(false)
+
+          const protectedState = execFileSync(process.env.HERMES_PYTHON!, ['-P', '-c', `
+import json
+from hermes_cli.cloud_device_client import _read
+state = _read()
+print(json.dumps({'status': state.get('status'), 'installed': bool(state.get('credentials') or state.get('credential_ref'))}))
+`], { cwd: path.resolve(import.meta.dirname, '../../..'), env: { ...env, PYTHONPATH: path.resolve(import.meta.dirname, '../../..') }, encoding: 'utf8', timeout: 20_000 })
+
+          expect(JSON.parse(protectedState)).toEqual({ status: 'pending', installed: false })
         })
 
         return
