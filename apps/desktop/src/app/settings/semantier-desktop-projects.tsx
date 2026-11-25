@@ -5,15 +5,51 @@ import { Input } from '@/components/ui/input'
 import { useI18n } from '@/i18n'
 
 import type {
-  WorkspaceProject, WorkspaceProjectContinuation, WorkspaceProjectDraft,
+  TutorProgress, WorkspaceProject, WorkspaceProjectContinuation, WorkspaceProjectDraft,
   WorkspaceProjectHead, WorkspaceProjectMaterials, WorkspaceProjectPin, WorkspaceScope
 } from '../../../electron/semantier-workspace-client'
 
 const fields = ['goal', 'question', 'claim', 'rationale'] as const
 const initial = { goal: '', question: '', claim: '', rationale: '' }
+
 const headPin = (head: WorkspaceProjectHead): WorkspaceProjectPin => ({
   artifact_kind: 'project_semantic_head', artifact_ref: head.artifact_ref, artifact_hash: head.artifact_hash
 })
+
+function TutorResume({ origin, scope, project, plan, title }: {
+  origin: string; scope: WorkspaceScope; project: string; plan: string; title: string
+}) {
+  const { locale } = useI18n()
+  const [open, setOpen] = useState(false)
+  const [progress, setProgress] = useState<TutorProgress | null>(null)
+  const [failed, setFailed] = useState(false)
+  const { userId, organizationId, workspaceId } = scope
+  useEffect(() => {
+    if (!open) {return}
+    let active = true
+    setFailed(false)
+    setProgress(null)
+    void window.hermesDesktop.workspace!.tutorProgress(origin, { userId, organizationId, workspaceId }, project, plan)
+      .then(value => { if (active) {setProgress(value)} }).catch(() => { if (active) {setFailed(true)} })
+
+    return () => { active = false }
+  }, [open, origin, userId, organizationId, workspaceId, project, plan])
+
+  return <details onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary>{title}</summary>
+    {failed && <p role="alert">{locale === 'zh' ? '无法读取学习进度。' : 'Learning progress unavailable.'}</p>}
+    {progress?.objectives.map(obj => <section key={obj.objective_ref}>
+      <h3>{obj.title ?? (locale === 'zh' ? '材料不可用' : 'Material unavailable')}
+        {obj.archived && (locale === 'zh' ? '（历史目标）' : ' (archived)')}</h3>
+      {obj.lessons.map(item => <div key={item.lesson.artifact_ref}><p>{item.explanation}</p>
+        {item.sources.map(source => <small className="block break-all" key={source.evidence.artifact_ref}>
+          {source.evidence.artifact_ref} · {source.source_version}
+        </small>)}
+      </div>)}
+      {obj.assessments.map(item => <p key={item.attempt_ref}>{item.result} · {item.feedback}</p>)}
+    </section>)}
+  </details>
+}
 
 export function SemantierDesktopProjects({ origin, scope }: { origin: string; scope: WorkspaceScope }) {
   const { locale } = useI18n()
@@ -37,22 +73,25 @@ export function SemantierDesktopProjects({ origin, scope }: { origin: string; sc
   const captions = { goal: t('Goal', '目标'), question: t('Open question', '待解决的问题'), claim: t('Decision', '决策'), rationale: t('Rationale', '理由') }
 
   useEffect(() => {
-    if (!api) return
+    if (!api) {return}
     let active = true
     const current = { userId, workspaceId, organizationId }
     void Promise.all([api.projects(origin, current), api.projectMaterials(origin, current)]).then(([rows, choices]) => {
       if (active) { setProjects(rows); setMaterials(choices) }
-    }).catch(() => { if (active) setStatus('error') })
+    }).catch(() => { if (active) {setStatus('error')} })
+
     return () => { active = false }
   }, [api, origin, userId, workspaceId, organizationId])
 
   async function run(operation: () => Promise<void>) {
     setBusy(true)
     setStatus(null)
+
     try {
       await operation()
     } catch (error) {
       const message = error instanceof Error ? error.message : ''
+
       if (message.includes('PROJECT_HEAD_CONFLICT')) {
         setStatus('conflict')
       } else {
@@ -64,6 +103,7 @@ export function SemantierDesktopProjects({ origin, scope }: { origin: string; sc
           setMaterials(null)
           pending.current = null
         }
+
         setStatus('error')
       }
     } finally {
@@ -75,6 +115,7 @@ export function SemantierDesktopProjects({ origin, scope }: { origin: string; sc
     const project = await api!.continueProject(origin, scope, ref)
     select(project)
     setHistory(null)
+
     if (!keepDraft) {
       setDraft(project.head ?? { ...initial, goal: project.working_context.task_goal })
       pending.current = null
@@ -83,7 +124,8 @@ export function SemantierDesktopProjects({ origin, scope }: { origin: string; sc
 
   function create() {
     const graph = materials?.graphs.find(item => item.pin.artifact_ref === graphRef)
-    if (!api || !graph || !consent) return
+
+    if (!api || !graph || !consent) {return}
     void run(async () => {
       const project = await api.createProject(origin, scope, graph.pin, true)
       setProjects(rows => [...rows, project])
@@ -94,9 +136,12 @@ export function SemantierDesktopProjects({ origin, scope }: { origin: string; sc
 
   function save() {
     const note = head?.note ?? materials?.notes.find(item => item.pin.artifact_ref === noteRef)?.pin
-    if (!api || !selected || !note || fields.some(key => !draft[key].trim()) || status === 'conflict') return
+
+    if (!api || !selected || !note || fields.some(key => !draft[key].trim()) || status === 'conflict') {return}
+
     const input = { ...Object.fromEntries(fields.map(key => [key, draft[key]])) as WorkspaceProjectDraft,
       expected_head: head ? headPin(head) : null, note }
+
     const signature = JSON.stringify([selected.project.project_ref, input])
     const requestId = pending.current?.signature === signature ? pending.current.requestId : crypto.randomUUID()
     pending.current = { requestId, signature }
@@ -108,19 +153,20 @@ export function SemantierDesktopProjects({ origin, scope }: { origin: string; sc
     })
   }
 
-  if (!api) return null
+  if (!api) {return null}
+
   return (
     <section aria-label={t('Project continuity', '项目连续性')} className="grid gap-3">
-      {status && <p role="alert" className="text-xs text-destructive">
+      {status && <p className="text-xs text-destructive" role="alert">
         {status === 'conflict' ? t('Another edit advanced this project. Load the latest decision before saving.', '项目已有更新。请加载最新决策后再保存。') : t('Project unavailable. Check the Workspace account and try again.', '项目不可用。请检查工作区账户后重试。')}
       </p>}
-      {busy && <p role="status" className="text-xs">{t('Updating project…', '正在更新项目…')}</p>}
-      {!materials && !status && <p role="status" className="text-xs">{t('Loading projects…', '正在加载项目…')}</p>}
+      {busy && <p className="text-xs" role="status">{t('Updating project…', '正在更新项目…')}</p>}
+      {!materials && !status && <p className="text-xs" role="status">{t('Loading projects…', '正在加载项目…')}</p>}
       {materials && !materials.graphs.length && !projects.length && <p className="text-xs">{t('No admitted project context is available.', '没有可用的已接纳项目上下文。')}</p>}
       {projects.length > 0 && <label className="grid gap-1 text-xs">
         {t('Project', '项目')}
-        <select value={selected?.project.project_ref ?? ''} disabled={busy} onChange={event => void run(() => load(event.target.value))}>
-          <option value="" disabled>{t('Choose a project', '选择项目')}</option>
+        <select disabled={busy} onChange={event => void run(() => load(event.target.value))} value={selected?.project.project_ref ?? ''}>
+          <option disabled value="">{t('Choose a project', '选择项目')}</option>
           {projects.map(project => <option key={project.project_ref}>{project.project_ref}</option>)}
         </select>
       </label>}
@@ -128,24 +174,29 @@ export function SemantierDesktopProjects({ origin, scope }: { origin: string; sc
         <summary className="cursor-pointer text-sm">{t('Start a project', '开始项目')}</summary>
         <div className="mt-2 grid gap-2">
           <label className="grid gap-1 text-xs">{t('Admitted context', '已接纳的上下文')}
-            <select value={graphRef} onChange={event => { setGraphRef(event.target.value); setConsent(false) }} disabled={busy}>
-              <option value="" disabled>{t('Choose the admitted context', '选择已接纳的上下文')}</option>
+            <select disabled={busy} onChange={event => { setGraphRef(event.target.value); setConsent(false) }} value={graphRef}>
+              <option disabled value="">{t('Choose the admitted context', '选择已接纳的上下文')}</option>
               {materials.graphs.map(item => <option key={item.pin.artifact_ref} value={item.pin.artifact_ref}>{item.label}</option>)}
             </select>
           </label>
           <label className="flex items-center gap-2 text-xs">
-            <input type="checkbox" checked={consent} onChange={event => setConsent(event.target.checked)} disabled={!graphRef || busy} />
+            <input checked={consent} disabled={!graphRef || busy} onChange={event => setConsent(event.target.checked)} type="checkbox" />
             {t('Share this synthetic context in the Workspace project.', '在工作区项目中共享此合成上下文。')}
           </label>
-          <div><Button type="button" disabled={!consent || busy} onClick={create}>{t('Create project', '创建项目')}</Button></div>
+          <div><Button disabled={!consent || busy} onClick={create} type="button">{t('Create project', '创建项目')}</Button></div>
         </div>
       </details>}
       {selected && <>
+        {!!selected.tutor_plans?.length && <section>
+          <h2>{t('Learning plans', '学习计划')}</h2>
+          {selected.tutor_plans.map(plan => <TutorResume key={plan.plan_ref} origin={origin} plan={plan.plan_ref}
+            project={selected.project.project_ref} scope={scope} title={plan.goal} />)}
+        </section>}
         <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" disabled={busy} onClick={() => void run(() => load(selected.project.project_ref, true))}>{t('Load latest decision', '加载最新决策')}</Button>
-          {previous && <Button type="button" variant="outline" disabled={busy} onClick={() => void run(async () => {
+          <Button disabled={busy} onClick={() => void run(() => load(selected.project.project_ref, true))} type="button" variant="outline">{t('Load latest decision', '加载最新决策')}</Button>
+          {previous && <Button disabled={busy} onClick={() => void run(async () => {
             setHistory((await api.replayProject(origin, scope, selected.project.project_ref, previous)).head)
-          })}>{t('Previous decision', '上一条决策')}</Button>}
+          })} type="button" variant="outline">{t('Previous decision', '上一条决策')}</Button>}
         </div>
         {visible && <div className="grid gap-1 text-xs">
           <h3 className="font-semibold">{history ? t('Historical decision', '历史决策') : t('Current decision', '当前决策')} · {visible.revision}</h3>
@@ -156,16 +207,16 @@ export function SemantierDesktopProjects({ origin, scope }: { origin: string; sc
         </div>}
         {!history && <>
           {!head && <label className="grid gap-1 text-xs">{t('Authored Note', '已撰写的笔记')}
-            <select value={noteRef} onChange={event => setNoteRef(event.target.value)} disabled={busy}>
-              <option value="" disabled>{t('Choose the Note', '选择笔记')}</option>
+            <select disabled={busy} onChange={event => setNoteRef(event.target.value)} value={noteRef}>
+              <option disabled value="">{t('Choose the Note', '选择笔记')}</option>
               {materials?.notes.map(item => <option key={item.pin.artifact_ref} value={item.pin.artifact_ref}>{item.label}</option>)}
             </select>
           </label>}
           {fields.map(key => <label className="grid gap-1 text-xs" key={key}>{captions[key]}
-            <Input maxLength={key === 'goal' || key === 'question' ? 2000 : 8000} value={draft[key]} disabled={busy}
-              onChange={event => setDraft({ ...draft, [key]: event.target.value })} />
+            <Input disabled={busy} maxLength={key === 'goal' || key === 'question' ? 2000 : 8000} onChange={event => setDraft({ ...draft, [key]: event.target.value })}
+              value={draft[key]} />
           </label>)}
-          <div><Button type="button" disabled={busy || status === 'conflict' || (!head && !noteRef) || fields.some(key => !draft[key].trim())} onClick={save}>{t('Save decision', '保存决策')}</Button></div>
+          <div><Button disabled={busy || status === 'conflict' || (!head && !noteRef) || fields.some(key => !draft[key].trim())} onClick={save} type="button">{t('Save decision', '保存决策')}</Button></div>
         </>}
       </>}
     </section>

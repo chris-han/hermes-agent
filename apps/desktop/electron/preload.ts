@@ -336,6 +336,7 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     projectMaterials: (origin, scope) => ipcRenderer.invoke('hermes:workspace:project-materials', origin, scope),
     projects: (origin, scope) => ipcRenderer.invoke('hermes:workspace:projects', origin, scope),
     createProject: (origin, scope, graph, consent) => ipcRenderer.invoke('hermes:workspace:create-project', origin, scope, graph, consent),
+    tutorProgress: (origin, scope, ref, plan) => ipcRenderer.invoke('hermes:workspace:tutor-progress', origin, scope, ref, plan),
     continueProject: (origin, scope, ref) => ipcRenderer.invoke('hermes:workspace:continue-project', origin, scope, ref),
     commitProject: (origin, scope, ref, decision) => ipcRenderer.invoke('hermes:workspace:commit-project', origin, scope, ref, decision),
     replayProject: (origin, scope, ref, head) => ipcRenderer.invoke('hermes:workspace:replay-project', origin, scope, ref, head),

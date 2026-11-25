@@ -4,6 +4,7 @@ import { BrowserWindow, ipcMain, session } from 'electron'
 
 import type {ManagedDeviceEnrollment} from './managed-device-enrollment'
 import type {PersonalCapabilitySync,PersonalPin,PersonalSnapshot} from './personal-capability-sync'
+import type { TutorProgress } from './semantier-workspace-client'
 import { assertWorkspaceScope, createSemantierWorkspaceClient, type ManagedDeviceInventory, type ManagedDevicePermission, type PersistentFollowup, requireNativeCompletion, requireWorkspaceCompletion, type WinmanCapability, WORKSPACE_USER_STOP_ERROR, workspaceDesktopRead, type WorkspaceHistory, type WorkspaceIdentity, type WorkspaceMainContext, type WorkspaceNativeCancellation, type WorkspaceNativeSnapshot, type WorkspaceNativeSubmission, type WorkspaceScope, workspaceSidebarSessions, type WorkspaceWinmanProfile } from './semantier-workspace-client'
 import type { WorkspaceProject, WorkspaceProjectCommit, WorkspaceProjectContinuation, WorkspaceProjectHead, WorkspaceProjectMaterials, WorkspaceProjectPin } from './semantier-workspace-client'
 
@@ -14,6 +15,7 @@ export interface DesktopWorkspaceApi {
   projectMaterials: (origin: string, scope: WorkspaceScope) => Promise<WorkspaceProjectMaterials>
   projects: (origin: string, scope: WorkspaceScope) => Promise<WorkspaceProject[]>
   createProject: (origin: string, scope: WorkspaceScope, graph: WorkspaceProjectPin, consent: true) => Promise<WorkspaceProject>
+  tutorProgress: (origin: string, scope: WorkspaceScope, projectRef: string, planRef: string) => Promise<TutorProgress>
   continueProject: (origin: string, scope: WorkspaceScope, projectRef: string) => Promise<WorkspaceProjectContinuation>
   commitProject: (origin: string, scope: WorkspaceScope, projectRef: string, decision: WorkspaceProjectCommit) => Promise<WorkspaceProjectHead>
   replayProject: (origin: string, scope: WorkspaceScope, projectRef: string, head: WorkspaceProjectPin) => Promise<{ head: WorkspaceProjectHead }>
@@ -73,6 +75,7 @@ const pendingReadContexts = new WeakMap<object, Promise<WorkspaceIdentity>>()
 export function readPendingWorkspaceIdentity(target: ReturnType<typeof workspace>) {
   const { owned, client } = target
   let current = pendingReadContexts.get(owned)
+
   if (!current) {
     current = client.identity().finally(() => pendingReadContexts.delete(owned))
     pendingReadContexts.set(owned, current)
@@ -87,16 +90,20 @@ export async function readScopedWorkspaceDesktop(
   const url = new URL(path, 'https://desktop.invalid')
   const queryProfile = url.searchParams.get('profile')
   const sidebarProfile = url.searchParams.get('recents_profile')
+
   const mainSidebar = url.pathname === '/api/profiles/sessions/sidebar' && profile === 'default' &&
     (!queryProfile || queryProfile === 'default') && (!sidebarProfile || sidebarProfile === 'default')
+
   // Both entrypoints project the same server-owned Main inventory.
   if (mainSidebar) {
     const inventory = await readScopedWorkspaceDesktop(origin, scope, '/api/sessions', profile, resolvedScope) as { sessions: unknown[] }
+
     return workspaceSidebarSessions(inventory.sessions)
   }
 
   const target = workspace(origin)
   const { owned, client } = target
+
   if (resolvedScope) {
     // The registry dispatcher just obtained this scope from the same
     // origin-owned cookie jar. Only its internal call may supply it.
@@ -110,6 +117,7 @@ export async function readScopedWorkspaceDesktop(
   // Use the same fresh coalescing boundary for Main and the Bot roster.
   const coalescedStartupRead = profile === 'default' &&
     (url.pathname === '/api/sessions' || url.pathname === '/api/profiles')
+
   const checkBeforeRead = !resolvedScope || coalescedStartupRead
 
   const read = async (initialCheckFinished?: () => void) => {
@@ -140,6 +148,7 @@ export async function readScopedWorkspaceDesktop(
   const existing = pending.get(key)
 
   if (existing) {return existing}
+
   if (!checkBeforeRead) {return read()}
 
   // Join only while the initial signed check is in flight. A later caller must
@@ -207,6 +216,7 @@ return personal}
       throw error
     }
   })
+
   async function withProjectScope<T>(
     origin: string, scope: WorkspaceScope,
     run: (client: ReturnType<typeof createSemantierWorkspaceClient>) => Promise<T>
@@ -227,6 +237,8 @@ return personal}
     withProjectScope(origin, scope, client => client.projects()))
   ipcMain.handle('hermes:workspace:create-project', (_event, origin: string, scope: WorkspaceScope, graph: WorkspaceProjectPin, consent: true) =>
     withProjectScope(origin, scope, client => client.createProject(graph, consent)))
+  ipcMain.handle('hermes:workspace:tutor-progress', (_event, origin: string, scope: WorkspaceScope, ref: string, plan: string) =>
+    withProjectScope(origin, scope, client => client.tutorProgress(ref, plan)))
   ipcMain.handle('hermes:workspace:continue-project', (_event, origin: string, scope: WorkspaceScope, ref: string) =>
     withProjectScope(origin, scope, client => client.continueProject(ref)))
   ipcMain.handle('hermes:workspace:commit-project', (_event, origin: string, scope: WorkspaceScope, ref: string, decision: WorkspaceProjectCommit) =>
@@ -309,6 +321,7 @@ return personal}
     assertWorkspaceScope(await client.identity(), scope)
     const result = await client.winmanCapability(scope, enabled)
     assertWorkspaceScope(await client.identity(), scope)
+
     return result
   })
   ipcMain.handle('hermes:workspace:persistent-followups', async (_event, origin: string, scope: WorkspaceScope) => {
@@ -316,6 +329,7 @@ return personal}
     assertWorkspaceScope(await client.identity(), scope)
     const result = await client.persistentFollowups(scope)
     assertWorkspaceScope(await client.identity(), scope)
+
     return result
   })
   ipcMain.handle('hermes:workspace:persistent-reminder', async (_event, origin: string, scope: WorkspaceScope, workId: string) => {
@@ -323,9 +337,11 @@ return personal}
     assertWorkspaceScope(await client.identity(), scope)
     const { items } = await client.persistentFollowups(scope)
     const work = items.find(item => item.id === workId && item.receipt)
+
     if (!work) { return null }
     const content = await client.persistentReminder(work)
     assertWorkspaceScope(await client.identity(), scope)
+
     return content
   })
   ipcMain.handle('hermes:workspace:ensure-winman-chat', async (_event, origin: string, scope: WorkspaceScope) => {
@@ -427,6 +443,7 @@ return personal}
     try {
       assertWorkspaceScope(await client.identity(), scope)
       stream.controller.signal.throwIfAborted()
+
       if (/^\/followup(?:\s|$)/.test(message)) {
         await client.explicitWork(sessionId, message, requestIdentity, scope, stream.controller.signal)
       } else {
@@ -434,6 +451,7 @@ return personal}
         // Closing this finite SSE does not authorize replay or cancel durable responsibilities.
         await requireWorkspaceCompletion(response)
       }
+
       assertWorkspaceScope(await client.identity(), scope)
       const result = await client.history(sessionId)
       assertWorkspaceScope(await client.identity(), scope)

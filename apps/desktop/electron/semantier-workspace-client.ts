@@ -182,7 +182,15 @@ export type WorkspaceProjectHead = WorkspaceProjectDraft & {
   decision: WorkspaceProjectPin
 }
 
+export type TutorProgress = {
+  revision: number
+  objectives: { objective_ref: string; title?: string; archived: boolean
+    lessons: { lesson: WorkspaceProjectPin; explanation: string | null; sources: { evidence: WorkspaceProjectPin; source_version: string }[] }[]
+    assessments: { attempt_ref: string; feedback: string; result: string }[] }[]
+}
+
 export type WorkspaceProjectContinuation = {
+  tutor_plans?: { plan_ref: string; goal: string; revision: number }[]
   project: WorkspaceProject
   head: WorkspaceProjectHead | null
   working_context: { context_graph: WorkspaceProjectPin; evidence: WorkspaceProjectPin[]; task_goal: string }
@@ -263,9 +271,12 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
     async persistentReminder(item: PersistentFollowup): Promise<string | null> {
       const path = '/api/sessions/' + encodeURIComponent(item.conversation) + '/messages'
       const history = await (await request(path)).json()
+
       if (history.session_id !== item.conversation) { return null }
+
       const row = history.messages?.find((message: {id: string | number; role: string}) =>
         String(message.id) === item.receipt && message.role === 'assistant')
+
       return typeof row?.content === 'string' ? row.content : null
     },
     async projectMaterials(): Promise<WorkspaceProjectMaterials> {
@@ -279,6 +290,9 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
     },
     async continueProject(projectRef: string): Promise<WorkspaceProjectContinuation> {
       return (await request(projectPath(projectRef))).json()
+    },
+    async tutorProgress(projectRef: string, planRef: string): Promise<TutorProgress> {
+      return (await request(projectPath(projectRef) + '/tutor/progress?plan_ref=' + encodeURIComponent(planRef))).json()
     },
     async commitProject(projectRef: string, decision: WorkspaceProjectCommit): Promise<WorkspaceProjectHead> {
       return (await request(projectPath(projectRef) + '/heads', decision)).json()
@@ -467,6 +481,7 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
     async explicitWork(sessionKey: string, message: string, requestIdentity: string, scope: WorkspaceScope, signal?: AbortSignal) {
       const path = '/api/sessions/' + encodeURIComponent(sessionKey) + '/chat'
       const response = await (await request(path, { message, requestIdentity }, 'POST', signal, scope)).json()
+
       if (!response.ok || response.session_id !== sessionKey) {
         throw new Error('Persistent work action did not complete in the original Main conversation.')
       }
@@ -477,14 +492,17 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
 
       if (afterId !== undefined) { query.set('afterId', afterId) }
       let result: WorkspaceHistory
+
       try {
         result = await (await request(`/api/history?${query}`)).json()
       } catch (error) {
         if ((error as { statusCode?: number }).statusCode !== 404) { throw error }
         const nativeQuery = afterId === undefined ? '' : '?after_id=' + encodeURIComponent(afterId)
+
         const snapshot = await (await request(
           '/api/sessions/' + encodeURIComponent(sessionKey) + '/messages' + nativeQuery
         )).json()
+
         result = {
           sessionId: snapshot.session_id, hasMore: snapshot.pagination?.has_more,
           nextCursor: snapshot.pagination?.next_cursor,
