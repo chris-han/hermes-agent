@@ -318,10 +318,10 @@ function InstallView({ request, installing, onInstallingChange }: InstallViewPro
   const [installUncertain, setInstallUncertain] = useState(false)
 
   useEffect(() => {
-    start(request.repo)
+    start(request.repo, request.sha)
 
     return cancel
-  }, [cancel, request.repo, start])
+  }, [cancel, request.repo, request.sha, start])
 
   const targetInfo = profiles.find(profile => normalizeProfileKey(profile.name) === targetProfile)
   const targetLabel = profileLabel(targetInfo ?? { name: targetProfile })
@@ -364,7 +364,7 @@ function InstallView({ request, installing, onInstallingChange }: InstallViewPro
     if (installError) {
       void install()
     } else {
-      start(request.repo)
+      start(request.repo, request.sha)
     }
   }
 

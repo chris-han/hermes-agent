@@ -130,7 +130,7 @@ async function cloneDesktopHalf(plan: InstallPlan, copy: InstallModalCopy, repor
     return
   }
 
-  const result = await installFn({ identifier: plan.request.repo, force: plan.force })
+  const result = await installFn({ identifier: plan.request.repo, force: plan.force, ...(plan.request.sha ? { commit: plan.request.sha } : {}) })
 
   if (!result.ok) {
     report.errors.push(result.error || copy.desktopFailed)
