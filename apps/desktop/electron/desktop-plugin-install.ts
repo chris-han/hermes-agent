@@ -315,21 +315,29 @@ function sparseCheckoutPattern(subdir: string): string {
 // A subdirectory install is a blobless clone with a sparse checkout of that folder: a plugin inside
 // a monorepo (Hindsight: 170 MB at depth 1, 2 MB for its plugin folder) otherwise downloads every
 // file in the repository and times out on slow connections.
-async function cloneToTemp(gitBin: string, gitUrl: string, subdir: string | null): Promise<string> {
+async function cloneToTemp(gitBin: string, gitUrl: string, subdir: string | null, commit?: string): Promise<string> {
+  if (commit !== undefined && !/^[0-9a-f]{40}$/.test(commit)) {
+    throw new Error("Expected an immutable plugin commit.")
+  }
   const tmpRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'hermes-plugin-'))
 
   try {
-    if (!subdir) {
+    if (!subdir && !commit) {
       await runGitOrThrow(gitBin, ['clone', '--depth', '1', gitUrl, tmpRoot])
 
       return tmpRoot
     }
 
     await runGitOrThrow(gitBin, ['clone', '--depth', '1', '--filter=blob:none', '--no-checkout', gitUrl, tmpRoot])
-    await runGitOrThrow(gitBin, ['config', 'core.sparseCheckout', 'true'], tmpRoot)
-    await fsp.mkdir(path.join(tmpRoot, '.git', 'info'), { recursive: true })
-    await fsp.writeFile(path.join(tmpRoot, '.git', 'info', 'sparse-checkout'), sparseCheckoutPattern(subdir), 'utf8')
-    await runGitOrThrow(gitBin, ['checkout', 'HEAD'], tmpRoot)
+    if (subdir) {
+      await runGitOrThrow(gitBin, ['config', 'core.sparseCheckout', 'true'], tmpRoot)
+      await fsp.mkdir(path.join(tmpRoot, '.git', 'info'), { recursive: true })
+      await fsp.writeFile(path.join(tmpRoot, '.git', 'info', 'sparse-checkout'), sparseCheckoutPattern(subdir), 'utf8')
+    }
+    if (commit) {
+      await runGitOrThrow(gitBin, ['fetch', '--depth', '1', 'origin', commit], tmpRoot)
+    }
+    await runGitOrThrow(gitBin, ['checkout', '--detach', commit ?? 'HEAD'], tmpRoot)
 
     return tmpRoot
   } catch (err) {
@@ -363,11 +371,11 @@ function insecureSchemeWarnings(gitUrl: string): { warnings: string[]; insecure:
   return { warnings: [], insecure: false }
 }
 
-export async function probePluginRepo(gitBin: string, identifier: string): Promise<PluginProbeResult> {
+export async function probePluginRepo(gitBin: string, identifier: string, commit?: string): Promise<PluginProbeResult> {
   try {
     const { gitUrl, subdir } = resolvePluginGitUrl(identifier)
     const { warnings, insecure } = insecureSchemeWarnings(gitUrl)
-    const cloneRoot = await cloneToTemp(gitBin, gitUrl, subdir)
+    const cloneRoot = await cloneToTemp(gitBin, gitUrl, subdir, commit)
 
     try {
       const pluginRoot = await resolvePluginRoot(cloneRoot, subdir)
@@ -413,11 +421,12 @@ export async function installDesktopPluginFromGit(
   gitBin: string,
   identifier: string,
   desktopPluginsRoot: string,
-  force = false
+  force = false,
+  commit?: string
 ): Promise<DesktopPluginInstallResult> {
   try {
     const { gitUrl, subdir } = resolvePluginGitUrl(identifier)
-    const cloneRoot = await cloneToTemp(gitBin, gitUrl, subdir)
+    const cloneRoot = await cloneToTemp(gitBin, gitUrl, subdir, commit)
 
     try {
       const pluginRoot = await resolvePluginRoot(cloneRoot, subdir)

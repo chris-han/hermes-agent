@@ -602,7 +602,7 @@ declare global {
         callback: (payload: { kind: string; name: string; params: Record<string, string> }) => void
       ) => () => void
       signalDeepLinkReady?: () => Promise<{ ok: boolean }>
-      probePluginRepo?: (payload: { identifier?: string; repo?: string }) => Promise<{
+      probePluginRepo?: (payload: { commit?: string; identifier?: string; repo?: string }) => Promise<{
         ok: boolean
         agent: boolean
         desktop: boolean
@@ -613,6 +613,7 @@ declare global {
         error?: string
       }>
       installDesktopPlugin?: (payload: {
+        commit?: string
         identifier?: string
         repo?: string
         force?: boolean

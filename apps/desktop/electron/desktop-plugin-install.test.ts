@@ -150,6 +150,11 @@ describe('probePluginRepo', () => {
     const result = await probePluginRepo('git', `${pathToFileURL(repo).href}#integrations/hermes`)
 
     expect(result).toMatchObject({ ok: true, agent: true, agentName: 'nested-agent' })
+    const commit = git('rev-parse', 'HEAD').toString().trim()
+    fs.writeFileSync(path.join(plugin, 'plugin.yaml'), 'name: newer-agent\n')
+    git('-c', 'user.email=fixture@example.com', '-c', 'user.name=Fixture', 'commit', '-qam', 'advance')
+    const pinned = await probePluginRepo('git', `${pathToFileURL(repo).href}#integrations/hermes`, commit)
+    expect(pinned).toMatchObject({ ok: true, agent: true, agentName: 'nested-agent' })
   })
 })
 

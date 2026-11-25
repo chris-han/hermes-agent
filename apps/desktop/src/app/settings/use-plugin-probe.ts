@@ -12,12 +12,12 @@ export function usePluginProbe(unavailableMessage: string) {
   const pending = useRef<Promise<null | ProbeResult>>(NO_PROBE)
 
   const start = useCallback(
-    (repo: string) => {
+    (repo: string, commit?: string) => {
       const mine = ++token.current
       const probeFn = window.hermesDesktop?.probePluginRepo
 
       const run: Promise<ProbeResult> = probeFn
-        ? probeFn({ identifier: repo })
+        ? probeFn(commit ? { identifier: repo, commit } : { identifier: repo })
         : Promise.resolve({ ok: false, agent: false, desktop: false, warnings: [], error: unavailableMessage })
 
       setProbe(null)
