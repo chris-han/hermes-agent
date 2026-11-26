@@ -114,8 +114,6 @@ finally:
 function Test-NativeReleasePreflight {
   if($RemoteRoot -cnotmatch '^/opt/[A-Za-z0-9_/-]+/releases$' -or $RemoteRoot.Contains('/../') -or
     $SshTarget -cnotmatch '^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+$' -or $PublicBase -cne 'https://cloud.semantier.cn') {throw 'Invalid native release destination'}
-  # Refuse prompts: existing process credentials or noninteractive SSH must work.
-  if(!(Get-EcsSshPassword $CredentialsEnv)){$script:sshOptions+=@('-o','BatchMode=yes')}
   $package=@(if(!$FirstChannel1Head){Get-AppxPackage -Name $identity})
   if(!$FirstChannel1Head -and ($package.Count -ne 1 -or $package[0].Version.ToString() -cne $NativeUpdateFrom -or
     $package[0].Publisher -cne $publisher -or $package[0].Status.ToString() -cne 'Ok' -or

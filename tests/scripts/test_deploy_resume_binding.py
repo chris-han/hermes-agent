@@ -187,22 +187,17 @@ print(json.dumps({'length':len(payload),'force':os.environ.get('SSH_ASKPASS_REQU
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
 $e=$null;$t=$null;$ast=[Management.Automation.Language.Parser]::ParseFile($Operator,[ref]$t,[ref]$e)
 if($e){throw 'Operator parse failed'}
-foreach($name in @('Invoke-SshNative','Ssh')){
+foreach($name in @('Get-EcsSshOptions','Ssh')){
  $f=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true)
  . ([scriptblock]::Create($f.Extent.Text))
 }
-$CredentialsEnv='';$SshTarget='fixture';$script:sshOptions=@();$script:statusLog=$null;$script:askPassExe='fixture-helper'
-function Get-EcsSshPassword($Path){return $script:fixturePassword}
-$env:SSH_ASKPASS_REQUIRE='before-force';$env:SSH_ASKPASS='before-helper';$env:DISPLAY='before-display';$env:ALI_ECS_SSH_PASSWORD='before-password'
+$IdentityFile='fixture-key';$SshTarget='fixture';$script:sshOptions=Get-EcsSshOptions
 $payload='a'*70000
-foreach($mode in @('','fixture-password')){
- $script:fixturePassword=$mode
- $r=(Ssh 'READ_STDIN' -InputText $payload)|ConvertFrom-Json
- if($r.length -ne $payload.Length){throw 'Stdin payload changed or entered command-line arguments'}
- if($mode -and $r.force -cne 'force'){throw 'Password transport omitted existing askpass scope'}
- if($env:SSH_ASKPASS_REQUIRE -cne 'before-force' -or $env:SSH_ASKPASS -cne 'before-helper' -or $env:DISPLAY -cne 'before-display' -or $env:ALI_ECS_SSH_PASSWORD -cne 'before-password'){throw 'Credential environment leaked'}
+$r=(Ssh 'READ_STDIN' -InputText $payload)|ConvertFrom-Json
+if($r.length -ne $payload.Length){throw 'Stdin payload changed'}
+foreach($option in 'fixture-key','IdentitiesOnly=yes','BatchMode=yes','PreferredAuthentications=publickey','StrictHostKeyChecking=yes'){
+ if($option -notin $r.arguments){throw "SSH option missing: $option"}
 }
-$script:fixturePassword=''
 $r=(Ssh 'echo fixture')|ConvertFrom-Json
 if($r.length -ne 0 -or $r.arguments[-1] -notlike '*base64 -d | sh'){throw 'Existing command transport changed'}
 'BOUNDED_STDIN_TRANSPORT_PASS'

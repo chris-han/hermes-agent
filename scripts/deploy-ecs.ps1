@@ -27,8 +27,7 @@
   BuildMode defaults to Beta: sign, install and publish without release verification.
   Use -BuildMode Prod for full verification and acceptance. Timings use checkpoints.jsonl.
   Run in an interactive Windows PowerShell session as the installing user.
-  Native SSH/SFTP prefer environment variable ALI_ECS_SSH_PASSWORD, then an explicit -CredentialsEnv,
-  otherwise use your SSH key/agent or prompt for the ECS password. Secrets
+  Native SSH/SFTP use the publisher key and the ECS username from the deliverables .env. Secrets
   are never embedded in this script. The single-MSIX operator composes a small
   stdlib metadata transaction and scoped WSL OSS IO; no second controller or release database,
   split packages, bundles, ZIPs, or CH2/R2 operations.
@@ -65,7 +64,7 @@ param(
   [string]$BuildId = '7a76c0b5c57d4845a29ca56e429ed2c1',
   [string]$Thumbprint = '57BF15739B4AA447842EAF388856A01B4E5029FF',
   [string]$SshTarget = 'root@123.57.184.194',
-  [string]$IdentityFile = '',
+  [string]$IdentityFile = (Join-Path $HOME '.ssh/semantier_ecs_publish'),
   [string]$RemoteRoot = '/opt/semantier-client-distribution/channel1-storage-root/releases',
   [string]$PublicBase = 'https://cloud.semantier.cn',
   [string]$OssRuntimeRoot = '/home/chris/repo/semantier-runtime',
@@ -128,7 +127,7 @@ $utf8 = New-Object Text.UTF8Encoding($false)
 $script:statusClock = [Diagnostics.Stopwatch]::StartNew()
 $script:milestoneClock = [Diagnostics.Stopwatch]::StartNew()
 $script:statusLog = $null
-$script:askPassExe = $null
+$script:ExplicitSshTarget = $PSBoundParameters.ContainsKey('SshTarget')
 $script:releaseEnvironment = @{}
 $script:sourceLease = $null
 $script:sourceOwner = $null
@@ -243,22 +242,18 @@ function Assert-LocalWindowsPath([string]$Path) {
   if($full.StartsWith('\\') -or $drive.DriveType -ne [IO.DriveType]::Fixed){throw 'Build staging, tools and output must be on a local fixed Windows drive.'}
   return $full
 }
-function Get-EcsSshPassword([string]$Path) {
-  if($env:ALI_ECS_SSH_PASSWORD){return $env:ALI_ECS_SSH_PASSWORD}
+function Get-EcsSshUsername([string]$Path) {
   if(!$Path){return $null}
-  if(!(Test-Path -LiteralPath $Path -PathType Leaf)){throw 'The explicit -CredentialsEnv file is unavailable.'}
-  $password=$null;$found=$false
-  foreach($line in [IO.File]::ReadAllLines($Path)) {
-    if($line -cnotmatch '^\s*(?:export\s+)?ALI_ECS_SSH_PASSWORD\s*=\s*(.*)$'){continue}
-    if($found){throw 'Duplicate SSH password assignments in -CredentialsEnv.'}
-    $found=$true;$value=$Matches[1].Trim()
-    if($value.StartsWith('"') -or $value.StartsWith("'")) {
-      if($value -notmatch '^(["''])(.*?)\1\s*(?:#.*)?$'){throw 'Malformed SSH password assignment in -CredentialsEnv.'}
-      $password=$Matches[2]
-    } else {$password=($value -replace '\s+#.*$','').Trim()}
+  $login=$null
+  foreach($line in [IO.File]::ReadLines($Path)){
+    if($line -cnotmatch '^\s*(?:export\s+)?ALI_ECS_SSH_USERNAME\s*='){continue}
+    if($login -or $line -cnotmatch '^\s*(?:export\s+)?ALI_ECS_SSH_USERNAME\s*=\s*(["'']?)([A-Za-z_][A-Za-z0-9_.-]*)\1\s*(?:#.*)?$'){throw 'Invalid or duplicate ECS username'}
+    $login=$Matches[2]
   }
-  if(!$password){throw 'Credentials file must contain nonempty ALI_ECS_SSH_PASSWORD; omit -CredentialsEnv to use SSH keys.'}
-  return $password
+  return $login
+}
+function Get-EcsSshOptions {
+  return @('-i',$IdentityFile,'-o','IdentitiesOnly=yes','-o','IdentityAgent=none','-o','PreferredAuthentications=publickey','-o','BatchMode=yes','-o','ConnectTimeout=15','-o','StrictHostKeyChecking=yes','-o','ServerAliveInterval=15','-o','ServerAliveCountMax=3')
 }
 function Assert-ExecutionPolicyPreflight {
   $effective=Get-ExecutionPolicy
@@ -330,7 +325,20 @@ function Initialize-ReleasePaths {
     if(!(Test-Path -LiteralPath $tool -PathType Leaf)){throw 'Existing cached Windows Python/Node unavailable; specify -BuildPython/-Node. No installation attempted.'}
   }
   if($AcceptanceNodeModules){$script:AcceptanceNodeModules=Assert-LocalWindowsPath $AcceptanceNodeModules}
-  if($CredentialsEnv){$script:CredentialsEnv=(Resolve-Path -LiteralPath $CredentialsEnv -ErrorAction Stop).ProviderPath;$null=Get-EcsSshPassword $CredentialsEnv}
+  if(!$CredentialsEnv -and (Test-Path -LiteralPath 'D:\repo\deliverables\.env' -PathType Leaf) -and !($LocalOnly -or $BuildOnly)){
+    $script:CredentialsEnv='D:\repo\deliverables\.env'
+  }
+  if($CredentialsEnv){
+    $login=Get-EcsSshUsername $CredentialsEnv
+    if(!$login -and $CredentialsEnv -ieq 'D:\repo\deliverables\.env'){throw 'Missing ALI_ECS_SSH_USERNAME in deliverables .env'}
+    if($login){
+      if($login -cnotmatch '^[A-Za-z_][A-Za-z0-9_.-]*$'){throw 'Invalid ECS SSH username'}
+      $resolvedTarget=$login+'@'+($SshTarget -split '@')[-1]
+      if(($ResumeSigned -or $script:ExplicitSshTarget) -and $resolvedTarget -cne $SshTarget){throw 'ECS username differs from selected SSH target'}
+      $script:SshTarget=$resolvedTarget
+    }
+  }
+  if($CredentialsEnv){$script:CredentialsEnv=(Resolve-Path -LiteralPath $CredentialsEnv -ErrorAction Stop).ProviderPath}
   if($ChannelRecoveryMsix){$script:ChannelRecoveryMsix=Assert-LocalWindowsPath $ChannelRecoveryMsix}
   $git=Get-ValidatedNativeGit
   Set-ReleaseEnvironment 'PATH' ((Split-Path -Parent $git)+';'+$env:PATH)
@@ -1376,9 +1384,7 @@ function Invoke-RollbackRetirement {
      $SshTarget -cnotmatch '^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+$'){throw 'Invalid retirement destination.'}
   $receiptPath=Get-DeploymentPath $Output 'result.json'
   if(!(Test-Path -LiteralPath $receiptPath)){throw 'Select the existing release receipt directory.'}
-  $script:sshOptions=@('-o','ConnectTimeout=15','-o','StrictHostKeyChecking=yes','-o','ServerAliveInterval=15','-o','ServerAliveCountMax=3')
-  if($IdentityFile){$script:sshOptions+=@('-i',(Resolve-Path -LiteralPath $IdentityFile).Path)}
-  if(!(Get-EcsSshPassword $CredentialsEnv)){$script:sshOptions+=@('-o','BatchMode=yes')}
+  $script:sshOptions=Get-EcsSshOptions
   $publisher=ConvertTo-ReleasePayload ([IO.File]::ReadAllBytes((Join-Path $PSScriptRoot 'releases/channel1.py')))
   $retirementProtocol=ConvertTo-ReleasePayload ([IO.File]::ReadAllBytes((Join-Path $Repository 'hermes_cli/release_channels.py')))
   $arguments=@{root=$RemoteRoot;build_id=$RetireRollbackBuild;package_sha256=$RetireRollbackSha256;expected_previous_sha256=$ExpectedChannelSha256;apply=$true} | ConvertTo-Json -Compress
@@ -1536,9 +1542,9 @@ function Run([string]$Exe, [string[]]$Arguments) {
   Report-Status (("Running {0} {1}" -f [IO.Path]::GetFileName($Exe), ($Arguments -join ' ')).TrimEnd())
   if([IO.Path]::GetFileName($Exe) -ieq 'sftp.exe') {
     # The progress meter needs the inherited console, not a PowerShell pipe.
-    Invoke-SshNative $Exe $Arguments
+    & $Exe @Arguments
   } elseif([IO.Path]::GetFileName($Exe) -ieq 'ssh.exe') {
-    Invoke-SshNative $Exe $Arguments | Out-Host
+    & $Exe @Arguments | Out-Host
   } elseif([IO.Path]::GetFileName($Exe) -in @('python.exe','python3.exe')) {
     # Windows PowerShell represents native stderr as ErrorRecord objects.
     # Keep draining both streams so the actual builder error reaches the run log.
@@ -1682,44 +1688,6 @@ function Read-ZipText($Archive, [string]$Name) {
   $reader = New-Object IO.StreamReader($entry.Open())
   try { $reader.ReadToEnd() } finally { $reader.Dispose() }
 }
-function Invoke-SshNative([string]$Exe, [string[]]$Arguments, [string]$InputText) {
-  $password=Get-EcsSshPassword $CredentialsEnv
-  if(!$password) { if($PSBoundParameters.ContainsKey('InputText')){$InputText | & $Exe @Arguments}else{& $Exe @Arguments}; return }
-  if(!$script:askPassExe) {
-    $helperDirectory=Join-Path 'D:\repo\deliverables\work' ('ecs-ssh-askpass-'+[Guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Path $helperDirectory | Out-Null
-    $helper=Join-Path $helperDirectory 'askpass.exe'
-    $source=Join-Path $helperDirectory 'askpass.cs'
-    [IO.File]::WriteAllText($source,@'
-using System;
-using System.Text;
-class AskPass {
-  static int Main(string[] args) {
-    if(args.Length!=1 || args[0].IndexOf("password",StringComparison.OrdinalIgnoreCase)<0)return 1;
-    Console.OutputEncoding=new UTF8Encoding(false);
-    Console.WriteLine(Environment.GetEnvironmentVariable("ALI_ECS_SSH_PASSWORD"));return 0;
-  }
-}
-'@,$utf8)
-    & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:exe "/out:$helper" $source | Out-Host
-    if($LASTEXITCODE -ne 0){throw 'Cannot compile native SSH password helper.'}
-    $script:askPassExe=$helper
-  }
-  $names=@('SSH_ASKPASS','SSH_ASKPASS_REQUIRE','DISPLAY','ALI_ECS_SSH_PASSWORD')
-  $savedEnvironment=@{}
-  foreach($name in $names){$savedEnvironment[$name]=[Environment]::GetEnvironmentVariable($name,'Process')}
-  try {
-    [Environment]::SetEnvironmentVariable('SSH_ASKPASS',$script:askPassExe,'Process')
-    [Environment]::SetEnvironmentVariable('SSH_ASKPASS_REQUIRE','force','Process')
-    [Environment]::SetEnvironmentVariable('DISPLAY','semantier','Process')
-    [Environment]::SetEnvironmentVariable('ALI_ECS_SSH_PASSWORD',$password,'Process')
-    $Arguments=@('-o','PreferredAuthentications=password','-o','NumberOfPasswordPrompts=1')+$Arguments
-    if($PSBoundParameters.ContainsKey('InputText')){$InputText | & $Exe @Arguments}else{& $Exe @Arguments}
-  } finally {
-    foreach($name in $names){[Environment]::SetEnvironmentVariable($name,$savedEnvironment[$name],'Process')}
-    $password=$null
-  }
-}
 function Ssh([string]$Command, [string]$InputText) {
   # Base64 avoids Windows/POSIX quoting differences, including $ and newlines.
   $encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Command.Replace("`r",'')))
@@ -1727,9 +1695,9 @@ function Ssh([string]$Command, [string]$InputText) {
   try {
     $ErrorActionPreference='Continue'
     if($PSBoundParameters.ContainsKey('InputText')){
-      $text = @(Invoke-SshNative 'ssh.exe' ($script:sshOptions + @($SshTarget,$Command)) -InputText $InputText 2>&1)
+      $text = @($InputText | & ssh.exe @sshOptions $SshTarget $Command 2>&1)
     }else{
-      $text = @(Invoke-SshNative 'ssh.exe' ($script:sshOptions + @($SshTarget,"printf '%s' '$encoded' | base64 -d | sh")) 2>&1)
+      $text = @(& ssh.exe @sshOptions $SshTarget "printf '%s' '$encoded' | base64 -d | sh" 2>&1)
     }
     $remoteExit=$LASTEXITCODE
   } finally {$ErrorActionPreference=$previousErrorPreference}
@@ -1750,15 +1718,13 @@ function Transfer-Sftp([string]$LocalFile, [string]$RemoteFile, [switch]$Downloa
   }
   $local=$LocalFile.Replace('\','/').Replace('[','\[').Replace(']','\]').Replace('*','\*').Replace('?','\?')
   $command=if($Download){'get "'+$RemoteFile+'" "'+$local+'"'}elseif($Overwrite){'put "'+$local+'" "'+$RemoteFile+'"'}else{'reput "'+$local+'" "'+$RemoteFile+'"'}
-  $batch=Join-Path $Output ('sftp-'+[Guid]::NewGuid().ToString('N')+'.txt')
-  [IO.File]::WriteAllText($batch,"progress`n"+$command+"`nbye`n",$utf8)
+  # OpenSSH reads the batch from stdin and returns a failure for an unsuccessful transfer.
+  $previousEncoding=$OutputEncoding
   try {
-    # -N clears quiet mode; the batch's progress command enables the meter.
-    # BatchMode=no permits ASKPASS/password authentication; errors still abort.
-    Run 'sftp.exe' ($script:sshOptions + @('-o','BatchMode=no','-N','-b',$batch,$SshTarget))
-  } finally {
-    Remove-Item -LiteralPath $batch -Force
-  }
+    $OutputEncoding=$utf8
+    $command | & sftp.exe @sshOptions -N -b '-' $SshTarget
+    if($LASTEXITCODE){throw "SFTP transfer failed ($LASTEXITCODE)"}
+  } finally {$OutputEncoding=$previousEncoding}
 }
 function Upload([string]$Path, [string]$RemoteFile) {
   if($BuildMode -eq 'Beta'){Transfer-Sftp $Path $RemoteFile;Complete-Checkpoint ('upload-'+[IO.Path]::GetFileName($Path));return}
@@ -2546,9 +2512,7 @@ if($directoryVersion){
 Initialize-ReleasePaths
 if(($NativeUpdateFrom -or $FirstChannel1Head) -and !$WhatIfPreference){
   . (Join-Path $PSScriptRoot 'deploy-ecs-channel1.ps1')
-  $script:sshOptions=@('-o','ConnectTimeout=15','-o','StrictHostKeyChecking=yes','-o','ServerAliveInterval=15','-o','ServerAliveCountMax=3')
-  if($IdentityFile){$script:sshOptions+=@('-i',(Resolve-Path -LiteralPath $IdentityFile).Path)}
-  if(!(Get-EcsSshPassword $CredentialsEnv)){$script:sshOptions+=@('-o','BatchMode=yes')}
+  $script:sshOptions=Get-EcsSshOptions
   if(!$FirstChannel1Head -and (Test-NativeCompletedRelease)){return}
   if($directoryVersion -and $NativeUpdateFrom){
     $retainedBaseline=Join-Path $Output 'baseline\SemantierAgent.msix'
@@ -2626,8 +2590,7 @@ if ($SshTarget -cnotmatch '^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+$' -or
     $Version -cnotmatch '^\d+\.\d+\.\d+\.\d+$' -or $Thumbprint -cnotmatch '^[A-F0-9]{40}$') {
   throw 'Invalid release/SSH/path configuration. This script publishes CH1 only.'
 }
-$script:sshOptions = @('-o','ConnectTimeout=15','-o','StrictHostKeyChecking=yes','-o','ServerAliveInterval=15','-o','ServerAliveCountMax=3')
-if ($IdentityFile) { $script:sshOptions += @('-i',(Resolve-Path -LiteralPath $IdentityFile).Path) }
+$script:sshOptions=Get-EcsSshOptions
 if($SetupOnly -or $UpdateSetup){Publish-IndependentSetup;return}
 $plan = [ordered]@{input=$Msix;version=$Version;sourceCommit=$SourceCommit;ssh=$SshTarget;
   buildId=$BuildId;
@@ -2888,31 +2851,7 @@ try {
   Save-Json @{version=([Version]$Version).ToString(3);sourceCommit=$SourceCommit;artifactSha256=$hash;
     executable=(Join-Path $registered[0].InstallLocation 'app\Semantier Agent.exe');output=$uiOutput;
     playwright=(Join-Path $AcceptanceNodeModules '@playwright\test')} $binding
-  $harness=@'
-const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
-const b=JSON.parse(fs.readFileSync(process.argv[2],'utf8').replace(/^\uFEFF/,''));
-const {_electron}=require(b.playwright);fs.mkdirSync(b.output,{recursive:true});let app;const errors=[];
-(async()=>{try{
- const env=Object.fromEntries(Object.entries(process.env).filter(([k])=>/^(PATH|SYSTEMROOT|WINDIR|COMSPEC|PATHEXT|USERPROFILE|SYSTEMDRIVE|PROCESSOR_ARCHITECTURE|NUMBER_OF_PROCESSORS|APPDATA|LOCALAPPDATA|TEMP|TMP|PROGRAMFILES|PROGRAMFILES\(X86\))$/i.test(k)));
- app=await _electron.launch({executablePath:b.executable,cwd:path.dirname(b.executable),timeout:120000,
- env:{...env,HERMES_HOME:path.join(b.output,'hermes-home'),HERMES_DESKTOP_USER_DATA_DIR:path.join(b.output,'userdata'),
- HERMES_DESKTOP_IGNORE_EXISTING:'1',HERMES_DESKTOP_SKIP_QUIT_CONFIRM:'1',HERMES_DESKTOP_SKIP_PROTOCOL_REGISTRATION:'1',HERMES_DESKTOP_CDP_PORT:'off'}});
- app.process().stderr.on('data',x=>{if(String(x).includes('ERR_MODULE_NOT_FOUND'))errors.push(String(x));});
- const facts=await app.evaluate(({app})=>({packaged:app.isPackaged,version:app.getVersion(),executable:process.execPath,platform:process.platform}));
- assert.equal(facts.packaged,true);assert.equal(facts.version,b.version);assert.equal(facts.platform,'win32');assert.equal(path.resolve(facts.executable),path.resolve(b.executable));
- const page=await app.firstWindow({timeout:120000});await page.waitForLoadState('domcontentloaded');assert(await page.isVisible('body'));
- assert(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().some(w=>w.isVisible())));
- await page.waitForFunction(async()=>{try{const p=await window.hermesDesktop.api({path:'/api/profiles/active'});return typeof p.current==='string'&&p.current.length>0;}catch{return false;}},null,{timeout:180000,polling:2000});
- const pty=await page.evaluate(async()=>{const api=window.hermesDesktop.terminal,s=await api.start({cols:100,rows:30});let off,timer;
- try{return await new Promise((resolve,reject)=>{let output='';timer=setTimeout(()=>reject(Error('PTY deadline exceeded')),30000);
- off=api.onData(s.id,data=>{output+=typeof data==='string'?data:JSON.stringify(data);if(output.includes('SEMANTIER_REAL_PTY_AMD64_OK')){clearTimeout(timer);resolve({shell:s.shell,output});}});
- (async()=>{try{await api.attach(s.id);await api.write(s.id,'cmd.exe /d /c "echo SEMANTIER_REAL_PTY_%PROCESSOR_ARCHITECTURE%_OK"\r');}catch(e){clearTimeout(timer);reject(e);}})();});}
- finally{clearTimeout(timer);if(off)off();await api.dispose(s.id);}});
- assert.deepEqual(errors,[]);await page.screenshot({path:path.join(b.output,'window.png')});
- fs.writeFileSync(path.join(b.output,'acceptance.json'),JSON.stringify({result:'WINDOW_PTY_PASS',binding:b,facts,pty,errors},null,2));
- }finally{if(app)await app.close();}})().catch(e=>{fs.writeFileSync(path.join(b.output,'failure.txt'),e.stack);process.exitCode=1;});
-'@
-  $harnessPath=Get-DeploymentPath $Output 'accept-installed.cjs';[IO.File]::WriteAllText($harnessPath,$harness,$utf8)
+  $harnessPath=Join-Path $PSScriptRoot 'releases/accept-installed.cjs'
   Report-Status 'Opening Electron and testing a real PTY command; backend startup can take several minutes.'
   Run $Node @($harnessPath,$binding)
   $ui=Get-Content -LiteralPath (Join-Path $uiOutput 'acceptance.json') -Raw | ConvertFrom-Json
@@ -3032,34 +2971,7 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output,{recursive:true});
   # Failed/missing Playwright or an old Landing => retain old catalog/packages.
   $landingReady=$false
   if (!$SkipOldCleanup) {
-    $landingProbe=Get-DeploymentPath $Output 'verify-live-landing.cjs'
-    $landingProbeSource=@'
-const {chromium}=require(process.argv[2]+'/@playwright/test');
-const fs=require('node:fs');
-(async()=>{
-  const expected='https://assets.semantier.cn/releases/installers/semantier-setup-ch1.exe';
-  const browser=await chromium.launch({headless:true});
-  const observations=[];
-  try {
-    for(const host of ['https://semantier.cn/','https://www.semantier.cn/']) {
-      const page=await browser.newPage();
-      const catalogRequests=[];
-      page.on('request',r=>{if(/\/(?:manual\/)?catalog\.json(?:\?|$)/i.test(r.url())) catalogRequests.push(r.url());});
-      const response=await page.goto(host,{waitUntil:'domcontentloaded',timeout:30000});
-      if(!response || !response.ok()) throw Error('Landing HTTP failure: '+host);
-      const link=page.locator('a[href="'+expected+'"]');
-      await link.first().waitFor({state:'visible',timeout:15000});
-      const href=await link.first().getAttribute('href');
-      if(new URL(href,page.url()).href!==expected) throw Error('Landing installer link mismatch: '+host);
-      if(catalogRequests.length) throw Error('Landing still calls catalog: '+host);
-      observations.push({host,url:page.url(),setupHref:expected,visibleFixedLinks:await link.count(),catalogRequests:0});
-      await page.close();
-    }
-  } finally {await browser.close();}
-  fs.writeFileSync(process.argv[3],JSON.stringify({result:'LIVE_LANDING_FIXED_SETUP_PASS',observations},null,2));
-})().catch(error=>{console.error(error.stack||String(error));process.exitCode=1;});
-'@
-    [IO.File]::WriteAllText($landingProbe,$landingProbeSource,$utf8)
+    $landingProbe=Join-Path $PSScriptRoot 'releases/verify-live-landing.cjs'
     $landingEvidence=Get-DeploymentPath $Output 'landing-cutover.json'
     try {
       Report-Status 'Checking both live Landing hosts before cleanup.'

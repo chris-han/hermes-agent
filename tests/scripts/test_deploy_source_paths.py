@@ -49,7 +49,7 @@ Set-StrictMode -Version Latest
 $errors=$null;$tokens=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($args[0],[ref]$tokens,[ref]$errors)
 if($errors){throw ($errors | Out-String)}
-foreach($f in $ast.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in @('Assert-LocalWindowsPath','Initialize-LocalBuildSource','Get-EcsSshPassword','Run')},$true)){
+foreach($f in $ast.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in @('Assert-LocalWindowsPath','Initialize-LocalBuildSource','Get-EcsSshUsername','Run')},$true)){
  . ([scriptblock]::Create($f.Extent.Text))
 }
 function Report-Status([string]$Message){}
@@ -67,24 +67,24 @@ def test_native_worktree_lifecycle(tmp_path):
 def test_credentials_are_explicit_validated_and_never_echoed(tmp_path):
     script = tmp_path / "credentials.ps1"
     script.write_text(EXTRACT + r"""
-if($null -ne (Get-EcsSshPassword '')){throw 'Unexpected implicit credential source'}
+if($null -ne (Get-EcsSshUsername '')){throw 'Unexpected implicit credential source'}
 if($args[2] -eq 'invalid'){
- try{$null=Get-EcsSshPassword $args[1]}catch{'REJECTED';exit 0}
+ try{$null=Get-EcsSshUsername $args[1]}catch{'REJECTED';exit 0}
  throw 'Invalid credentials accepted'
 }
-$value=Get-EcsSshPassword $args[1]
-if($value -cne 'fixture secret # retained'){throw 'Password parsing mismatch'}
-'PASSWORD_PARSE_PASS'
+$value=Get-EcsSshUsername $args[1]
+if($value -cne 'fixture_user'){throw 'Username parsing mismatch'}
+'USERNAME_PARSE_PASS'
 """, encoding="utf-8")
     env = tmp_path / "explicit.env"
-    env.write_text('export ALI_ECS_SSH_PASSWORD="fixture secret # retained" # comment\n', encoding="utf-8")
+    env.write_text('export ALI_ECS_SSH_USERNAME="fixture_user" # comment\n', encoding="utf-8")
     result = invoke_ps(script, SOURCE, env, "valid")
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "PASSWORD_PARSE_PASS" in result.stdout
+    assert "USERNAME_PARSE_PASS" in result.stdout
     assert "fixture secret" not in result.stdout + result.stderr
-    for text in ["UNRELATED=value\n", "ALI_ECS_SSH_PASSWORD=\n",
-                 'ALI_ECS_SSH_PASSWORD="secret\n',
-                 "ALI_ECS_SSH_PASSWORD=one\nALI_ECS_SSH_PASSWORD=two\n"]:
+    for text in ["ALI_ECS_SSH_USERNAME=\n",
+                 'ALI_ECS_SSH_USERNAME="secret\n',
+                 "ALI_ECS_SSH_USERNAME=one\nALI_ECS_SSH_USERNAME=two\n"]:
         env.write_text(text, encoding="utf-8")
         result = invoke_ps(script, SOURCE, env, "invalid")
         assert result.returncode == 0, result.stdout + result.stderr
