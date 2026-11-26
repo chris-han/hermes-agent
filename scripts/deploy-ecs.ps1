@@ -83,6 +83,7 @@ param(
   [string]$CredentialsEnv = '',
   [string]$TimestampUrl = 'http://timestamp.digicert.com',
   [Alias('PrepareOnly')][switch]$LocalOnly,
+  [switch]$RebuildLocalVersion,
   [switch]$BuildOnly,
   [switch]$SkipLocalInstall,
   [switch]$DesktopOnly,
@@ -123,6 +124,7 @@ Set-StrictMode -Version Latest
 $script:ossSession=$null
 $ExpressLocalUpdate=!$PSBoundParameters.ContainsKey('BuildMode')
 if($ExpressLocalUpdate){$LocalOnly=$true}
+if($RebuildLocalVersion -and (!$ExpressLocalUpdate -or !$ExpectedVersion -or !$Commit)){throw 'RebuildLocalVersion requires express local mode, an exact commit and ExpectedVersion.'}
 if($ExpressLocalUpdate -and (!$LocalOnly -or $BuildMode -cne 'Prod' -or $BuildOnly -or $DesktopOnly -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $NativePublishOnly -or $PreflightOnly -or $Latest -or $ResumeSigned -or $RetireRollbackBuild -or $NativeUpdateFrom -or $FirstChannel1Head)){
   throw 'This operation requires an explicit -BuildMode. The default is an express local application install.'
 }
@@ -2319,7 +2321,10 @@ function Build-CommitPackage {
   Reset-StalePreparation (Get-DeploymentPath $Output 'desktop-job\prepared.json')
   if(!$record){
     $reservation=@{}
-    if($ExpectedVersion){$reservation.ExpectedNextVersion=([Version]$ExpectedVersion).ToString(3)}
+    if($ExpectedVersion){
+      if($RebuildLocalVersion){$reservation.RetryVersion=([Version]$ExpectedVersion).ToString(3)}
+      else{$reservation.ExpectedNextVersion=([Version]$ExpectedVersion).ToString(3)}
+    }
     $next=& (Join-Path $PSScriptRoot 'next-windows-build-version.ps1') -State $VersionState -SourceCommit $Commit @reservation
     $record=[pscustomobject]@{inputs=$inputs;commit=$Commit;version=[string]$next;source=$source;publicBase=$PublicBase;cache=$BuildCache;
       request=(Get-DeploymentPath $Output 'channel-request.json');prepared=(Get-DeploymentPath $Output 'desktop-job\prepared.json');
@@ -2516,7 +2521,7 @@ if($ExpectedVersion -and !$script:explicitOutput){
   if(!(Get-ReleaseDirectoryVersion $Output)){throw 'ExpectedVersion must be a canonical four-component Windows version.'}
 }
 $directoryVersion=Get-ReleaseDirectoryVersion $Output
-if($directoryVersion -and (!($NativeUpdateFrom -or $FirstChannel1Head) -or $directoryVersion.ToString() -cne $ExpectedVersion)){
+if($directoryVersion -and (!($NativeUpdateFrom -or $FirstChannel1Head -or $ExpressLocalUpdate) -or $directoryVersion.ToString() -cne $ExpectedVersion)){
   throw 'Versioned release directory must match -ExpectedVersion.'
 }
 if($directoryVersion){
