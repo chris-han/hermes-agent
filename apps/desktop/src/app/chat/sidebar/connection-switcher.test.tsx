@@ -22,11 +22,13 @@ vi.mock('@/store/connections', () => ({
   $activeConnectionId: atom<null | string>('local'),
   $connectionsRegistry: atom<DesktopConnectionsRegistry | null>(null),
   $pendingConnectionId: atom<null | string>(null),
+  refreshConnectionsRegistry: vi.fn(async () => undefined),
   selectConnection: vi.fn(async () => undefined)
 }))
 
 vi.mock('@/i18n', () => ({
   useI18n: () => ({
+    locale: 'en',
     t: {
       profiles: {
         switchConnectionFailed: (name: string) => `Could not connect to ${name}`,
@@ -247,5 +249,46 @@ describe('ConnectionSwitcher', () => {
 
     fireEvent.pointerDown(trigger, { button: 0, pointerType: 'mouse' })
     expect(screen.getByRole('menuitemradio', { name: 'W2Probe' })).toBeTruthy()
+  })
+})
+
+
+describe('Semantier execution environment', () => {
+  const signedIdentity = {
+    authenticated: true,
+    organization_id: 'org',
+    user: { user_id: 'user', workspace_id: 'work' },
+    workspace: { id: 'work' }
+  }
+
+  it.each([
+    { alreadySignedIn: false, cancel: false },
+    { alreadySignedIn: true, cancel: false },
+    { alreadySignedIn: false, cancel: true }
+  ])('continues only a verified Cloud selection ($alreadySignedIn, $cancel)', async ({ alreadySignedIn, cancel }) => {
+    $connectionsRegistry.set(registry([connection('local', 'Local', 'local')]))
+    const login = vi.fn().mockResolvedValue(cancel ? { authenticated: false } : signedIdentity)
+    const save = vi.fn().mockResolvedValue({ connection: { id: 'cloud' } })
+    vi.stubGlobal('hermesDesktop', {
+      connections: { save },
+      workspace: { identity: vi.fn().mockResolvedValue(alreadySignedIn ? signedIdentity : { authenticated: false }), login }
+    })
+
+    try {
+      render(<ConnectionSwitcher onConnect={onConnect} readiness="Ready" />)
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Execution environment: This device · Ready' }), {
+        button: 0, pointerType: 'mouse'
+      })
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Semantier Cloud' }))
+      await waitFor(() => expect(screen.getByRole('group', { name: 'Execution environment' }).getAttribute('aria-busy')).toBe('false'))
+      expect(login).toHaveBeenCalledTimes(alreadySignedIn ? 0 : 1)
+      expect(save).toHaveBeenCalledTimes(cancel ? 0 : 1)
+      expect(selectConnection).toHaveBeenCalledTimes(cancel ? 0 : 1)
+
+      if (!cancel) {expect(selectConnection).toHaveBeenCalledWith('cloud')}
+      expect($activeConnectionId.get()).toBe('local')
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

@@ -311,8 +311,9 @@ return personal}
         try {
           const identity = await target.client.identity()
 
-          if (identity.authenticated) {
+          if (identity.authenticated && !win.isDestroyed()) {
             await target.owned.cookies.flushStore()
+            if (win.isDestroyed()) { return { authenticated: false } }
             onAccountChanged?.(target.origin, true)
 
             return identity
@@ -322,7 +323,8 @@ return personal}
         await new Promise(resolve => setTimeout(resolve, 500))
       }
 
-      throw new Error('Semantier Cloud sign-in was closed or timed out.')
+      if (win.isDestroyed()) { return { authenticated: false } }
+      throw new Error('Semantier Cloud sign-in timed out.')
     } finally {
       if (!win.isDestroyed()) { win.close() }
     }

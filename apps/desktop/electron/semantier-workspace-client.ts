@@ -423,7 +423,15 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
       return {ok:true,provider:body.provider,model:body.model}
     },
     async identity(): Promise<WorkspaceIdentity> {
-      return (await request('/auth/context')).json()
+      try {
+        return await (await request('/auth/context')).json()
+      } catch (error) {
+        if ((error as { statusCode?: number }).statusCode === 401) {
+          return { authenticated: false }
+        }
+
+        throw error
+      }
     },
     async winman(): Promise<WorkspaceWinmanProfile> {
       const result = await (await request('/api/winman')).json()

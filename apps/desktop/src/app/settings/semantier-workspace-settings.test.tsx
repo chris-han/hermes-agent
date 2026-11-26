@@ -14,7 +14,7 @@ it('signs in and opens the existing server workspace without creating another co
     .fn()
     .mockResolvedValue({
       authenticated: true,
-      user: { user_id: 'a', name: 'Alice' },
+      user: { user_id: 'a', workspace_id: 'wa', name: 'Alice' },
       workspace: { id: 'wa' },
       organization_id: 'org'
     })
@@ -52,7 +52,7 @@ it('creates an explicit HTTP connection only after authenticated sign-in', async
 
   const login = vi
     .fn()
-    .mockResolvedValue({ authenticated: true, user: { user_id: 'a' }, workspace: { id: 'wa' }, organization_id: 'org' })
+    .mockResolvedValue({ authenticated: true, user: { user_id: 'a', workspace_id: 'wa' }, workspace: { id: 'wa' }, organization_id: 'org' })
 
   const save = vi.fn().mockResolvedValue({ connection: { id: 'new-cloud' } })
   Object.defineProperty(window, 'hermesDesktop', {
@@ -77,14 +77,15 @@ it('does not save or open a workspace when hosted sign-in is cancelled', async (
     value: {
       workspace: {
         identity: vi.fn().mockResolvedValue({ authenticated: false }),
-        login: vi.fn().mockRejectedValue(new Error('closed'))
+        login: vi.fn().mockResolvedValue({ authenticated: false })
       },
       connections: { save }
     }
   })
   render(<SemantierWorkspaceSettings connections={[]} onConnect={onConnect} />)
   fireEvent.click(await screen.findByRole('button', { name: 'Sign in and open workspace' }))
-  expect((await screen.findByRole('alert')).textContent).toContain('Could not open the workspace')
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Sign in and open workspace' }).hasAttribute('disabled')).toBe(false))
+  expect(screen.queryByRole('alert')).toBeNull()
   expect(save).not.toHaveBeenCalled()
   expect(onConnect).not.toHaveBeenCalled()
   expect((screen.getByRole('textbox', { name: 'Workspace address' }) as HTMLInputElement).value).toBe(
@@ -103,7 +104,7 @@ it('signs into Project continuity while leaving the local connection alone', asy
       workspace: {
         identity: vi.fn().mockResolvedValue({ authenticated: false }),
         login: vi.fn().mockResolvedValue({
-          authenticated: true, user: { user_id: 'a' }, workspace: { id: 'wa' }, organization_id: 'org'
+          authenticated: true, user: { user_id: 'a', workspace_id: 'wa' }, workspace: { id: 'wa' }, organization_id: 'org'
         }),
         projects,
         projectMaterials
@@ -126,7 +127,7 @@ it('keeps a signed project selectable when its materials request times out', asy
     value: {
       workspace: {
         identity: vi.fn().mockResolvedValue({
-          authenticated: true, user: { user_id: 'a' }, workspace: { id: 'wa' }, organization_id: 'org'
+          authenticated: true, user: { user_id: 'a', workspace_id: 'wa' }, workspace: { id: 'wa' }, organization_id: 'org'
         }),
         projects: vi.fn().mockResolvedValue([{ project_ref: projectRef }]),
         projectMaterials: vi.fn().mockRejectedValue(new Error('TimeoutError'))

@@ -587,11 +587,10 @@ export function TreeGroup({
           )}
           {integratedSessionsHeader && (
             <div
-              className="flex shrink-0 items-center pl-1 pt-1 [-webkit-app-region:drag]"
+              className="flex shrink-0 items-center px-2 [-webkit-app-region:drag]"
               data-window-drag-handle=""
-              style={{ width: TITLEBAR_DRAG_HANDLE_WIDTH }}
             >
-              <OrganizationBrand compact markOnly />
+              <OrganizationBrand compact markClassName="size-8" markOnly />
             </div>
           )}
           {pageHeader && headerVisible ? (

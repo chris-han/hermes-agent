@@ -1,4 +1,9 @@
 const en = {
+  configurationCenter: 'Configuration Center',
+  executionEnvironment: 'Execution environment',
+  thisDevice: 'This device',
+  agentConfiguration: 'Agent configuration',
+  diagnostics: 'Diagnostics',
   title: 'Semantier Cloud',
   description: 'Open the same conversations and Winman as Hermes Workspace.',
   address: 'Workspace address',
@@ -15,6 +20,11 @@ const en = {
 }
 
 const zh: typeof en = {
+  configurationCenter: '配置中心',
+  executionEnvironment: '运行环境',
+  thisDevice: '本机',
+  agentConfiguration: 'Agent 配置',
+  diagnostics: '系统诊断',
   title: 'Semantier Cloud',
   description: '打开与 Hermes Workspace 相同的会话和僚机。',
   address: '工作区地址',
@@ -31,6 +41,11 @@ const zh: typeof en = {
 }
 
 const hant: typeof en = {
+  configurationCenter: '配置中心',
+  executionEnvironment: '執行環境',
+  thisDevice: '本機',
+  agentConfiguration: 'Agent 配置',
+  diagnostics: '系統診斷',
   title: 'Semantier Cloud',
   description: '開啟與 Hermes Workspace 相同的會話和僚機。',
   address: '工作區地址',

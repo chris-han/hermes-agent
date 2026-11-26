@@ -471,6 +471,7 @@ export function useStatusbarItems({
         className: `w-7 justify-center px-0${commandCenterOpen ? ' bg-accent/55 text-foreground' : ''}`,
         icon: <Command className="size-3.5" />,
         id: 'command-center',
+        hidden: Boolean(window.hermesDesktop?.semantierProduct),
         // The system icon: the way into every other surface, including the
         // settings that would bring a hidden item back. Never hideable.
         lockedVisible: true,
@@ -483,12 +484,17 @@ export function useStatusbarItems({
         hidden: !sessionsShowing,
         id: 'gateway-switcher',
         lockedVisible: true,
-        render: () => <StatusbarGatewaySwitcher />
+        render: () => (
+          <StatusbarGatewaySwitcher
+            onDiagnostics={() => openCommandCenterSection('system')}
+            readiness={window.hermesDesktop?.semantierProduct ? gatewayHealth.detail : undefined}
+          />
+        )
       },
       {
         // The rail's stand-in: the profile picker moves down here while the
         // colored strip is hidden, so switching profiles always has a door.
-        hidden: !sessionsShowing || profileRailVisible,
+        hidden: Boolean(window.hermesDesktop?.semantierProduct) || !sessionsShowing || profileRailVisible,
         id: 'profile-switcher',
         lockedVisible: true,
         render: () => <ProfileSwitcher compact />
@@ -496,7 +502,7 @@ export function useStatusbarItems({
       {
         className: gatewayRestarting ? undefined : gatewayClassName,
         detail: gatewayHealth.detail,
-        hidden: botsShowing,
+        hidden: botsShowing || Boolean(window.hermesDesktop?.semantierProduct),
         icon: gatewayRestarting ? (
           <GlyphSpinner ariaLabel={copy.gatewayRestarting} className="size-3" />
         ) : inferenceReady ? (
@@ -649,6 +655,7 @@ export function useStatusbarItems({
       inferenceReady,
       inferenceStatus?.reason,
       openAgents,
+      openCommandCenterSection,
       profileRailVisible,
       projectName,
       sessionsShowing,
@@ -768,8 +775,15 @@ export function useStatusbarItems({
   return { leftStatusbarItems, statusbarItems }
 }
 
-function StatusbarGatewaySwitcher() {
+function StatusbarGatewaySwitcher({ readiness, onDiagnostics }: { readiness?: string; onDiagnostics: () => void }) {
   const navigate = useNavigate()
 
-  return <ConnectionSwitcher compact onConnect={() => navigate(`${SETTINGS_ROUTE}?tab=connections`)} />
+  return (
+    <ConnectionSwitcher
+      compact
+      onConnect={() => navigate(`${SETTINGS_ROUTE}?tab=connections`)}
+      onDiagnostics={readiness ? onDiagnostics : undefined}
+      readiness={readiness}
+    />
+  )
 }

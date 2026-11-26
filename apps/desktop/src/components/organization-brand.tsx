@@ -17,11 +17,13 @@ export function OrganizationBrand({
   draft,
   compact = false,
   markOnly = false,
+  markClassName,
   attribution = false
 }: {
   draft?: DesktopBranding
   compact?: boolean
   markOnly?: boolean
+  markClassName?: string
   attribution?: boolean
   showDefault?: boolean
 }) {
@@ -38,7 +40,7 @@ export function OrganizationBrand({
       <div className={cn('flex min-w-0 gap-3', compact ? 'items-center' : 'flex-col items-center')}>
         <img
           alt=""
-          className={cn('shrink-0 object-contain', compact ? 'size-7' : markOnly ? 'size-12' : 'size-14')}
+          className={cn('shrink-0 object-contain', compact ? 'size-7' : markOnly ? 'size-12' : 'size-14', markClassName)}
           src={value.logo ?? semantierLogo}
         />
         {!markOnly && (

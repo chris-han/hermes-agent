@@ -704,6 +704,13 @@ The Windows Close Semantier Agent choice renders through shared ConfirmDialog/Di
 
 Version & updates reuses the UpdateChannelRow/ListRow/SegmentedControl to select Production or Development for Semantier-owned channel packages. The native update preference owner persists the choice, exposes it even on check failure, and invalidates the prior target. Selecting a stream checks availability only; it does not install, downgrade, reset profiles, enable reporting or start inference. Keep installation and active-work review explicit. Production with no qualified matching release displays the existing no-published-release state. Installed package identity, signer and provenance do not change with the preference. Other publishers and source-checkout Stable/Every commit behavior remain with their existing owners.
 
+## Semantier execution environment and Configuration Center
+
+Use one execution-environment selector with a readable readiness state and a route to diagnostics. Keep active context visible while a new environment connects. The Cloud choice invokes the existing hosted sign-in when needed and activates the requested environment after verified identity and connection. Closing sign-in leaves the active context in place.
+
+Use the existing gear as the Configuration Center entry. Keep profile selection and management under Agent configuration and retain session ownership when opening the settings. The integrated Sessions navigation header uses a 32 CSS px organization mark with an 8 px inline inset and preserves the existing artwork and drag affordance.
+
+
 ## Semantier native theme
 
 The default desktop theme ID is `semantier`, displayed as **Semantier**. It is the native adapter of [Semantier's canonical Asimov design law](../../../docs/operational/design.md), whose stable laws and color/type roles take precedence over the legacy glass/elevation guidance above when this theme is active. `src/themes/presets.ts` owns the native palette adapter and terminal ANSI palettes; `src/styles.css` binds the existing desktop surface/control roles. Keep optional legacy and imported presets independent. Do not introduce route-local theme styles.

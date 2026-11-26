@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input'
 import type { DesktopRegistryConnection } from '@/global'
 import { useI18n } from '@/i18n'
 import { semantierWorkspaceCopy } from '@/i18n/semantier-workspace'
-import { refreshConnectionsRegistry } from '@/store/connections'
+import { authenticateWorkspace, DEFAULT_SEMANTIER_WORKSPACE_ORIGIN, ensureWorkspaceConnection } from '@/lib/semantier-workspace-connection'
 
 import type { WorkspaceIdentity } from '../../../electron/semantier-workspace-client'
 
@@ -27,7 +27,7 @@ export function SemantierWorkspaceSettings({
   const copy = semantierWorkspaceCopy(locale)
 
   const [origin, setOrigin] = useState(
-    () => connections.find(c => c.transport === 'semantier-workspace-http')?.url || 'https://cloud.semantier.cn'
+    () => connections.find(c => c.transport === 'semantier-workspace-http')?.url || DEFAULT_SEMANTIER_WORKSPACE_ORIGIN
   )
 
   const [identity, setIdentity] = useState<WorkspaceIdentity | null>(null)
@@ -71,54 +71,17 @@ export function SemantierWorkspaceSettings({
     setError('')
 
     try {
-      const api = window.hermesDesktop.workspace
+      const isCurrent = () => generation.current === current
+      const actual = await authenticateWorkspace(origin, isCurrent)
 
-      if (!api) {
-        throw new Error(copy.failed)
-      }
-
-      // Re-read before deciding whether to open hosted login; UI state is not authority.
-      let actual = await api.identity(origin)
-
-      if (!actual.authenticated) {
-        actual = await api.login(origin)
-      }
-
-      if (generation.current !== current) {
-        return
-      }
-
-      if (!actual.authenticated || !actual.user?.user_id || !actual.workspace?.id || !actual.organization_id) {
-        throw new Error(copy.identityRequired)
-      }
+      if (!actual) {return}
 
       setIdentity(actual)
-      if (projectsOnly) return
-      const normalized = new URL(origin).origin
 
-      const saved = connections.find(
-        c => c.transport === 'semantier-workspace-http' && new URL(c.url!).origin === normalized
-      )
+      if (projectsOnly) {return}
+      const connection = await ensureWorkspaceConnection(origin, connections, copy.title)
 
-      const connection =
-        saved ||
-        (
-          await window.hermesDesktop.connections.save({
-            kind: 'cloud',
-            label: connections.some(c => c.label === copy.title)
-              ? `${copy.title} (${new URL(normalized).host})`
-              : copy.title,
-            url: normalized,
-            transport: 'semantier-workspace-http'
-          })
-        ).connection
-
-      if (generation.current !== current) {
-        return
-      }
-
-      await refreshConnectionsRegistry()
-      await onConnect?.(connection.id)
+      if (isCurrent()) {await onConnect?.(connection.id)}
     } catch {
       if (generation.current === current) {
         setError(copy.failed)

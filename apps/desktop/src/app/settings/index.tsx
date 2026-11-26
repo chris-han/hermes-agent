@@ -8,6 +8,7 @@ import { Tip } from '@/components/ui/tooltip'
 import { getHermesConfigDefaults, getHermesConfigRecord, saveHermesConfig } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { modelServiceCopy } from '@/i18n/model-service'
+import { semantierWorkspaceCopy } from '@/i18n/semantier-workspace'
 import { triggerHaptic } from '@/lib/haptics'
 import {
   Archive,
@@ -41,6 +42,7 @@ import { useRouteEnumParam } from '../hooks/use-route-enum-param'
 import { OverlayIconButton } from '../overlays/overlay-chrome'
 import { OverlayMain, OverlayNav, type OverlayNavGroup, OverlaySplitLayout } from '../overlays/overlay-split-layout'
 import { OverlayView } from '../overlays/overlay-view'
+import { PROFILES_ROUTE } from '../routes'
 
 import { AboutSettings } from './about-settings'
 import { AppearanceSettings } from './appearance-settings'
@@ -349,6 +351,15 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
             label: serviceCopy.advancedRuntime,
             onSelect: () => setActiveView('gateway')
           },
+          ...(window.hermesDesktop?.semantierProduct
+            ? [{
+                active: false,
+                icon: Settings2,
+                id: 'agent-configuration',
+                label: semantierWorkspaceCopy(locale).agentConfiguration,
+                onSelect: () => navigate(PROFILES_ROUTE)
+              }]
+            : []),
           {
             active: activeView === 'keybinds',
             icon: Keyboard,
@@ -423,6 +434,7 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
       }),
     [
       locale,
+      navigate,
       activeView,
       serviceCopy.advancedRuntime,
       serviceCopy.title,

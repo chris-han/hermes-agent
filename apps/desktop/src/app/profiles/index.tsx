@@ -2,12 +2,14 @@ import { useStore } from '@nanostores/react'
 import type * as React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { ProfileSwitcher } from '@/app/chat/sidebar/profile-dropdown-switcher'
 import { CodeEditor } from '@/components/chat/code-editor'
 import { PageLoader } from '@/components/page-loader'
 import { Button } from '@/components/ui/button'
 import { ProfileGlyph } from '@/components/ui/profile-glyph'
 import { getProfileSoul, type ProfileInfo, updateProfileSoul } from '@/hermes'
 import { useI18n } from '@/i18n'
+import { semantierWorkspaceCopy } from '@/i18n/semantier-workspace'
 import { displayPath } from '@/lib/display-path'
 import { AlertTriangle, Save } from '@/lib/icons'
 import { resolveProfileColor } from '@/lib/profile-color'
@@ -40,8 +42,9 @@ interface ProfilesViewProps {
 }
 
 export function ProfilesView({ onClose }: ProfilesViewProps) {
-  const { t } = useI18n()
+  const { locale, t } = useI18n()
   const p = t.profiles
+  const semantier = window.hermesDesktop?.semantierProduct
   const [profiles, setProfiles] = useState<null | ProfileInfo[]>(null)
   const [selectedName, setSelectedName] = useState<null | string>(null)
   const [query, setQuery] = useState('')
@@ -119,7 +122,11 @@ export function ProfilesView({ onClose }: ProfilesViewProps) {
         />
       ) : (
         <>
-          <PanelHeader subtitle={p.count(profiles.length)} title={p.title} />
+          <PanelHeader
+            actions={semantier ? <ProfileSwitcher /> : undefined}
+            subtitle={p.count(profiles.length)}
+            title={semantier ? semantierWorkspaceCopy(locale).agentConfiguration : p.title}
+          />
           <PanelBody>
             <PanelList
               onSearchChange={setQuery}

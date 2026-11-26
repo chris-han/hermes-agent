@@ -2065,7 +2065,7 @@ export function ChatSidebar({
 
         {/* Off, the statusbar's profile dropdown (beside the gateway switcher)
             takes over — the rail is a duplicate door for bot-only setups. */}
-        {profileRailVisible && (
+        {!window.hermesDesktop?.semantierProduct && profileRailVisible && (
           <div className="shrink-0 px-0.5 pb-1 pt-0.5">
             <ProfileRail />
           </div>

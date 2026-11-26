@@ -12,6 +12,7 @@ import { Tip, TipKeybindLabel } from '@/components/ui/tooltip'
 import { Slot } from '@/contrib/react/slot'
 import { useContributions } from '@/contrib/react/use-contributions'
 import { useI18n } from '@/i18n'
+import { semantierWorkspaceCopy } from '@/i18n/semantier-workspace'
 import { triggerHaptic } from '@/lib/haptics'
 import { formatModifierToken } from '@/lib/keybinds/combo'
 import { cn } from '@/lib/utils'
@@ -135,7 +136,7 @@ function useModifierHeld(): boolean {
 }
 
 export function TitlebarControls({ leftTools = [], tools = [], onOpenSettings }: TitlebarControlsProps) {
-  const { t } = useI18n()
+  const { locale, t } = useI18n()
   const navigate = useNavigate()
   const location = useLocation()
   const modHeld = useModifierHeld()
@@ -217,7 +218,7 @@ export function TitlebarControls({ leftTools = [], tools = [], onOpenSettings }:
       actionId: 'nav.settings',
       icon: <TitlebarIcon name="settings-gear" />,
       id: 'settings',
-      label: t.titlebar.openSettings,
+      label: window.hermesDesktop?.semantierProduct ? semantierWorkspaceCopy(locale).configurationCenter : t.titlebar.openSettings,
       onSelect: () => {
         triggerHaptic('open')
         onOpenSettings()
