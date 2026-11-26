@@ -575,7 +575,9 @@ async function optionalNativeProfiles(client: ReturnType<typeof createSemantierW
     return { profiles: [{ ...result.profile, runtime_bot_id: result.bot_id,
       native_profile_id: result.native_profile_id }], bot_mode_protocol: result.bot_mode_protocol }
   } catch (error) {
-    if ((error as { statusCode?: number }).statusCode !== 503) { throw error }
+    // Cloud can omit the optional Winman route while still serving signed Main.
+    const status = (error as { statusCode?: number }).statusCode
+    if (status !== 404 && status !== 503) { throw error }
 
     return { profiles: [], unavailable: true }
   }
