@@ -92,7 +92,8 @@ describe('labelOf', () => {
   })
 
   it('names controls from associated native labels, including wrapping labels', () => {
-    document.body.innerHTML = '<label for="external">Account</label><input id="external"><label>Amount<input id="wrapped"></label>'
+    document.body.innerHTML =
+      '<label for="external">Account</label><input id="external"><label>Amount<input id="wrapped"></label>'
     expect(naming().labelOf(document.querySelector('#external')!)).toBe('Account')
     expect(naming().labelOf(document.querySelector('#wrapped')!)).toBe('Amount')
   })

@@ -457,16 +457,24 @@ it('preserveLocalSystemNotices does not duplicate a notice the page already carr
 })
 
 it('does not borrow timing from an identical reply belonging to a different durable row', () => {
-  const cached = [row('cached-212', 'assistant', 'Controlled commerce supplier response.', {
-    rowId: 212, timestamp: 100, parts: [textPart('Controlled commerce supplier response.', 100)]
-  })]
+  const cached = [
+    row('cached-212', 'assistant', 'Controlled commerce supplier response.', {
+      rowId: 212,
+      timestamp: 100,
+      parts: [textPart('Controlled commerce supplier response.', 100)]
+    })
+  ]
 
   const hydrated = [
     row('stored-212', 'assistant', 'Controlled commerce supplier response.', {
-      rowId: 212, timestamp: 100, parts: [textPart('Controlled commerce supplier response.', 100)]
+      rowId: 212,
+      timestamp: 100,
+      parts: [textPart('Controlled commerce supplier response.', 100)]
     }),
     row('stored-214', 'assistant', 'Controlled commerce supplier response.', {
-      rowId: 214, timestamp: 200, parts: [textPart('Controlled commerce supplier response.', 200)]
+      rowId: 214,
+      timestamp: 200,
+      parts: [textPart('Controlled commerce supplier response.', 200)]
     })
   ]
 

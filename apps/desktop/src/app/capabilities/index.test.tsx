@@ -465,6 +465,7 @@ it('searches all five tabs together from the shared search field', async () => {
   for (const name of ['Skills', 'Tools', 'Plugins', 'Connectors', 'Skill Marketplace']) {
     expect(screen.getByRole('region', { name })).toBeTruthy()
   }
+
   fireEvent.click(screen.getByRole('button', { name: 'Web Search' }))
   expect(screen.queryByRole('region', { name: 'Search all skills and tools…' })).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Back to search results' }))

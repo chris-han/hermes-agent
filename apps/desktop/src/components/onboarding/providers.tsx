@@ -21,7 +21,8 @@ const PROVIDER_ORDER: Record<string, number> = {
 
 const assetPath = (path: string) => `${import.meta.env.BASE_URL}${path.replace(/^\/+/, '')}`
 
-export const providerTitle = (p: OAuthProvider, locale = 'en') => p.id === 'semantier-cloud' ? modelProviderName(p, locale) : PROVIDER_DISPLAY_NAMES[p.id] ?? p.name
+export const providerTitle = (p: OAuthProvider, locale = 'en') =>
+  p.id === 'semantier-cloud' ? modelProviderName(p, locale) : (PROVIDER_DISPLAY_NAMES[p.id] ?? p.name)
 const orderOf = (p: OAuthProvider) => PROVIDER_ORDER[p.id] ?? 99
 
 export const sortProviders = (providers: OAuthProvider[]) =>
@@ -50,7 +51,11 @@ export function FeaturedProviderRow({
         <div className="flex items-center gap-2">
           <img alt="" className="size-5 shrink-0 rounded" src={assetPath('apple-touch-icon.png')} />
           <span className="text-[length:var(--conversation-text-font-size)] font-semibold">
-            {semantierCloud ? copy.providerName : freeTier ? t.freeTier.providerRowTitle : providerTitle(provider, locale)}
+            {semantierCloud
+              ? copy.providerName
+              : freeTier
+                ? t.freeTier.providerRowTitle
+                : providerTitle(provider, locale)}
           </span>
           {freeTier ? (
             <FreeTierTag />

@@ -20,18 +20,23 @@ const submit = vi.fn()
 let diagnosticSignedIn = true
 
 const api = vi.fn(async ({ path, body }: { path: string; body: Record<string, unknown> }) => {
-  if (path.endsWith('/status')) {return { enabled: false, diagnostic_signed_in: diagnosticSignedIn }}
+  if (path.endsWith('/status')) {
+    return { enabled: false, diagnostic_signed_in: diagnosticSignedIn }
+  }
 
-  if (path.endsWith('/preview'))
-    {return {
+  if (path.endsWith('/preview')) {
+    return {
       payload: { ...body, note: body.note, sections: {} },
       bytes: 100,
       redactions: 0,
       retention_days: 30,
       destination: 'Semantier Cloud'
-    }}
+    }
+  }
 
-  if (path.endsWith('/submit')) {return submit(body)}
+  if (path.endsWith('/submit')) {
+    return submit(body)
+  }
   throw new Error('Unexpected native request: ' + path)
 })
 
@@ -81,20 +86,19 @@ it.each([
   expect(note.value).toBe('Retain this explanation')
   expect(note.disabled).toBe(status !== 413 && status !== 422)
 
-  if (status === 429)
-    {expect((screen.getByRole('button', { name: 'Send diagnostic report' }) as HTMLButtonElement).disabled).toBe(true)}
+  if (status === 429) {
+    expect((screen.getByRole('button', { name: 'Send diagnostic report' }) as HTMLButtonElement).disabled).toBe(true)
+  }
 })
 it('retries an ambiguous reply with the exact same submitted payload', async () => {
-  submit
-    .mockRejectedValueOnce(new Error('503: unavailable'))
-    .mockResolvedValueOnce({
-      receipt: {
-        diagnostic_id: 'retained-report',
-        received_at: '2026-10-26T00:00:00Z',
-        expires_at: '2026-11-25T00:00:00Z',
-        deleted_at: null
-      }
-    })
+  submit.mockRejectedValueOnce(new Error('503: unavailable')).mockResolvedValueOnce({
+    receipt: {
+      diagnostic_id: 'retained-report',
+      received_at: '2026-10-26T00:00:00Z',
+      expires_at: '2026-11-25T00:00:00Z',
+      deleted_at: null
+    }
+  })
   await open()
   fireEvent.click(screen.getByRole('button', { name: 'Send diagnostic report' }))
   await screen.findByRole('alert')
@@ -124,39 +128,58 @@ it('allows a manual retry after the bounded rate limit without sending automatic
 })
 
 it('allows a corrected new draft after a definite size rejection', async () => {
-  submit.mockRejectedValueOnce(new Error('413: rejected')).mockResolvedValueOnce({ receipt: { diagnostic_id: 'corrected-report', received_at: '2026-10-26T00:00:00Z', expires_at: '2026-11-25T00:00:00Z', deleted_at: null } })
+  submit
+    .mockRejectedValueOnce(new Error('413: rejected'))
+    .mockResolvedValueOnce({
+      receipt: {
+        diagnostic_id: 'corrected-report',
+        received_at: '2026-10-26T00:00:00Z',
+        expires_at: '2026-11-25T00:00:00Z',
+        deleted_at: null
+      }
+    })
   await open()
   fireEvent.click(screen.getByRole('button', { name: 'Send diagnostic report' }))
   await screen.findByRole('alert')
-  fireEvent.change(screen.getByRole('textbox', { name: 'Optional problem description' }), { target: { value: 'Shorter description' } })
-  await waitFor(() => expect((screen.getByRole('button', { name: 'Send diagnostic report' }) as HTMLButtonElement).disabled).toBe(false))
+  fireEvent.change(screen.getByRole('textbox', { name: 'Optional problem description' }), {
+    target: { value: 'Shorter description' }
+  })
+  await waitFor(() =>
+    expect((screen.getByRole('button', { name: 'Send diagnostic report' }) as HTMLButtonElement).disabled).toBe(false)
+  )
   fireEvent.click(screen.getByRole('button', { name: 'Send diagnostic report' }))
   await screen.findByText('Report sent')
   expect(submit.mock.calls[1][0].submission_key).not.toBe(submit.mock.calls[0][0].submission_key)
   expect(submit.mock.calls[1][0].note).toBe('Shorter description')
 })
 
+it.each([false, true])(
+  'returns focus after Escape when the diagnostic action is replaced: %s',
+  async replaceTrigger => {
+    const content = (key: number) => (
+      <I18nProvider configClient={null} initialLocale="en">
+        <SemantierFeedbackSettings key={key} />
+        <SemantierFeedbackHost />
+      </I18nProvider>
+    )
 
-it.each([false, true])('returns focus after Escape when the diagnostic action is replaced: %s', async replaceTrigger => {
-  const content = (key: number) => (
-    <I18nProvider configClient={null} initialLocale="en">
-      <SemantierFeedbackSettings key={key} />
-      <SemantierFeedbackHost />
-    </I18nProvider>
-  )
+    const view = render(content(0))
+    const trigger = screen.getByRole('button', { name: 'Send diagnostics to Semantier' })
+    trigger.focus()
+    fireEvent.click(trigger)
+    await screen.findByRole('dialog')
 
-  const view = render(content(0))
-  const trigger = screen.getByRole('button', { name: 'Send diagnostics to Semantier' })
-  trigger.focus()
-  fireEvent.click(trigger)
-  await screen.findByRole('dialog')
+    if (replaceTrigger) {
+      view.rerender(content(1))
+    }
 
-  if (replaceTrigger) {view.rerender(content(1))}
-
-  fireEvent.keyDown(window.document, { key: 'Escape' })
-  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-  await waitFor(() => expect(window.document.activeElement).toBe(screen.getByRole('button', { name: 'Send diagnostics to Semantier' })))
-})
+    fireEvent.keyDown(window.document, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await waitFor(() =>
+      expect(window.document.activeElement).toBe(screen.getByRole('button', { name: 'Send diagnostics to Semantier' }))
+    )
+  }
+)
 
 it('allows copying a sanitized preview while signed out and closes without uploading', async () => {
   diagnosticSignedIn = false

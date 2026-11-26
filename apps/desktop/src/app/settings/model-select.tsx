@@ -1,4 +1,10 @@
-import { catalogModelIssue, catalogModelMetadata, catalogModelSearchText, catalogSearchMatches, type ModelOptionProvider } from '@hermes/shared'
+import {
+  catalogModelIssue,
+  catalogModelMetadata,
+  catalogModelSearchText,
+  catalogSearchMatches,
+  type ModelOptionProvider
+} from '@hermes/shared'
 import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -152,7 +158,7 @@ export function ModelSelect({
         aria-label={ariaLabel ?? m.model}
         className={className}
         disabled={disabled}
-        filter={(item, query, keywords) => catalogSearchMatches([item, ...(keywords ?? [])].join(' '), query) ? 1 : 0}
+        filter={(item, query, keywords) => (catalogSearchMatches([item, ...(keywords ?? [])].join(' '), query) ? 1 : 0)}
         onChange={next => {
           const model = fromItemValue(next)
 
@@ -163,9 +169,16 @@ export function ModelSelect({
           }
         }}
         options={[
-          ...withActive(models.filter(model => !isUnavailable(model)), value).map(model => ({
-            value: toItemValue(model), label: cloud ? `${catalogModelMetadata(provider, model)?.label ?? model}${catalogModelMetadata(provider, model)?.provider_display ? ` · ${catalogModelMetadata(provider, model)?.provider_display}` : ''}${catalogModelMetadata(provider, model)?.capabilities?.stream === true ? ` · ${locale === 'zh' ? '支持流式' : 'Streaming'}` : ''}${catalogModelIssue(provider, model) ? ` · ${catalogModelIssue(provider, model)} · ${locale === 'zh' ? '请刷新模型或检查供给配置' : 'Refresh models or check offer configuration'}` : ''}` : model,
-            keywords: provider ? [catalogModelSearchText(provider, model)] : [model], disabled: isUnavailable(model) || !!(cloud && catalogModelIssue(provider, model))
+          ...withActive(
+            models.filter(model => !isUnavailable(model)),
+            value
+          ).map(model => ({
+            value: toItemValue(model),
+            label: cloud
+              ? `${catalogModelMetadata(provider, model)?.label ?? model}${catalogModelMetadata(provider, model)?.provider_display ? ` · ${catalogModelMetadata(provider, model)?.provider_display}` : ''}${catalogModelMetadata(provider, model)?.capabilities?.stream === true ? ` · ${locale === 'zh' ? '支持流式' : 'Streaming'}` : ''}${catalogModelIssue(provider, model) ? ` · ${catalogModelIssue(provider, model)} · ${locale === 'zh' ? '请刷新模型或检查供给配置' : 'Refresh models or check offer configuration'}` : ''}`
+              : model,
+            keywords: provider ? [catalogModelSearchText(provider, model)] : [model],
+            disabled: isUnavailable(model) || !!(cloud && catalogModelIssue(provider, model))
           })),
           ...(eligible == null ? [{ value: CUSTOM_ITEM, label: m.customModel }] : [])
         ]}
@@ -193,7 +206,10 @@ export function ModelSelect({
         <SelectValue placeholder={m.model} />
       </SelectTrigger>
       <SelectContent>
-        {withActive(models.filter(model => !isUnavailable(model)), value).map(model => (
+        {withActive(
+          models.filter(model => !isUnavailable(model)),
+          value
+        ).map(model => (
           <SelectItem disabled={isUnavailable(model)} key={model} value={toItemValue(model)}>
             {model}
           </SelectItem>

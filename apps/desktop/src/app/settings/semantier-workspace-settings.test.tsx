@@ -10,14 +10,12 @@ afterEach(() => vi.restoreAllMocks())
 it('signs in and opens the existing server workspace without creating another connection', async () => {
   const identity = vi.fn().mockResolvedValue({ authenticated: false })
 
-  const login = vi
-    .fn()
-    .mockResolvedValue({
-      authenticated: true,
-      user: { user_id: 'a', name: 'Alice' },
-      workspace: { id: 'wa' },
-      organization_id: 'org'
-    })
+  const login = vi.fn().mockResolvedValue({
+    authenticated: true,
+    user: { user_id: 'a', name: 'Alice' },
+    workspace: { id: 'wa' },
+    organization_id: 'org'
+  })
 
   const save = vi.fn()
   Object.defineProperty(window, 'hermesDesktop', {
@@ -103,7 +101,10 @@ it('signs into Project continuity while leaving the local connection alone', asy
       workspace: {
         identity: vi.fn().mockResolvedValue({ authenticated: false }),
         login: vi.fn().mockResolvedValue({
-          authenticated: true, user: { user_id: 'a' }, workspace: { id: 'wa' }, organization_id: 'org'
+          authenticated: true,
+          user: { user_id: 'a' },
+          workspace: { id: 'wa' },
+          organization_id: 'org'
         }),
         projects,
         projectMaterials
@@ -114,7 +115,11 @@ it('signs into Project continuity while leaving the local connection alone', asy
   render(<SemantierWorkspaceSettings connections={[]} onConnect={onConnect} projectsOnly />)
   fireEvent.click(await screen.findByRole('button', { name: 'Sign in to Workspace' }))
   expect(await screen.findByText('No admitted project context is available.')).toBeTruthy()
-  expect(projects).toHaveBeenCalledWith('https://cloud.semantier.cn', { userId: 'a', workspaceId: 'wa', organizationId: 'org' })
+  expect(projects).toHaveBeenCalledWith('https://cloud.semantier.cn', {
+    userId: 'a',
+    workspaceId: 'wa',
+    organizationId: 'org'
+  })
   expect(save).not.toHaveBeenCalled()
   expect(onConnect).not.toHaveBeenCalled()
 })
@@ -126,7 +131,10 @@ it('keeps a signed project selectable when its materials request times out', asy
     value: {
       workspace: {
         identity: vi.fn().mockResolvedValue({
-          authenticated: true, user: { user_id: 'a' }, workspace: { id: 'wa' }, organization_id: 'org'
+          authenticated: true,
+          user: { user_id: 'a' },
+          workspace: { id: 'wa' },
+          organization_id: 'org'
         }),
         projects: vi.fn().mockResolvedValue([{ project_ref: projectRef }]),
         projectMaterials: vi.fn().mockRejectedValue(new Error('TimeoutError'))

@@ -5,7 +5,12 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { DesktopBranding } from './desktop-branding-types'
-import { createBrandShortcutService, pngsToIco, type ShortcutServiceOptions, validateShortcutName } from './windows-brand-shortcuts'
+import {
+  createBrandShortcutService,
+  pngsToIco,
+  type ShortcutServiceOptions,
+  validateShortcutName
+} from './windows-brand-shortcuts'
 
 const mocks = vi.hoisted(() => ({ failWrite: false, reveal: vi.fn(), png: Buffer.alloc(0) }))
 vi.mock('./product-identity', () => ({ PRODUCT_IDENTITY: { appId: 'test', msixAppIdWithOrg: 'test' } }))
@@ -58,7 +63,9 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }))
 const roots = () => ({ desktop: path.join(root, 'Desktop'), startMenu: path.join(root, 'Start') })
 
-const service = (target: ShortcutServiceOptions['target'] = async () => ({ target: 'C:\\app.exe', args: '', appUserModelId: 'test' })) =>
+const service = (
+  target: ShortcutServiceOptions['target'] = async () => ({ target: 'C:\\app.exe', args: '', appUserModelId: 'test' })
+) =>
   createBrandShortcutService({ directory: path.join(root, 'state'), roots: roots(), branding: () => branding, target })
 
 describe('branding shortcuts', () => {

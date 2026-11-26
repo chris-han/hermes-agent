@@ -256,27 +256,47 @@ describe('ownership refusal recovery (#106217)', () => {
 describe('code-keyed error card copy and actions', () => {
   it('passes only technical context from a Semantier failed turn', async () => {
     const descriptor = Object.getOwnPropertyDescriptor(window, 'hermesDesktop')
-    Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: {
-      ...window.hermesDesktop, semantierProduct: true
-    } })
+    Object.defineProperty(window, 'hermesDesktop', {
+      configurable: true,
+      value: {
+        ...window.hermesDesktop,
+        semantierProduct: true
+      }
+    })
     const open = vi.fn()
     window.addEventListener('semantier:send-diagnostics', open)
 
     try {
-      render(<Harness assistant={failedMessage({
-        code: 'model_not_found', layer: 'provider', provider: 'semantier-cloud',
-        model: 'test-model', retryable: false
-      }, 'private business data')} />)
+      render(
+        <Harness
+          assistant={failedMessage(
+            {
+              code: 'model_not_found',
+              layer: 'provider',
+              provider: 'semantier-cloud',
+              model: 'test-model',
+              retryable: false
+            },
+            'private business data'
+          )}
+        />
+      )
       fireEvent.click(await screen.findByRole('button', { name: /send diagnostics/i }))
       expect(open.mock.calls[0][0].detail).toEqual({
-        source: 'failed_turn', code: 'model_not_found', layer: 'provider',
-        provider: 'semantier-cloud', model: 'test-model'
+        source: 'failed_turn',
+        code: 'model_not_found',
+        layer: 'provider',
+        provider: 'semantier-cloud',
+        model: 'test-model'
       })
     } finally {
       window.removeEventListener('semantier:send-diagnostics', open)
 
-      if (descriptor) {Object.defineProperty(window, 'hermesDesktop', descriptor)}
-      else {Reflect.deleteProperty(window, 'hermesDesktop')}
+      if (descriptor) {
+        Object.defineProperty(window, 'hermesDesktop', descriptor)
+      } else {
+        Reflect.deleteProperty(window, 'hermesDesktop')
+      }
     }
   })
 
@@ -541,9 +561,16 @@ describe('server Bot author attribution', () => {
   it('renders the customized Bot name beside its assistant business message', async () => {
     const base = assistantMessage()
 
-    const assistant = { ...base, metadata: { ...base.metadata, custom: {
-      ...base.metadata?.custom, botAuthor: { botId: 'bot_a', displayName: 'My custom Winman' }
-    } } } as ThreadMessage
+    const assistant = {
+      ...base,
+      metadata: {
+        ...base.metadata,
+        custom: {
+          ...base.metadata?.custom,
+          botAuthor: { botId: 'bot_a', displayName: 'My custom Winman' }
+        }
+      }
+    } as ThreadMessage
 
     render(<Harness assistant={assistant} />)
     const label = await screen.findByText('My custom Winman')

@@ -16,9 +16,15 @@ export interface WorkspaceScope {
 }
 
 export function assertWorkspaceScope(identity: WorkspaceIdentity, expected: WorkspaceScope): void {
-  if (!identity.authenticated || !expected?.userId || !expected.workspaceId || !expected.organizationId ||
-    identity.user?.user_id !== expected.userId || identity.workspace?.id !== expected.workspaceId ||
-    identity.organization_id !== expected.organizationId) {
+  if (
+    !identity.authenticated ||
+    !expected?.userId ||
+    !expected.workspaceId ||
+    !expected.organizationId ||
+    identity.user?.user_id !== expected.userId ||
+    identity.workspace?.id !== expected.workspaceId ||
+    identity.organization_id !== expected.organizationId
+  ) {
     throw new Error('The Semantier account or workspace changed. Reconnect before continuing.')
   }
 }
@@ -98,7 +104,12 @@ export interface WorkspaceMessage {
 export interface WorkspaceWinmanProfile {
   bot_id: string
   native_profile_id: string
-  profile: { name: string; path: string; canonical_session?: { id: string; resolved_id?: string } | null; [key: string]: unknown }
+  profile: {
+    name: string
+    path: string
+    canonical_session?: { id: string; resolved_id?: string } | null
+    [key: string]: unknown
+  }
   bot_mode_protocol?: boolean
 }
 
@@ -149,8 +160,14 @@ export function normalizeSemantierWorkspaceOrigin(origin: string): string {
   const base = new URL(origin)
   const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(base.hostname)
 
-  if ((base.protocol !== 'https:' && !(base.protocol === 'http:' && loopback)) ||
-    base.username || base.password || base.pathname !== '/' || base.search || base.hash) {
+  if (
+    (base.protocol !== 'https:' && !(base.protocol === 'http:' && loopback)) ||
+    base.username ||
+    base.password ||
+    base.pathname !== '/' ||
+    base.search ||
+    base.hash
+  ) {
     throw new Error('Use a secure Semantier workspace origin.')
   }
 
@@ -182,16 +199,36 @@ export type WorkspaceProjectHead = WorkspaceProjectDraft & {
   decision: WorkspaceProjectPin
 }
 
-export type TutorCitation = { evidence: WorkspaceProjectPin; source_version: string; source_block_id: string; locator: {selector: {exact_quote?: string}} | null }
+export type TutorCitation = {
+  evidence: WorkspaceProjectPin
+  source_version: string
+  source_block_id: string
+  locator: { selector: { exact_quote?: string } } | null
+}
 
 export type TutorProgress = {
-  release: {id: string; source: string; path: string; version: string; package_ref: string; content_hash: string}
+  release: { id: string; source: string; path: string; version: string; package_ref: string; content_hash: string }
   project_ref: string
   plan_ref: string
   revision: number
-  objectives: { objective_ref: string; title?: string; archived: boolean; status: string; knowledge_type?: string; mastery?: {estimate: number | null}
+  objectives: {
+    objective_ref: string
+    title?: string
+    archived: boolean
+    status: string
+    knowledge_type?: string
+    mastery?: { estimate: number | null }
     lessons: { lesson: WorkspaceProjectPin; explanation: string | null; sources: TutorCitation[] }[]
-    assessments: { attempt_ref: string; feedback: string; result: string; assistance: string; submitted_at: string; assessment: WorkspaceProjectPin; sources: TutorCitation[] }[] }[]
+    assessments: {
+      attempt_ref: string
+      feedback: string
+      result: string
+      assistance: string
+      submitted_at: string
+      assessment: WorkspaceProjectPin
+      sources: TutorCitation[]
+    }[]
+  }[]
 }
 
 export type WorkspaceProjectContinuation = {
@@ -210,34 +247,54 @@ export type WorkspaceProjectCommit = WorkspaceProjectDraft & {
 const PROJECTS_PATH = '/api/workbench/projects'
 
 function projectPath(ref: string): string {
-  if (!/^project:[a-f0-9]{32}$/.test(ref)) {throw new Error('Invalid Project reference.')}
+  if (!/^project:[a-f0-9]{32}$/.test(ref)) {
+    throw new Error('Invalid Project reference.')
+  }
 
   return PROJECTS_PATH + '/' + encodeURIComponent(ref)
 }
 
-export function createSemantierWorkspaceClient(origin: string, fetchSession: (input: string, init?: RequestInit) => Promise<Response>) {
+export function createSemantierWorkspaceClient(
+  origin: string,
+  fetchSession: (input: string, init?: RequestInit) => Promise<Response>
+) {
   const base = new URL(normalizeSemantierWorkspaceOrigin(origin))
 
-  async function request(path: string, body?: Record<string, unknown>, method = 'POST', signal?: AbortSignal, scope?: WorkspaceScope) {
+  async function request(
+    path: string,
+    body?: Record<string, unknown>,
+    method = 'POST',
+    signal?: AbortSignal,
+    scope?: WorkspaceScope
+  ) {
     const response = await fetchSession(new URL(path, base.origin).href, {
       method: body ? method : 'GET',
       credentials: 'include',
       cache: 'no-store',
       redirect: 'error',
       headers: {
-        ...(body ? { 'Content-Type': 'application/json', Origin:base.origin, 'X-Semantier-CSRF':'1' } : {}),
-        ...(scope ? { 'X-Semantier-User-Id': scope.userId, 'X-Semantier-Workspace-Id': scope.workspaceId,
-          'X-Semantier-Organization-Id': scope.organizationId } : {})
+        ...(body ? { 'Content-Type': 'application/json', Origin: base.origin, 'X-Semantier-CSRF': '1' } : {}),
+        ...(scope
+          ? {
+              'X-Semantier-User-Id': scope.userId,
+              'X-Semantier-Workspace-Id': scope.workspaceId,
+              'X-Semantier-Organization-Id': scope.organizationId
+            }
+          : {})
       },
       body: body ? JSON.stringify(body) : undefined,
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(body ? 120_000 : 15_000)]) : AbortSignal.timeout(body ? 120_000 : 15_000)
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(body ? 120_000 : 15_000)])
+        : AbortSignal.timeout(body ? 120_000 : 15_000)
     })
 
     if (!response.ok) {
       if (response.status === 409 && path.startsWith(PROJECTS_PATH + '/')) {
         const error = await response.json().catch(() => null)
 
-        if (error?.detail === 'PROJECT_HEAD_CONFLICT') {throw new Error('PROJECT_HEAD_CONFLICT')}
+        if (error?.detail === 'PROJECT_HEAD_CONFLICT') {
+          throw new Error('PROJECT_HEAD_CONFLICT')
+        }
       }
 
       let managedDeviceCode: string | undefined
@@ -246,8 +303,12 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
         try {
           const detail = (await response.json())?.detail
 
-          if (typeof detail === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(detail)) { managedDeviceCode = detail }
-        } catch { /* A non-JSON refusal retains its HTTP status. */ }
+          if (typeof detail === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(detail)) {
+            managedDeviceCode = detail
+          }
+        } catch {
+          /* A non-JSON refusal retains its HTTP status. */
+        }
       }
 
       throw Object.assign(new Error(`Semantier workspace request failed (${response.status}).`), {
@@ -262,14 +323,23 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
 
   return {
     async winmanCapability(scope: WorkspaceScope, enabled?: boolean): Promise<WinmanCapability> {
-      return (await request('/api/winman/capability', enabled === undefined ? undefined : { enabled },
-        'PUT', undefined, scope)).json()
+      return (
+        await request(
+          '/api/winman/capability',
+          enabled === undefined ? undefined : { enabled },
+          'PUT',
+          undefined,
+          scope
+        )
+      ).json()
     },
     async persistentFollowups(scope: WorkspaceScope): Promise<{ items: PersistentFollowup[] }> {
       try {
         return await (await request('/api/winman/persistent-work', undefined, 'GET', undefined, scope)).json()
       } catch (error) {
-        if ((error as {statusCode?: number}).statusCode === 404) { return { items: [] } }
+        if ((error as { statusCode?: number }).statusCode === 404) {
+          return { items: [] }
+        }
         throw error
       }
     },
@@ -277,10 +347,14 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
       const path = '/api/sessions/' + encodeURIComponent(item.conversation) + '/messages'
       const history = await (await request(path)).json()
 
-      if (history.session_id !== item.conversation) { return null }
+      if (history.session_id !== item.conversation) {
+        return null
+      }
 
-      const row = history.messages?.find((message: {id: string | number; role: string}) =>
-        String(message.id) === item.receipt && message.role === 'assistant')
+      const row = history.messages?.find(
+        (message: { id: string | number; role: string }) =>
+          String(message.id) === item.receipt && message.role === 'assistant'
+      )
 
       return typeof row?.content === 'string' ? row.content : null
     },
@@ -297,7 +371,9 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
       return (await request(projectPath(projectRef))).json()
     },
     async tutorProgress(projectRef: string, planRef: string): Promise<TutorProgress> {
-      const progress: TutorProgress = await (await request(projectPath(projectRef) + '/tutor/progress?plan_ref=' + encodeURIComponent(planRef))).json()
+      const progress: TutorProgress = await (
+        await request(projectPath(projectRef) + '/tutor/progress?plan_ref=' + encodeURIComponent(planRef))
+      ).json()
 
       if (progress.project_ref !== projectRef || progress.plan_ref !== planRef) {
         throw new Error('Tutor plan mismatch')
@@ -320,13 +396,18 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
       return (await request('/api/personal-capabilities/skills', transfer)).json()
     },
     async personalRead(receipt: Record<string, unknown>) {
-      return (await request('/api/personal-capabilities/skills/read', {receipt})).json()
+      return (await request('/api/personal-capabilities/skills/read', { receipt })).json()
     },
     async personalPropose(receipt: Record<string, unknown>) {
-      return (await request('/api/personal-capabilities/skills/propose', {receipt,request_id:'personal-sync:'+receipt.artifact_hash})).json()
+      return (
+        await request('/api/personal-capabilities/skills/propose', {
+          receipt,
+          request_id: 'personal-sync:' + receipt.artifact_hash
+        })
+      ).json()
     },
     async personalPackage(receipt: Record<string, unknown>, candidate: Record<string, unknown>) {
-      return (await request('/api/personal-capabilities/skills/package', {receipt,candidate})).json()
+      return (await request('/api/personal-capabilities/skills/package', { receipt, candidate })).json()
     },
     async personalLearningAction(command: Record<string, unknown>) {
       return (await request('/api/learning/action', command)).json()
@@ -334,7 +415,9 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
     async managedDevices(): Promise<ManagedDeviceInventory> {
       return (await request('/api/cloud-provider/device/managed')).json()
     },
-    async managedDeviceChallenge(command: ManagedDeviceChallengeCommand): Promise<{ context: Record<string, string | null>; assurance_required: string }> {
+    async managedDeviceChallenge(
+      command: ManagedDeviceChallengeCommand
+    ): Promise<{ context: Record<string, string | null>; assurance_required: string }> {
       return (await request('/api/cloud-provider/device/managed/challenge', { ...command })).json()
     },
     async managedDeviceEnroll(proof: ManagedDeviceEnrollmentProof): Promise<ManagedDeviceReceipt> {
@@ -346,15 +429,30 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
     async managedDeviceRevoke(deviceId: string): Promise<{ device_id: string; status: 'revoked' }> {
       return (await request('/api/cloud-provider/device/managed/revoke', { device_id: deviceId })).json()
     },
-    async fileSyncBinding(): Promise<{userId:string;workspaceId:string;remoteRoot:string;token:string;enginePath:string;version:string}> {
+    async fileSyncBinding(): Promise<{
+      userId: string
+      workspaceId: string
+      remoteRoot: string
+      token: string
+      enginePath: string
+      version: string
+    }> {
       return (await request('/api/file-sync/binding', {})).json()
     },
     async createSession(label: string, requestIdentity: string): Promise<{ sessionKey: string }> {
-      if (!/^[A-Za-z0-9_-]{1,96}$/.test(requestIdentity)) { throw new Error('Invalid Main creation request identity.') }
+      if (!/^[A-Za-z0-9_-]{1,96}$/.test(requestIdentity)) {
+        throw new Error('Invalid Main creation request identity.')
+      }
       const result = await (await request('/api/sessions', { label, requestIdentity })).json()
 
-      if (result.ok !== true || typeof result.sessionKey !== 'string' || !result.sessionKey ||
-        result.sessionKey !== result.entry?.key) { throw new Error('Main creation did not return its server-owned conversation.') }
+      if (
+        result.ok !== true ||
+        typeof result.sessionKey !== 'string' ||
+        !result.sessionKey ||
+        result.sessionKey !== result.entry?.key
+      ) {
+        throw new Error('Main creation did not return its server-owned conversation.')
+      }
 
       return { sessionKey: result.sessionKey }
     },
@@ -362,65 +460,121 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
       const data = await (await request('/api/hermes-config')).json()
       const main = data.config?.model || {}
 
-      return {main:{provider:main.provider || '',model:main.default || ''},
-        tasks:Object.entries(data.config?.auxiliary || {}).map(([task,value])=>{
+      return {
+        main: { provider: main.provider || '', model: main.default || '' },
+        tasks: Object.entries(data.config?.auxiliary || {}).map(([task, value]) => {
           const r = value as Record<string, unknown>
 
-          return {task,provider:r.provider || '',model:r.model || r.default || '',base_url:r.base_url || ''}
-        })}
+          return { task, provider: r.provider || '', model: r.model || r.default || '', base_url: r.base_url || '' }
+        })
+      }
     },
     async modelOptions(refresh: boolean) {
       const [inventory, config, catalog] = await Promise.all([
         request('/api/hermes-proxy/api/available-models?provider=configured&refresh=' + refresh).then(r => r.json()),
         request('/api/hermes-config').then(r => r.json()),
-        request('/api/hermes-proxy/api/cloud-provider/catalog').then(r => r.json()).catch(error => {
-          if (error.statusCode === 401) {throw error}
+        request('/api/hermes-proxy/api/cloud-provider/catalog')
+          .then(r => r.json())
+          .catch(error => {
+            if (error.statusCode === 401) {
+              throw error
+            }
 
-          return {object:'list',data:[],discovery_state:'error'}
-        })
+            return { object: 'list', data: [], discovery_state: 'error' }
+          })
       ])
 
-      if (inventory.discovery_contract !== 'provider-query-v1' || !Array.isArray(inventory.providers) ||
-          catalog.object !== 'list' || !Array.isArray(catalog.data)) {
+      if (
+        inventory.discovery_contract !== 'provider-query-v1' ||
+        !Array.isArray(inventory.providers) ||
+        catalog.object !== 'list' ||
+        !Array.isArray(catalog.data)
+      ) {
         throw new Error('The Workspace model discovery contract is unavailable.')
       }
 
       const managed = catalog.data
 
-      return { discovery_contract: 'provider-query-v1',
-        provider: config.activeProvider || '', model: config.activeModel || '',
-        providers: [...inventory.providers, {slug:'semantier-cloud', name:'Semantier Model Provider',
-          authenticated:catalog.discovery_state !== 'error', models:managed.map((r: any)=>r.id), eligible_models:managed.map((r: any)=>r.id),
-          model_profiles:Object.fromEntries(managed.map((r: any)=>[r.id,r])),
-          discovery_state:catalog.discovery_state || 'fresh', discovery_source_id:'managed:' + JSON.stringify(managed.map((r: any)=>[r.account_id,r.revision])),
-          discovery_fetched_at:new Date().toISOString(), total_models:managed.length}]
+      return {
+        discovery_contract: 'provider-query-v1',
+        provider: config.activeProvider || '',
+        model: config.activeModel || '',
+        providers: [
+          ...inventory.providers,
+          {
+            slug: 'semantier-cloud',
+            name: 'Semantier Model Provider',
+            authenticated: catalog.discovery_state !== 'error',
+            models: managed.map((r: any) => r.id),
+            eligible_models: managed.map((r: any) => r.id),
+            model_profiles: Object.fromEntries(managed.map((r: any) => [r.id, r])),
+            discovery_state: catalog.discovery_state || 'fresh',
+            discovery_source_id: 'managed:' + JSON.stringify(managed.map((r: any) => [r.account_id, r.revision])),
+            discovery_fetched_at: new Date().toISOString(),
+            total_models: managed.length
+          }
+        ]
       }
     },
     async setMainModel(body: Record<string, unknown>, scope: WorkspaceScope) {
-      if (body.scope !== 'main' || Object.keys(body).some(k=>!['scope','provider','model'].includes(k)) ||
-          typeof body.provider !== 'string' || typeof body.model !== 'string') {
+      if (
+        body.scope !== 'main' ||
+        Object.keys(body).some(k => !['scope', 'provider', 'model'].includes(k)) ||
+        typeof body.provider !== 'string' ||
+        typeof body.model !== 'string'
+      ) {
         throw new Error('Only an explicit Main Model selection is supported here.')
       }
 
-      const expected_scope = {user_id:scope.userId,workspace_id:scope.workspaceId,organization_id:scope.organizationId}
+      const expected_scope = {
+        user_id: scope.userId,
+        workspace_id: scope.workspaceId,
+        organization_id: scope.organizationId
+      }
       const config = await (await request('/api/hermes-config')).json()
 
       if (body.provider === 'semantier-cloud') {
         const catalog = await (await request('/api/hermes-proxy/api/cloud-provider/catalog')).json()
-        const profile = catalog.data?.find((p: any)=>p.id === body.model)
+        const profile = catalog.data?.find((p: any) => p.id === body.model)
 
-        if (!profile) {throw new Error('Refresh the authorized managed model catalog before selecting.')}
-        await request('/api/hermes-proxy/api/model/set', {...body,account_id:profile.account_id,revision:profile.revision,expected_scope})
+        if (!profile) {
+          throw new Error('Refresh the authorized managed model catalog before selecting.')
+        }
+        await request('/api/hermes-proxy/api/model/set', {
+          ...body,
+          account_id: profile.account_id,
+          revision: profile.revision,
+          expected_scope
+        })
       } else {
         const route = config.config?.providers?.[body.provider]
 
-        if (!route || !['alibaba','openai','custom','litellm'].includes(body.provider)) {throw new Error('Configure this provider in Workspace before selecting.')}
-        await request('/api/hermes-config', {expected_scope,config:{provider:body.provider,model:{provider:body.provider,
-          default:body.model,base_url:route.base_url || '',key_env:route.key_env || '',api_key:'',api_key_env:'',
-          api_mode:route.api_mode || '',transport:route.transport || ''}}}, 'PATCH')
+        if (!route || !['alibaba', 'openai', 'custom', 'litellm'].includes(body.provider)) {
+          throw new Error('Configure this provider in Workspace before selecting.')
+        }
+        await request(
+          '/api/hermes-config',
+          {
+            expected_scope,
+            config: {
+              provider: body.provider,
+              model: {
+                provider: body.provider,
+                default: body.model,
+                base_url: route.base_url || '',
+                key_env: route.key_env || '',
+                api_key: '',
+                api_key_env: '',
+                api_mode: route.api_mode || '',
+                transport: route.transport || ''
+              }
+            }
+          },
+          'PATCH'
+        )
       }
 
-      return {ok:true,provider:body.provider,model:body.model}
+      return { ok: true, provider: body.provider, model: body.model }
     },
     async identity(): Promise<WorkspaceIdentity> {
       return (await request('/auth/context')).json()
@@ -428,8 +582,12 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
     async winman(): Promise<WorkspaceWinmanProfile> {
       const result = await (await request('/api/winman')).json()
 
-      if (!result?.bot_id || !result.native_profile_id || !result.profile?.name ||
-        result.profile.path !== result.native_profile_id) {
+      if (
+        !result?.bot_id ||
+        !result.native_profile_id ||
+        !result.profile?.name ||
+        result.profile.path !== result.native_profile_id
+      ) {
         throw new Error('The server-owned Winman profile is unavailable.')
       }
 
@@ -439,8 +597,13 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
       // No automatic retry. Native's durable title creation identity owns recovery.
       const result: WorkspaceWinmanProfile = await (await request('/api/winman', {})).json()
 
-      if (!result?.bot_id || !result.native_profile_id || !result.profile?.name ||
-          result.profile.path !== result.native_profile_id || !result.profile.canonical_session?.id) {
+      if (
+        !result?.bot_id ||
+        !result.native_profile_id ||
+        !result.profile?.name ||
+        result.profile.path !== result.native_profile_id ||
+        !result.profile.canonical_session?.id
+      ) {
         throw new Error('The server-owned canonical Bot Chat is unavailable.')
       }
 
@@ -453,14 +616,29 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
       return (await request(`/api/winman/context/${encodeURIComponent(sessionId)}`)).json()
     },
     async bindNativeContext(sessionId: string, originalSessionKey: string): Promise<WorkspaceMainContext> {
-      return (await request(`/api/winman/context/${encodeURIComponent(sessionId)}`, { original_session_key: originalSessionKey })).json()
+      return (
+        await request(`/api/winman/context/${encodeURIComponent(sessionId)}`, {
+          original_session_key: originalSessionKey
+        })
+      ).json()
     },
-    async sendNative(sessionId: string, text: string, requestId: string, bindingId: string): Promise<WorkspaceNativeSubmission> {
-      if (!/^[A-Za-z0-9_-]{1,128}$/.test(requestId) || !bindingId || !text.trim()) { throw new Error('A retained Native request identity and Main binding are required.') }
+    async sendNative(
+      sessionId: string,
+      text: string,
+      requestId: string,
+      bindingId: string
+    ): Promise<WorkspaceNativeSubmission> {
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(requestId) || !bindingId || !text.trim()) {
+        throw new Error('A retained Native request identity and Main binding are required.')
+      }
 
-      const result: WorkspaceNativeSubmission = await (await request(`/api/winman/messages/${encodeURIComponent(sessionId)}`, {
-        text, request_id: requestId, binding_id: bindingId
-      })).json()
+      const result: WorkspaceNativeSubmission = await (
+        await request(`/api/winman/messages/${encodeURIComponent(sessionId)}`, {
+          text,
+          request_id: requestId,
+          binding_id: bindingId
+        })
+      ).json()
 
       if (!result.bot_id || result.session_id !== sessionId || !/^[a-f0-9]{32}$/.test(result.receipt?.admission_id)) {
         throw new Error('Native admission identity is unavailable. Recover history before sending again.')
@@ -469,18 +647,27 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
       return result
     },
     async cancelNative(sessionId: string, admissionId: string): Promise<WorkspaceNativeCancellation> {
-      if (!/^[a-f0-9]{32}$/.test(admissionId)) {throw new Error('Exact Native admission required.')}
-      const result: WorkspaceNativeCancellation = await (await request(`/api/winman/messages/${encodeURIComponent(sessionId)}/cancel`, { admission_id: admissionId })).json()
+      if (!/^[a-f0-9]{32}$/.test(admissionId)) {
+        throw new Error('Exact Native admission required.')
+      }
+      const result: WorkspaceNativeCancellation = await (
+        await request(`/api/winman/messages/${encodeURIComponent(sessionId)}/cancel`, { admission_id: admissionId })
+      ).json()
 
-      if (typeof result.cancel_requested !== 'boolean' || result.receipt?.admission_id !== admissionId)
-        {throw new Error('Native cancellation receipt is uncertain; recover history before retrying.')}
+      if (typeof result.cancel_requested !== 'boolean' || result.receipt?.admission_id !== admissionId) {
+        throw new Error('Native cancellation receipt is uncertain; recover history before retrying.')
+      }
 
       return result
     },
     async nativeHistory(sessionId: string, admissionId?: string): Promise<WorkspaceNativeSnapshot> {
-      if (admissionId !== undefined && !/^[a-f0-9]{32}$/.test(admissionId)) { throw new Error('Invalid Native admission identity.') }
+      if (admissionId !== undefined && !/^[a-f0-9]{32}$/.test(admissionId)) {
+        throw new Error('Invalid Native admission identity.')
+      }
       const query = admissionId === undefined ? '' : `?admission_id=${admissionId}`
-      const result: WorkspaceNativeSnapshot = await (await request(`/api/winman/history/${encodeURIComponent(sessionId)}${query}`)).json()
+      const result: WorkspaceNativeSnapshot = await (
+        await request(`/api/winman/history/${encodeURIComponent(sessionId)}${query}`)
+      ).json()
       const ids = [result.canonical_session?.id, result.canonical_session?.resolved_id]
 
       if (!result.bot_id || !result.native_profile_id || !ids.includes(sessionId) || !ids.includes(result.session_id)) {
@@ -489,7 +676,13 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
 
       return result
     },
-    async explicitWork(sessionKey: string, message: string, requestIdentity: string, scope: WorkspaceScope, signal?: AbortSignal) {
+    async explicitWork(
+      sessionKey: string,
+      message: string,
+      requestIdentity: string,
+      scope: WorkspaceScope,
+      signal?: AbortSignal
+    ) {
       const path = '/api/sessions/' + encodeURIComponent(sessionKey) + '/chat'
       const response = await (await request(path, { message, requestIdentity }, 'POST', signal, scope)).json()
 
@@ -498,46 +691,73 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
       }
     },
     async history(sessionKey: string, afterId?: string): Promise<WorkspaceHistory> {
-      if (afterId !== undefined && !/^\d+$/.test(afterId)) { throw new Error('Invalid message cursor.') }
+      if (afterId !== undefined && !/^\d+$/.test(afterId)) {
+        throw new Error('Invalid message cursor.')
+      }
       const query = new URLSearchParams({ sessionKey })
 
-      if (afterId !== undefined) { query.set('afterId', afterId) }
+      if (afterId !== undefined) {
+        query.set('afterId', afterId)
+      }
       let result: WorkspaceHistory
 
       try {
         result = await (await request(`/api/history?${query}`)).json()
       } catch (error) {
-        if ((error as { statusCode?: number }).statusCode !== 404) { throw error }
+        if ((error as { statusCode?: number }).statusCode !== 404) {
+          throw error
+        }
         const nativeQuery = afterId === undefined ? '' : '?after_id=' + encodeURIComponent(afterId)
 
-        const snapshot = await (await request(
-          '/api/sessions/' + encodeURIComponent(sessionKey) + '/messages' + nativeQuery
-        )).json()
+        const snapshot = await (
+          await request('/api/sessions/' + encodeURIComponent(sessionKey) + '/messages' + nativeQuery)
+        ).json()
 
         result = {
-          sessionId: snapshot.session_id, hasMore: snapshot.pagination?.has_more,
+          sessionId: snapshot.session_id,
+          hasMore: snapshot.pagination?.has_more,
           nextCursor: snapshot.pagination?.next_cursor,
-          messages: snapshot.messages.map((row: { id: number; role: string; content: unknown; metadata?: Record<string, unknown> }) =>
-            ({ messageId: String(row.id), role: row.role, content: row.content, metadata: row.metadata }))
+          messages: snapshot.messages.map(
+            (row: { id: number; role: string; content: unknown; metadata?: Record<string, unknown> }) => ({
+              messageId: String(row.id),
+              role: row.role,
+              content: row.content,
+              metadata: row.metadata
+            })
+          )
         }
       }
 
       // A foreign/missing Workspace history may deliberately be an empty 200.
       // Never adopt its "new" placeholder as the requested durable session.
       if (result.sessionId !== sessionKey) {
-        throw Object.assign(new Error('This conversation is unavailable in the current workspace.'), { statusCode: 404 })
+        throw Object.assign(new Error('This conversation is unavailable in the current workspace.'), {
+          statusCode: 404
+        })
       }
 
       return result
     },
     async send(sessionKey: string, message: string, requestIdentity: string, signal?: AbortSignal) {
-      if (!requestIdentity.trim()) { throw new Error('A message request identity is required.') }
+      if (!requestIdentity.trim()) {
+        throw new Error('A message request identity is required.')
+      }
 
       // No automatic POST retry: a lost response is not permission to execute again.
-      return request('/api/send-stream', {
-        sessionKey, friendlyId: sessionKey, message, history: [],
-        requestIdentity, idempotencyKey: requestIdentity, locale: 'en'
-      }, 'POST', signal)
+      return request(
+        '/api/send-stream',
+        {
+          sessionKey,
+          friendlyId: sessionKey,
+          message,
+          history: [],
+          requestIdentity,
+          idempotencyKey: requestIdentity,
+          locale: 'en'
+        },
+        'POST',
+        signal
+      )
     }
   }
 }
@@ -553,9 +773,10 @@ export function workspaceTranscript(history: WorkspaceHistory) {
       ...(Number.isSafeInteger(numericId) ? { id: numericId, row_id: numericId } : {}),
       display_metadata: message.metadata,
       // Workspace timestamps are milliseconds; Native transcript timestamps are seconds.
-      timestamp: typeof (message as WorkspaceMessage & { timestamp?: number }).timestamp === 'number'
-        ? (message as WorkspaceMessage & { timestamp: number }).timestamp / 1000
-        : undefined
+      timestamp:
+        typeof (message as WorkspaceMessage & { timestamp?: number }).timestamp === 'number'
+          ? (message as WorkspaceMessage & { timestamp: number }).timestamp / 1000
+          : undefined
     }
   })
 }
@@ -564,10 +785,14 @@ async function optionalNativeProfiles(client: ReturnType<typeof createSemantierW
   try {
     const result = await client.winman()
 
-    return { profiles: [{ ...result.profile, runtime_bot_id: result.bot_id,
-      native_profile_id: result.native_profile_id }], bot_mode_protocol: result.bot_mode_protocol }
+    return {
+      profiles: [{ ...result.profile, runtime_bot_id: result.bot_id, native_profile_id: result.native_profile_id }],
+      bot_mode_protocol: result.bot_mode_protocol
+    }
   } catch (error) {
-    if ((error as { statusCode?: number }).statusCode !== 503) { throw error }
+    if ((error as { statusCode?: number }).statusCode !== 503) {
+      throw error
+    }
 
     return { profiles: [], unavailable: true }
   }
@@ -603,15 +828,23 @@ export async function workspaceDesktopRead(
     const owner = await client.winman()
 
     if (owner.profile.name !== profile) {
-      throw Object.assign(new Error('This Native profile is unavailable in the current workspace.'), { statusCode: 404 })
+      throw Object.assign(new Error('This Native profile is unavailable in the current workspace.'), {
+        statusCode: 404
+      })
     }
 
     if (pathname === '/api/profiles') {
-      return { profiles: [{ ...owner.profile, runtime_bot_id: owner.bot_id,
-        native_profile_id: owner.native_profile_id }], bot_mode_protocol: owner.bot_mode_protocol }
+      return {
+        profiles: [{ ...owner.profile, runtime_bot_id: owner.bot_id, native_profile_id: owner.native_profile_id }],
+        bot_mode_protocol: owner.bot_mode_protocol
+      }
     }
 
-    const canonical = owner.profile.canonical_session as null | { id: string; resolved_id?: string; [key: string]: unknown }
+    const canonical = owner.profile.canonical_session as null | {
+      id: string
+      resolved_id?: string
+      [key: string]: unknown
+    }
     const match = /^\/api\/sessions\/([^/]+)(\/messages)?$/.exec(pathname)
 
     if (match && canonical && [canonical.id, canonical.resolved_id].includes(decodeURIComponent(match[1]))) {
@@ -632,22 +865,37 @@ export async function workspaceDesktopRead(
   }
 
   if (url.searchParams.get('archived') === 'only') {
-    throw Object.assign(new Error('Archived-only enumeration is unavailable on this Workspace route.'), { statusCode: 501 })
+    throw Object.assign(new Error('Archived-only enumeration is unavailable on this Workspace route.'), {
+      statusCode: 501
+    })
   }
 
-  const missing = () => Object.assign(new Error(`Semantier Workspace does not expose this Desktop operation: ${pathname}`), { statusCode: 404 })
+  const missing = () =>
+    Object.assign(new Error(`Semantier Workspace does not expose this Desktop operation: ${pathname}`), {
+      statusCode: 404
+    })
 
   const list = async () => {
     const { sessions } = await client.sessions()
 
     return sessions.map(item => {
       const row = item as typeof item & {
-        createdAt?: number; updatedAt?: number; status?: string; model?: string; platform?: string
-        session_key?: string; started_at?: number; last_active?: number; is_active?: boolean; source?: string
+        createdAt?: number
+        updatedAt?: number
+        status?: string
+        model?: string
+        platform?: string
+        session_key?: string
+        started_at?: number
+        last_active?: number
+        is_active?: boolean
+        source?: string
       }
 
       return {
-        ...row, id: row.key || row.session_key, profile: 'default',
+        ...row,
+        id: row.key || row.session_key,
+        profile: 'default',
         started_at: row.createdAt === undefined ? row.started_at : row.createdAt / 1000,
         last_active: row.updatedAt === undefined ? row.last_active : row.updatedAt / 1000,
         is_active: row.status === undefined ? row.is_active : row.status === 'running',
@@ -685,7 +933,9 @@ export async function workspaceDesktopRead(
 
     const row = (await list()).find(item => item.id === sessionId)
 
-    if (!row) { throw missing() }
+    if (!row) {
+      throw missing()
+    }
 
     return row
   }
@@ -701,22 +951,35 @@ export async function requireWorkspaceCompletion(response: Response): Promise<vo
   for (const frame of stream.split('\n\n')) {
     const lines = frame.split('\n')
 
-    if (!lines.some(line => line.trim() === 'event: done')) { continue }
-    const data = lines.filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n')
+    if (!lines.some(line => line.trim() === 'event: done')) {
+      continue
+    }
+    const data = lines
+      .filter(line => line.startsWith('data:'))
+      .map(line => line.slice(5).trimStart())
+      .join('\n')
     const terminal = JSON.parse(data)
 
-    if (terminal.state === 'error') { throw new Error('The Cloud turn failed. Recover its history before trying again.') }
+    if (terminal.state === 'error') {
+      throw new Error('The Cloud turn failed. Recover its history before trying again.')
+    }
 
-    if (terminal.state === 'complete') { completed = true }
+    if (terminal.state === 'complete') {
+      completed = true
+    }
   }
 
-  if (!completed) { throw new Error('The Cloud send outcome is uncertain. Recover its history before trying again.') }
+  if (!completed) {
+    throw new Error('The Cloud send outcome is uncertain. Recover its history before trying again.')
+  }
 }
 
 /** Finite receipt reads after one explicit submit; an uncertain outcome never resubmits. */
 export async function requireNativeCompletion(
   client: Pick<ReturnType<typeof createSemantierWorkspaceClient>, 'nativeHistory'>,
-  sessionId: string, admissionId: string, cancelRequested?: AbortSignal
+  sessionId: string,
+  admissionId: string,
+  cancelRequested?: AbortSignal
 ): Promise<WorkspaceNativeSnapshot> {
   const deadline = Date.now() + 120_000
   let delay = 250
@@ -725,17 +988,25 @@ export async function requireNativeCompletion(
     const snapshot = await client.nativeHistory(sessionId, admissionId)
     const receipt = snapshot.admission_receipt
 
-    if (receipt?.admission_id !== admissionId) { throw new Error('Native receipt changed. Recover history before sending again.') }
+    if (receipt?.admission_id !== admissionId) {
+      throw new Error('Native receipt changed. Recover history before sending again.')
+    }
 
     if (receipt.status === 'terminal') {
-      if (cancelRequested?.aborted && ['cancelled', 'interrupted'].includes(receipt.outcome || '')) {return snapshot}
+      if (cancelRequested?.aborted && ['cancelled', 'interrupted'].includes(receipt.outcome || '')) {
+        return snapshot
+      }
 
-      if (receipt.outcome !== 'completed') { throw new Error('Winman did not complete this request. Recover its status before sending again.') }
+      if (receipt.outcome !== 'completed') {
+        throw new Error('Winman did not complete this request. Recover its status before sending again.')
+      }
 
       return snapshot
     }
 
-    if (receipt.status === 'unknown') { throw new Error('Winman execution outcome is unknown. Recover its status before sending again.') }
+    if (receipt.status === 'unknown') {
+      throw new Error('Winman execution outcome is unknown. Recover its status before sending again.')
+    }
     await new Promise(resolve => setTimeout(resolve, delay))
     delay = Math.min(delay * 2, 2_000)
   }

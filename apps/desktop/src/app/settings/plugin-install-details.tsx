@@ -76,7 +76,11 @@ function VersionRow({
   busy
 }: Pick<PluginInstallDetailsProps, 'busy' | 'copy' | 'pin' | 'request'> & { agent: boolean }) {
   if (request.semantierRelease) {
-    return <Row label={copy.versionLabel}>{request.semantierRelease.version} · {request.semantierRelease.package_ref}</Row>
+    return (
+      <Row label={copy.versionLabel}>
+        {request.semantierRelease.version} · {request.semantierRelease.package_ref}
+      </Row>
+    )
   }
 
   if (request.catalogName) {

@@ -44,25 +44,35 @@ describe('I18nProvider', () => {
     expect(screen.getByTestId('label').textContent).toBe('Language')
   })
 
-  it.each([undefined, 'invalid'])('defaults Windows unset/invalid language %s to Chinese without saving', async saved => {
-    const original = window.hermesDesktop
-    Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: {
-      getMachineProfile: vi.fn().mockResolvedValue({ platform: 'win32', locale: 'en-US' })
-    } })
+  it.each([undefined, 'invalid'])(
+    'defaults Windows unset/invalid language %s to Chinese without saving',
+    async saved => {
+      const original = window.hermesDesktop
+      Object.defineProperty(window, 'hermesDesktop', {
+        configurable: true,
+        value: {
+          getMachineProfile: vi.fn().mockResolvedValue({ platform: 'win32', locale: 'en-US' })
+        }
+      })
 
-    const configClient: I18nConfigClient = {
-      getConfig: vi.fn().mockResolvedValue({ display: { language: saved } }),
-      saveConfig: vi.fn()
-    }
+      const configClient: I18nConfigClient = {
+        getConfig: vi.fn().mockResolvedValue({ display: { language: saved } }),
+        saveConfig: vi.fn()
+      }
 
-    try {
-      render(<I18nProvider configClient={configClient}><LanguageProbe /></I18nProvider>)
-      await waitFor(() => expect(screen.getByTestId('locale').textContent).toBe('zh'))
-      expect(configClient.saveConfig).not.toHaveBeenCalled()
-    } finally {
-      Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: original })
+      try {
+        render(
+          <I18nProvider configClient={configClient}>
+            <LanguageProbe />
+          </I18nProvider>
+        )
+        await waitFor(() => expect(screen.getByTestId('locale').textContent).toBe('zh'))
+        expect(configClient.saveConfig).not.toHaveBeenCalled()
+      } finally {
+        Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: original })
+      }
     }
-  })
+  )
 
   it('normalizes an initial locale alias and switches translations', async () => {
     render(
@@ -429,13 +439,16 @@ describe('I18nProvider', () => {
   })
 })
 
-
 describe('language-linked voice defaults', () => {
   it.each([
-    ['en', 'en', 'en-US-AriaNeural'], ['zh', 'zh', 'zh-CN-XiaoxiaoNeural'],
-    ['zh-hant', 'zh', 'zh-TW-HsiaoChenNeural'], ['ja', 'ja', 'ja-JP-NanamiNeural'],
-    ['ar', 'ar', 'ar-SA-ZariyahNeural'], ['ru', 'ru', 'ru-RU-SvetlanaNeural'],
-    ['fr', 'fr', 'fr-FR-DeniseNeural'], ['de', 'de', 'de-DE-KatjaNeural'],
+    ['en', 'en', 'en-US-AriaNeural'],
+    ['zh', 'zh', 'zh-CN-XiaoxiaoNeural'],
+    ['zh-hant', 'zh', 'zh-TW-HsiaoChenNeural'],
+    ['ja', 'ja', 'ja-JP-NanamiNeural'],
+    ['ar', 'ar', 'ar-SA-ZariyahNeural'],
+    ['ru', 'ru', 'ru-RU-SvetlanaNeural'],
+    ['fr', 'fr', 'fr-FR-DeniseNeural'],
+    ['de', 'de', 'de-DE-KatjaNeural'],
     ['es', 'es', 'es-ES-ElviraNeural']
   ] as const)('maps bundled locale %s to provider-native defaults', (locale, language, voice) => {
     const next = withConfigDisplayLanguage({}, locale)
@@ -457,7 +470,11 @@ describe('language-linked voice defaults', () => {
   })
 
   it('preserves a custom language, voice, provider and model without mutating input', () => {
-    const original = { display: { language: 'en' }, stt: { language: 'fr', local: { language: 'ja', model: 'small' } }, tts: { provider: 'piper', edge: { voice: 'en-US-GuyNeural', speed: 1.2 } } }
+    const original = {
+      display: { language: 'en' },
+      stt: { language: 'fr', local: { language: 'ja', model: 'small' } },
+      tts: { provider: 'piper', edge: { voice: 'en-US-GuyNeural', speed: 1.2 } }
+    }
     const snapshot = structuredClone(original)
     const next = withConfigDisplayLanguage(original, 'zh')
     expect(next.stt).toEqual(original.stt)
@@ -466,7 +483,14 @@ describe('language-linked voice defaults', () => {
   })
 
   it('maps traditional Chinese UI to a supported Whisper language and Taiwan voice', () => {
-    const next = withConfigDisplayLanguage({ display: { language: 'zh' }, stt: { local: { language: 'zh' } }, tts: { edge: { voice: 'zh-CN-XiaoxiaoNeural' } } }, 'zh-hant')
+    const next = withConfigDisplayLanguage(
+      {
+        display: { language: 'zh' },
+        stt: { local: { language: 'zh' } },
+        tts: { edge: { voice: 'zh-CN-XiaoxiaoNeural' } }
+      },
+      'zh-hant'
+    )
     expect(next.stt).toEqual({ language: 'zh', local: { language: 'zh' } })
     expect(next.tts).toEqual({ edge: { voice: 'zh-TW-HsiaoChenNeural' } })
   })

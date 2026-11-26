@@ -10,7 +10,7 @@ import {
 } from '@/store/session'
 
 vi.mock('@/store/profile', async importOriginal => ({
-  ...await importOriginal<Record<string, unknown>>() ,
+  ...(await importOriginal<Record<string, unknown>>()),
   ensureGatewayProfile: vi.fn(async () => undefined)
 }))
 
@@ -33,6 +33,6 @@ it.each(['semantier-cloud', 'custom:byok'])('fresh draft has the correct model p
     expect(params).not.toHaveProperty('provider')
   } else {
     expect($currentModel.get()).toBe('explicit-session-model')
-    expect(params).toMatchObject({model:'explicit-session-model',provider})
+    expect(params).toMatchObject({ model: 'explicit-session-model', provider })
   }
 })

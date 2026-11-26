@@ -24,22 +24,35 @@ describe('requestModelOptions', () => {
   })
 
   it('keeps a verified empty query-only result and never falls back to another source', async () => {
-    const result = { model: 'retired', provider: 'fixture', providers: [], discovery_contract: 'provider-query-v1' as const }
+    const result = {
+      model: 'retired',
+      provider: 'fixture',
+      providers: [],
+      discovery_contract: 'provider-query-v1' as const
+    }
     const gateway = { request: vi.fn(() => Promise.resolve(result)) }
 
-    await expect(requestModelOptions({ gateway: gateway as never, queryOnly: true, queryScope: 'connection-a' })).resolves.toBe(result)
+    await expect(
+      requestModelOptions({ gateway: gateway as never, queryOnly: true, queryScope: 'connection-a' })
+    ).resolves.toBe(result)
     expect(gateway.request).toHaveBeenCalledWith('model.options', {
-      explicit_only: true, query_only: true, query_scope: 'connection-a'
+      explicit_only: true,
+      query_only: true,
+      query_scope: 'connection-a'
     })
     expect(getGlobalModelOptions).not.toHaveBeenCalled()
   })
 
   it('rejects an old or failed gateway query without recovering through ambient REST', async () => {
     const gateway = { request: vi.fn(() => Promise.resolve({ model: '', provider: '', providers: [] })) }
-    await expect(requestModelOptions({ gateway: gateway as never, queryOnly: true, queryScope: 'connection-a' })).rejects.toThrow()
+    await expect(
+      requestModelOptions({ gateway: gateway as never, queryOnly: true, queryScope: 'connection-a' })
+    ).rejects.toThrow()
     expect(getGlobalModelOptions).not.toHaveBeenCalled()
     gateway.request.mockRejectedValueOnce(new Error('offline'))
-    await expect(requestModelOptions({ gateway: gateway as never, queryOnly: true, queryScope: 'connection-a' })).rejects.toThrow('offline')
+    await expect(
+      requestModelOptions({ gateway: gateway as never, queryOnly: true, queryScope: 'connection-a' })
+    ).rejects.toThrow('offline')
     expect(getGlobalModelOptions).not.toHaveBeenCalled()
   })
 
@@ -50,11 +63,18 @@ describe('requestModelOptions', () => {
   })
 
   it('rejects a query-only response whose model rows lack verified provenance', async () => {
-    const gateway = { request: vi.fn(() => Promise.resolve({
-      discovery_contract: 'provider-query-v1', providers: [{ slug: 'lab', name: 'Lab', models: ['static-only'] }]
-    })) }
+    const gateway = {
+      request: vi.fn(() =>
+        Promise.resolve({
+          discovery_contract: 'provider-query-v1',
+          providers: [{ slug: 'lab', name: 'Lab', models: ['static-only'] }]
+        })
+      )
+    }
 
-    await expect(requestModelOptions({ gateway: gateway as never, queryOnly: true, queryScope: 'connection-a' })).rejects.toThrow()
+    await expect(
+      requestModelOptions({ gateway: gateway as never, queryOnly: true, queryScope: 'connection-a' })
+    ).rejects.toThrow()
   })
 
   it('uses the connected gateway even before a session exists', async () => {
@@ -250,8 +270,14 @@ describe('modelOptionsQueryKey', () => {
 
 describe('providerSelectableModels', () => {
   it('accepts verified discovery without inventing an eligibility grant', () => {
-    const row = { slug: 'lab', name: 'Lab', models: ['live', 'locked'], discovery_state: 'cached' as const,
-      discovery_source_id: 'opaque', unavailable_models: ['locked'] }
+    const row = {
+      slug: 'lab',
+      name: 'Lab',
+      models: ['live', 'locked'],
+      discovery_state: 'cached' as const,
+      discovery_source_id: 'opaque',
+      unavailable_models: ['locked']
+    }
 
     expect(providerSelectableModels(row)).toEqual(['live'])
     expect(providerSelectableModels({ ...row, eligible_models: ['locked'] })).toEqual([])
@@ -335,11 +361,37 @@ describe('customDefaultSupersedesPick', () => {
 })
 
 it('uses captured Workspace REST discovery instead of an ambient gateway model.options', async () => {
-  const {requestDiscoveredModelOptions} = await import('./model-options')
-  const result = {discovery_contract:'provider-query-v1',providers:[{slug:'openai',models:['actual'],discovery_state:'fresh',discovery_source_id:'opaque',discovery_fetched_at:'2026-11-08T00:00:00Z'}]}
+  const { requestDiscoveredModelOptions } = await import('./model-options')
+  const result = {
+    discovery_contract: 'provider-query-v1',
+    providers: [
+      {
+        slug: 'openai',
+        models: ['actual'],
+        discovery_state: 'fresh',
+        discovery_source_id: 'opaque',
+        discovery_fetched_at: '2026-11-08T00:00:00Z'
+      }
+    ]
+  }
   vi.mocked(getGlobalModelOptions).mockResolvedValueOnce(result as never)
-  const gateway = {request:vi.fn()}
-  await expect(requestDiscoveredModelOptions({gateway:gateway as never,profile:'default',refresh:true,connection:{connectionId:'cloud',baseUrl:'https://cloud.example',transport:'semantier-workspace-http',workspaceScope:{userId:'a',workspaceId:'w',organizationId:'o'}}})).resolves.toBe(result)
+  const gateway = { request: vi.fn() }
+  await expect(
+    requestDiscoveredModelOptions({
+      gateway: gateway as never,
+      profile: 'default',
+      refresh: true,
+      connection: {
+        connectionId: 'cloud',
+        baseUrl: 'https://cloud.example',
+        transport: 'semantier-workspace-http',
+        workspaceScope: { userId: 'a', workspaceId: 'w', organizationId: 'o' }
+      }
+    })
+  ).resolves.toBe(result)
   expect(gateway.request).not.toHaveBeenCalled()
-  expect(getGlobalModelOptions).toHaveBeenLastCalledWith(expect.objectContaining({refresh:true,queryOnly:true}),{connectionId:'cloud',profile:'default'})
+  expect(getGlobalModelOptions).toHaveBeenLastCalledWith(expect.objectContaining({ refresh: true, queryOnly: true }), {
+    connectionId: 'cloud',
+    profile: 'default'
+  })
 })

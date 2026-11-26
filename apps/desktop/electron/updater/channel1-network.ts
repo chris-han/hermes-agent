@@ -2,14 +2,19 @@ import { isChannelBuildId } from './channel-protocol'
 import { nativeUpdateFetch } from './network'
 
 /** Metadata keeps OS proxy policy; canonical OSS bytes use isolated HTTPS. */
-export function createDesktopUpdateFetches(platform: string, systemFetch: typeof fetch,
+export function createDesktopUpdateFetches(
+  platform: string,
+  systemFetch: typeof fetch,
   sessions: { fromPartition: (partition: string, options: { cache: boolean }) => DirectSession }
 ): { metadata: typeof fetch; artifact: typeof fetch } {
   const metadata = nativeUpdateFetch(systemFetch)
 
-  const artifact = platform === 'win32' ? channel1ArtifactFetch(metadata, () => {
-    return sessions.fromPartition('semantier-channel1-artifacts', { cache: false })
-  }) : metadata
+  const artifact =
+    platform === 'win32'
+      ? channel1ArtifactFetch(metadata, () => {
+          return sessions.fromPartition('semantier-channel1-artifacts', { cache: false })
+        })
+      : metadata
 
   return { metadata, artifact }
 }
@@ -28,11 +33,20 @@ export function channel1ArtifactFetch(fallback: typeof fetch, create: () => Dire
   return async (input, init) => {
     const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url)
 
-    if (url.origin !== 'https://assets.semantier.cn') { return fallback(input, init) }
+    if (url.origin !== 'https://assets.semantier.cn') {
+      return fallback(input, init)
+    }
 
     const buildId = url.pathname.split('/')[3] || ''
-    if (url.username || url.password || url.search || url.hash || !isChannelBuildId(buildId) ||
-        url.pathname !== `/releases/channel-builds/${buildId}/SemantierAgent.msix`) {
+
+    if (
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      !isChannelBuildId(buildId) ||
+      url.pathname !== `/releases/channel-builds/${buildId}/SemantierAgent.msix`
+    ) {
       throw new Error('Invalid Channel 1 pinned package URL')
     }
 
@@ -40,7 +54,9 @@ export function channel1ArtifactFetch(fallback: typeof fetch, create: () => Dire
       const session = create()
       await session.setProxy({ mode: 'direct' })
 
-      return nativeUpdateFetch((request, options) => session.fetch(request instanceof URL ? request.href : request, options))
+      return nativeUpdateFetch((request, options) =>
+        session.fetch(request instanceof URL ? request.href : request, options)
+      )
     })()
 
     return (await direct)(input, init)

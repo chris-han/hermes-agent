@@ -441,7 +441,8 @@ export function DesktopOnboardingOverlay({
   // The free-tier intro owns the overlay while it is up: the app is already
   // configured, so there is no picker to show and no runtime gate to wait on.
   // A manual open (the user asked for the picker) outranks it.
-  const freeTierIntro = !window.hermesDesktop?.semantierProduct && onboarding.freeTierReady && !onboarding.manual && flow.status === 'idle'
+  const freeTierIntro =
+    !window.hermesDesktop?.semantierProduct && onboarding.freeTierReady && !onboarding.manual && flow.status === 'idle'
   const ready = freeTierIntro || onboarding.manual || (enabled && onboarding.configured === false)
   const showPicker = !freeTierIntro && (flow.status === 'idle' || flow.status === 'success')
   // The final "you're in" screen drops the card chrome and floats centered on
@@ -692,8 +693,9 @@ export function Picker({ ctx }: { ctx: OnboardingContext }) {
 
   const select = (p: OAuthProvider) => void startProviderOAuth(p, ctx)
 
-  const featured = ordered.find(p => p.id === FEATURED_ID) ??
-    (window.hermesDesktop?.semantierProduct ? null : ordered.find(p => p.id === 'nous') ?? null)
+  const featured =
+    ordered.find(p => p.id === FEATURED_ID) ??
+    (window.hermesDesktop?.semantierProduct ? null : (ordered.find(p => p.id === 'nous') ?? null))
 
   const rest = featured ? ordered.filter(p => p.id !== featured.id) : ordered
   // Collapse the secondary providers behind a disclosure whenever Nous Portal
