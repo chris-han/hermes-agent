@@ -24,7 +24,7 @@
   pwsh.exe -NoProfile -ExecutionPolicy Bypass -File 'D:\repo\semantier-runtime\hermes-agent\scripts\deploy-ecs.ps1' -WhatIf
   If Windows blocks this unsigned network-source script before it starts, use this process-scoped launch.
 .DESCRIPTION
-  BuildMode defaults to Beta: sign, install and publish without release verification.
+  Omitting -BuildMode selects an express local build and install.
   Use -BuildMode Prod for full verification and acceptance. Timings use checkpoints.jsonl.
   Run in an interactive Windows PowerShell session as the installing user.
   Native SSH/SFTP use the publisher key and the ECS username from the deliverables .env. Secrets
@@ -115,12 +115,17 @@ param(
   [string]$BuildPython = '',
   [string]$AcceptanceNodeModules = '',
   [string]$VersionState = 'D:\repo\semantier-agent-build-version.json',
-  [ValidateSet('Beta','Prod')][string]$BuildMode = 'Beta',
+  [ValidateSet('Beta','Prod')][string]$BuildMode = 'Prod',
   [switch]$PreflightOnly
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $script:ossSession=$null
+$ExpressLocalUpdate=!$PSBoundParameters.ContainsKey('BuildMode')
+if($ExpressLocalUpdate){$LocalOnly=$true}
+if($ExpressLocalUpdate -and (!$LocalOnly -or $BuildMode -cne 'Prod' -or $BuildOnly -or $DesktopOnly -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $NativePublishOnly -or $PreflightOnly -or $Latest -or $ResumeSigned -or $RetireRollbackBuild -or $NativeUpdateFrom -or $FirstChannel1Head)){
+  throw 'This operation requires an explicit -BuildMode. The default is an express local application install.'
+}
 if($OssCacheOnlyRecovery -and (!$OssSetupQualification -or !$NativePublishOnly -or !$SkipLocalInstall -or $Commit -or $ResumeSigned -or $BuildMode -cne 'Prod' -or !$PSBoundParameters.ContainsKey('Output'))){throw 'Cache-only recovery requires the original explicit fixed-input Prod OSS publish-only run'}
 if($OssSetupQualification -and $VerifyPublicDownload){throw 'The one full OSS transfer is owned by Setup; standalone full download is forbidden.'}
 $identity = 'Semantier.Agent.Acceptance'
@@ -2335,7 +2340,7 @@ function Build-CommitPackage {
   if($record.stage -eq 'built'){
     if($BuildMode -eq 'Prod' -and (Hash $record.msix) -cne $record.sha256){throw 'Checkpoint unsigned MSIX integrity mismatch.'}
     Assert-MsixWithoutUvCache $record.msix
-    if(!$BuildOnly -and !$AcceptanceNodeModules){Initialize-CommitInputs $record}
+    if(!$BuildOnly -and !$AcceptanceNodeModules -and !$ExpressLocalUpdate){Initialize-CommitInputs $record}
     Report-Status 'Reusing checkpointed unsigned MSIX; no rebuild.'
     return $record
   }
@@ -2499,6 +2504,10 @@ if($Latest){
   $runtime=Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
   $Commit=Sync-GitHubLatestSource $runtime $PSCommandPath
 }
+if($ExpressLocalUpdate -and !$Commit -and !$PSBoundParameters.ContainsKey('Msix')){
+  $checkout=if($Repository){$Repository}else{Split-Path -Parent $PSScriptRoot}
+  $Commit=Get-SourceGit $checkout @('rev-parse','HEAD')
+}
 if($BuildOnly -and (!$Commit -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly)){throw '-BuildOnly requires -Commit and cannot be combined with Setup or preflight modes.'}
 if($SkipLocalInstall -and ($BuildOnly -or $LocalOnly -or $DesktopOnly -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or ($PreflightOnly -and !(($NativeUpdateFrom -or $FirstChannel1Head) -and $OssSetupQualification)))){throw '-SkipLocalInstall is for MSIX publication only.'}
 $script:explicitOutput=$PSBoundParameters.ContainsKey('Output')
@@ -2612,6 +2621,7 @@ $plan = [ordered]@{input=$Msix;version=$Version;sourceCommit=$SourceCommit;ssh=$
     $(if($VerifyPublicDownload){'explicit full public H3 download and hash'}else{'lightweight public H3 HEAD; no package body download'}),
     'verify live Landing before old-package cleanup')}
 if($BuildMode -eq 'Beta'){$plan.stages=@('build/reuse without release verification','sign MSIX','back up profile','install MSIX','SFTP upload','atomic ECS activation; UNVERIFIED')}
+if($ExpressLocalUpdate){$plan.verification='ARTIFACT_AND_INSTALL_ONLY';$plan.stages=@('verify package inputs','sign MSIX','back up profile','install MSIX','verify installed registration and signature')}
 if($SkipLocalInstall){$plan.stages=@($plan.stages | Where-Object {$_ -notin @('back up profile','install MSIX','install and observe Electron/real PTY')});$plan.localAcceptance='SKIPPED_USER_REQUEST_NO_LOCAL_INSTALL'}
 if ($WhatIfPreference) { if($ResumeSigned){$plan.stages=@('verify retained signed MSIX and critical contract','reuse signed checkpoint; no dependency/build/sign/install work','read current references and recover bounded capacity if necessary','resume upload; verify immutable closure; activate pointer last','verify H2 Range and H3; user update remains pending')}; $plan | ConvertTo-Json -Depth 5; return }
 Report-Status 'Validating existing MSIX hash, source, identity and node-pty inputs; no dependency rebuild.'
@@ -2621,7 +2631,7 @@ $tools=@($SignTool,$Node)
 foreach ($tool in $tools) {
   if (!(Test-Path -LiteralPath $tool -PathType Leaf)) { throw "Required existing tool unavailable: $tool" }
 }
-if($BuildMode -eq 'Prod'){
+if($BuildMode -eq 'Prod' -and !$ExpressLocalUpdate){
   if(!$NativePublishOnly){
   if(!$AcceptanceNodeModules){throw 'Prod acceptance requires -AcceptanceNodeModules pointing to existing Windows dependencies, or a -Commit build worktree.'}
   $null=Assert-LocalWindowsPath $AcceptanceNodeModules
@@ -2668,6 +2678,7 @@ $bindingFields=[ordered]@{mode=$BuildMode;skipLocalInstall=[bool]$SkipLocalInsta
   signer=$Thumbprint;target=$SshTarget;root=$RemoteRoot;origin=$PublicBase;profile=$UserProfile;
   setupContract='cloud-channel-oss-native-v3';channelContract='current-only-channel-metadata-v1';
   ossRuntimeRoot=$OssRuntimeRoot;ossWslDistro=$OssWslDistro;ossSetupQualification=[bool]$OssSetupQualification}
+if($ExpressLocalUpdate){$bindingFields.expressLocalUpdate=$true}
 if($ChannelRecoveryMsix){$bindingFields.channelRecoveryMsix=$ChannelRecoveryMsix}
 $script:runBinding=$bindingFields | ConvertTo-Json -Compress
 if (!$Commit -and !$NewRun -and !$directoryVersion -and !$PSBoundParameters.ContainsKey('Output')) {
@@ -2849,6 +2860,7 @@ try {
   if ((Hash (Join-Path $registered[0].InstallLocation 'AppxSignature.p7x')) -cne $expectedSignature) {throw 'Windows retained different same-version package bytes.'}
   $receipt.installedSignature=$expectedSignature
   Complete-Checkpoint 'installed'
+  if(!$ExpressLocalUpdate){
   $binding=Get-DeploymentPath $Output 'installed-binding.json';$uiOutput=Join-Path $Output ('acceptance-'+[Guid]::NewGuid().ToString('N'))
   # Isolated credential/profile state needs the same private NTFS DACL as native
   # continuity state. Inherited workspace writers are not valid test inputs.
@@ -2866,15 +2878,17 @@ try {
   Run $Node @($harnessPath,$binding)
   $ui=Get-Content -LiteralPath (Join-Path $uiOutput 'acceptance.json') -Raw | ConvertFrom-Json
   if ($ui.result -cne 'WINDOW_PTY_PASS' -or $ui.binding.artifactSha256 -cne $hash) {throw 'Installed UI/PTY evidence mismatch.'}
+  $receipt.uiReceipt=Join-Path $uiOutput 'acceptance.json'
+  }
   foreach ($file in $profileFiles) {
     if($file.relative -match '\.(db|sqlite|sqlite3)$'){continue}
     if (!(Test-Path -LiteralPath (Join-Path $UserProfile $file.relative) -PathType Leaf)) {throw "User profile file missing: $($file.relative)"}
   }
   if($BuildMode -eq 'Prod' -and (Test-Path -LiteralPath $backup)){Preserve-Databases 'verify'}
-  $receipt.localAcceptance='LOCAL_SIGNED_MSIX_ELECTRON_PTY_PASS';$receipt.profileBackup=$backup
-  Report-Status 'Local Electron, PTY and profile-preservation acceptance passed.'
+  $receipt.localAcceptance=if($ExpressLocalUpdate){'INSTALLED_SIGNATURE_VERIFIED_UI_NOT_RUN'}else{'LOCAL_SIGNED_MSIX_ELECTRON_PTY_PASS'}
+  $receipt.profileBackup=$backup
+  Report-Status $receipt.localAcceptance
   Save-Json $receipt (Get-DeploymentPath $Output 'result.json')
-  $receipt.uiReceipt=Join-Path $uiOutput 'acceptance.json'
   Complete-Checkpoint 'local'
   } else {
     $receipt.localAcceptance='SKIPPED_BETA';Complete-Checkpoint 'installed';Complete-Checkpoint 'local'
@@ -2883,14 +2897,16 @@ try {
     $registered=@(Get-AppxPackage -Name $identity)
     if($registered.Count -ne 1 -or $registered[0].Version.ToString() -cne $Version -or
       (Hash (Join-Path $registered[0].InstallLocation 'AppxSignature.p7x')) -cne $receipt.installedSignature){throw 'Installed package changed since local acceptance; start a new run.'}
+    if(!$ExpressLocalUpdate){
     $ui=Get-Content -LiteralPath $receipt.uiReceipt -Raw | ConvertFrom-Json
     if($ui.result -cne 'WINDOW_PTY_PASS' -or $ui.binding.artifactSha256 -cne $hash){throw 'Checkpoint local acceptance mismatch.'}
-    Report-Status 'Reusing verified installation and Electron/PTY acceptance.'
+    }
+    Report-Status ('Reusing local installation: '+$receipt.localAcceptance)
   }
   if ($LocalOnly) {
     $receipt.h3='NOT_RUN_LOCAL_ONLY'
     $receipt.publicReadback='NOT_RUN_LOCAL_ONLY'
-    $receipt.result=if($BuildMode -eq 'Beta'){'BETA_INSTALLED_UNVERIFIED_NOT_PUBLISHED'}else{'LOCAL_PASS_NOT_PUBLISHED'}
+    $receipt.result=if($BuildMode -eq 'Beta'){'BETA_INSTALLED_UNVERIFIED_NOT_PUBLISHED'}elseif($ExpressLocalUpdate){'EXPRESS_LOCAL_INSTALLED_NOT_PUBLISHED'}else{'LOCAL_PASS_NOT_PUBLISHED'}
     return
   }
 
