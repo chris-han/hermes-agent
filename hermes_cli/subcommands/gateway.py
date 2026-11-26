@@ -136,6 +136,7 @@ def build_gateway_parser(
     _add_system_flag(gateway_stop)
     _flag(gateway_stop, "--all", help="Stop ALL gateway processes across all profiles")
     _flag(gateway_stop, "--for-package-update", help="Drain only a verified native-package owner before replacement")
+    gateway_stop.add_argument("--desktop-instance", help=argparse.SUPPRESS)
 
     gateway_restart = gateway_subparsers.add_parser("restart", help="Restart gateway service")
     _add_system_flag(gateway_restart)

@@ -29,6 +29,10 @@ def host_scope_for_all_verb(owner):
 
 def profile_lifecycle(command: str, args) -> bool:
     """True when a named-profile command was handled (including an unconfirmed request)."""
+    if command == 'stop' and getattr(args, 'desktop_instance', None) is not None:
+        from hermes_cli.gateway_runtime_cli import cmd_gateway_desktop_stop
+        cmd_gateway_desktop_stop(args)
+        return True
     if command == 'stop' and getattr(args, 'for_package_update', False):
         from hermes_cli.gateway_runtime_cli import cmd_gateway_package_stop
         cmd_gateway_package_stop(args)

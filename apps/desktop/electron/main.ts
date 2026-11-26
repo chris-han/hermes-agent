@@ -12,6 +12,7 @@ import {
   gatewayOwnerProfile,
   mintLocalGatewayTicket,
   nativeGatewayHttpHeaders,
+  parseGatewayEnsureOutput,
   redialLocalGateway,
   routedGatewayEndpoint,
   runGatewayEnsure
@@ -11946,12 +11947,7 @@ async function dialPoolBackend(profile, entry, opts: { forceLocal?: boolean; poo
       assertPoolEntryStillOwned(poolKey, entry)
 
       // Never another profile's dotenv credentials from the Desktop env (#68367).
-      return runGatewayEnsure(
-        { ...backend, env: desktopBackendSpawnEnv(backend.env || {}) },
-        resolveHermesCwd(),
-        HERMES_HOME,
-        profileBackendParentEnv({ hermesHome: HERMES_HOME, profile })
-      )
+      return runDesktopGatewayEnsure(backend, profile)
     },
     async () => {
       // Same update mutual exclusion as the primary's waitForLocalStart (#73822);
@@ -11985,6 +11981,69 @@ async function dialPoolBackend(profile, entry, opts: { forceLocal?: boolean; poo
 // `hermes gateway restart` drains in-flight turns before the owner exits; the CLI client is
 // bounded so a wedged drain cannot hang Restart. The gateway's own drain is unaffected by the kill.
 const GATEWAY_RESTART_CLIENT_TIMEOUT_MS = 120_000
+
+const desktopGatewayInstances = new Map<string, string>()
+const pendingDesktopGatewayEnsures = new Set<Promise<unknown>>()
+
+function runDesktopGatewayEnsure(backend: ResolvedHermesBackend, profile: string) {
+  localBackendLifecycle.assertCanStart()
+  const env = desktopBackendSpawnEnv(backend.env || {})
+  const parentEnv = profileBackendParentEnv({ hermesHome: HERMES_HOME, profile })
+  const run = () => runGatewayEnsure({ ...backend, env }, resolveHermesCwd(), HERMES_HOME, parentEnv)
+
+  if (!IS_WINDOWS || !SEMANTIER_WINDOWS_PRODUCT) {
+    return run()
+  }
+
+  // Only an unmanaged daemon spawned by this invocation can return this ID.
+  const instance = crypto.randomBytes(16).toString('hex')
+  env.HERMES_DESKTOP_GATEWAY_INSTANCE = instance
+  desktopGatewayInstances.set(instance, profile)
+
+  const pending = run().then(result => {
+    const answer = parseGatewayEnsureOutput(result)
+
+    if (answer.state === 'ready' && answer.endpoint?.instance_id === instance) {
+      desktopGatewayInstances.set(instance, gatewayOwnerProfile(answer.endpoint))
+    } else if (answer.state !== 'starting') {
+      desktopGatewayInstances.delete(instance)
+    }
+
+    return result
+  }).finally(() => pendingDesktopGatewayEnsures.delete(pending))
+
+  pendingDesktopGatewayEnsures.add(pending)
+
+  return pending
+}
+
+async function stopDesktopGatewayInstances(): Promise<void> {
+  // The local lifecycle has already been sealed. An in-flight ensure can
+  // report its owner before we take the shutdown inventory.
+  await Promise.allSettled(pendingDesktopGatewayEnsures)
+  await Promise.all([...desktopGatewayInstances].map(async ([instance, profile]) => {
+    try {
+      const backend = await resolveHermesBackend(['--profile', profile, 'gateway', 'stop', '--desktop-instance', instance])
+
+      if (!backend.command || backend.bootstrap) {
+        throw new Error('Local runtime unavailable')
+      }
+
+      const result = await runGatewayEnsure(
+        { ...backend, env: desktopBackendSpawnEnv(backend.env || {}) },
+        resolveHermesCwd(), HERMES_HOME,
+        profileBackendParentEnv({ hermesHome: HERMES_HOME, profile }),
+        { timeoutMs: 30_000, label: 'Desktop gateway shutdown' }
+      )
+
+      if (result.code !== 0) {
+        throw new Error(result.stderr.trim().split(/\r?\n/).pop() || `exit ${result.code}`)
+      }
+    } catch (error) {
+      rememberLog(`[gateway] Desktop shutdown could not be verified for ${profile}: ${String(error)}`)
+    }
+  }))
+}
 
 async function stopLocalGatewayOwnerForPackageUpdate(ownerProfile: string): Promise<void> {
   const backend = await ensureRuntime(
@@ -12050,11 +12109,8 @@ async function restartAttachedLocalGateway(profile: string): Promise<void> {
   }
 }
 
-// Forget a cached descriptor. Nothing is killed: the gateway behind it owns its
-// own lifetime (`hermes gateway ensure` attach semantics), so the next
-// ensure*() for this key simply re-dials. Every retire path — dispatch probe
-// failure, resume revalidation, registry removal, profile delete/rename, quit —
-// funnels through here so the verb stays in one place.
+// Retire the cached connection so the next ensure re-dials. Gateway shutdown
+// uses its launch identity independently of connection retirement.
 async function stopPoolBackend(profile: string) {
   backendPool.delete(profile)
 }
@@ -12120,9 +12176,8 @@ function reapInstallRootedStragglers(excludePids: number[]): void {
   }
 }
 
-// Closing Desktop never stops the detached gateway: only processes this app
-// still owns are torn down, and the straggler reap protects every live Hermes
-// runtime tree (package-process-reap.ts).
+// Normal Windows Semantier Quit drains gateway instances launched by this app.
+// Package handoffs drain through their own lifecycle before replacing files.
 const backendShutdown = createBackendShutdownCoordinator(async (): Promise<void> => {
   const ownedChildren = IS_WINDOWS ? collectOwnedBackendChildren() : []
   const localShutdown = localBackendLifecycle.shutdown()
@@ -12130,8 +12185,13 @@ const backendShutdown = createBackendShutdownCoordinator(async (): Promise<void>
   const primaryStop = teardownPrimaryBackendAndWait(backendTeardownOptions('quit'))
   const pooledStops = stopAllPoolBackends()
 
+  const desktopGatewayStops = quitInProgress && !isQuittingForHandoff &&
+    (desktopGatewayInstances.size > 0 || pendingDesktopGatewayEnsures.size > 0)
+    ? stopDesktopGatewayInstances() : undefined
+
   // Bounded: a backend that ignores SIGTERM must not wedge app quit (main's 7 s teardown budget).
   await waitForTeardown([localShutdown, primaryStop, pooledStops], 7_000)
+  await desktopGatewayStops
 
   reapInstallRootedStragglers(Number.isInteger(primary?.pid) ? [primary.pid] : [])
 
@@ -12447,12 +12507,7 @@ async function startHermes(requestedProfile?: string) {
 
     const connection = await ensureLocalGateway(
       () =>
-        runGatewayEnsure(
-          { ...setup.backend, env: desktopBackendSpawnEnv(setup.backend.env || {}) },
-          resolveHermesCwd(),
-          HERMES_HOME,
-          profileBackendParentEnv({ hermesHome: HERMES_HOME, profile: primaryProfile })
-        ),
+        runDesktopGatewayEnsure(setup.backend, primaryProfile),
       undefined,
       restartStaleLocalGateway
     )
@@ -18784,8 +18839,7 @@ function configureSpellChecker() {
 
 // Does quitting take the agent down with the app? Reads the primary profile's
 // route through the same resolver resolveRemoteBackend uses, plus every backend
-// the quit teardown below will stop (SSH-managed servers; the local gateway is
-// attached, never owned).
+// the quit teardown below will stop, including a gateway this app launched.
 // A route we can't resolve counts as owned: the lost-work warning is the safe
 // side to be wrong on.
 function quitStopsBackendWork(): boolean {
@@ -18809,7 +18863,8 @@ function quitStopsBackendWork(): boolean {
   const ownedBackendCount =
     (backendConnectionState.getProcess() ? 1 : 0) +
     [...backendPool.values()].filter(entry => entry?.process).length +
-    sshConnections.size
+    sshConnections.size +
+    desktopGatewayInstances.size
 
   return backendOwnedByApp({ ownedBackendCount, primaryRouteKind })
 }
@@ -18985,8 +19040,9 @@ app.on('before-quit', event => {
   sshBootstrapCoordinator.shutdown()
 
   const backendNeedsWait = backendQuitNeedsWait({
-    connectionPending: backendConnectionState.getPendingPromise() !== null || localBackendLifecycle.hasPending(),
-    processAttached: backendConnectionState.getProcess() !== null,
+    connectionPending: backendConnectionState.getPendingPromise() !== null || localBackendLifecycle.hasPending() ||
+      pendingDesktopGatewayEnsures.size > 0,
+    processAttached: backendConnectionState.getProcess() !== null || desktopGatewayInstances.size > 0,
     shutdownPending: backendShutdown.isPending()
   })
 

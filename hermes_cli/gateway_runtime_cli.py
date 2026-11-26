@@ -1,8 +1,30 @@
 """Machine-readable ensure boundary. No bootstrap credentials leave this command."""
 from dataclasses import asdict
 import json
+import os
+import re
 import sys
 from contextlib import redirect_stdout
+
+
+DESKTOP_INSTANCE_ENV = "HERMES_DESKTOP_GATEWAY_INSTANCE"
+_launch_instance: str | None = None
+
+
+def capture_desktop_instance() -> None:
+    """Consume launcher provenance before profile dotenv values are applied."""
+    global _launch_instance
+    _launch_instance = os.environ.pop(DESKTOP_INSTANCE_ENV, None)
+
+
+def requested_desktop_instance() -> str | None:
+    return desktop_instance(_launch_instance) if _launch_instance is not None else None
+
+
+def desktop_instance(value: str) -> str:
+    if not re.fullmatch(r"[0-9a-f]{32}", value):
+        raise ValueError("invalid Desktop gateway instance")
+    return value
 
 
 def ensure_exit_code(result) -> int:
@@ -20,8 +42,10 @@ def cmd_gateway_ensure(args) -> None:
 
     try:
         # Legacy imported utilities can print; protocol stdout belongs only to us.
+        requested = requested_desktop_instance()
+        options = {"desktop_instance": requested} if requested is not None else {}
         with redirect_stdout(sys.stderr):
-            result = ensure_gateway_runtime(get_hermes_home(), timeout=float(args.timeout))
+            result = ensure_gateway_runtime(get_hermes_home(), timeout=float(args.timeout), **options)
         payload = asdict(result)
         if result.endpoint:
             payload["endpoint"]["capabilities"] = sorted(result.endpoint.capabilities)
@@ -35,6 +59,24 @@ def cmd_gateway_ensure(args) -> None:
         payload, code = {"state": "inaccessible", "reason_code": "invalid_invocation", "endpoint": None}, 2
     print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
     raise SystemExit(code)
+
+
+def cmd_gateway_desktop_stop(args) -> None:
+    import time
+    from hermes_constants import get_hermes_home
+    from hermes_cli.gateway_runtime_replace import replace_incompatible_owner
+
+    if args.all or args.system or args.for_package_update:
+        raise SystemExit("Desktop gateway shutdown requires a single launch instance.")
+    try:
+        instance = desktop_instance(args.desktop_instance)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    refusal = replace_incompatible_owner(
+        get_hermes_home(), deadline=time.monotonic() + 20, desktop_instance=instance
+    )
+    if refusal:
+        raise SystemExit(f"Desktop gateway shutdown could not be verified ({refusal}).")
 
 
 def cmd_gateway_package_stop(args) -> None:

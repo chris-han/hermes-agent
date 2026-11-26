@@ -68,19 +68,17 @@ export interface QuitPrompt {
 
 export interface BackendOwnershipInput {
   /**
-   * Backends this app stops when it quits: spawned local children plus
-   * SSH-managed servers, across the primary and every pooled profile.
+   * Backends this app stops when it quits, including local gateways it
+   * launched and SSH-managed servers across all profiles.
    */
   ownedBackendCount: number
-  /** What the primary profile resolves to; null means the local profile gateway (attached, not owned). */
+  /** What the primary profile resolves to. Null means a local profile gateway. */
   primaryRouteKind: 'cloud' | 'remote' | 'ssh' | null
 }
 
 /**
- * Whether quitting takes the agent down with the app. Only SSH backends are
- * started and stopped by the app. The local gateway, a remote URL and a cloud
- * backend all outlive it; but any server the app itself manages (another
- * window's SSH connection) might be where the turn is running, so it counts.
+ * Whether quitting can interrupt work. Any backend the app will stop counts,
+ * including one serving another window.
  */
 export function backendOwnedByApp({ ownedBackendCount, primaryRouteKind }: BackendOwnershipInput): boolean {
   return primaryRouteKind === 'ssh' || ownedBackendCount > 0

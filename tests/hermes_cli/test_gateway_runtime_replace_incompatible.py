@@ -169,3 +169,35 @@ def test_replacement_never_targets_itself(home, monkeypatch):
     monkeypatch.setattr(replace, "_install_root", lambda: home)
     monkeypatch.setattr(replace, "_identify", lambda h, timeout: (home, _owner_payload(home, os.getpid(), 1)))
     assert replace.replace_incompatible_owner(home, deadline=time.monotonic() + 5) == "owner_unverified"
+
+
+@pytest.mark.platforms("linux")
+def test_desktop_stop_targets_only_the_launched_instance(home, owner, monkeypatch):
+    import time
+    from gateway.status import get_process_start_time
+
+    launch_id = "a" * 32
+    payload = _owner_payload(home, owner.pid, get_process_start_time(owner.pid))
+    payload.update(instance_id="b" * 32, supervisor="none", runtime_protocol=1)
+    monkeypatch.setattr(replace, "_install_root", lambda: home)
+    monkeypatch.setattr(replace, "_identify", lambda h, timeout: (home, payload))
+
+    def stop():
+        return replace.replace_incompatible_owner(
+            home, deadline=time.monotonic() + 15, desktop_instance=launch_id
+        )
+
+    assert stop() is None
+    assert owner.poll() is None
+    payload["instance_id"] = launch_id
+    payload["supervisor"] = "windows"
+    assert stop() is None
+    assert owner.poll() is None
+    payload["supervisor"] = "none"
+    recorded_start = payload["start_time"]
+    payload["start_time"] = recorded_start - 1
+    assert stop() == "owner_unverified"
+    assert owner.poll() is None
+    payload["start_time"] = recorded_start
+    assert stop() is None
+    assert owner.wait(5) is not None

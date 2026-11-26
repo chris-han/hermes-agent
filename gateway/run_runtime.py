@@ -109,7 +109,9 @@ async def initialize_gateway_runtime(runner):
     for _name, home in homes:
         if not process_ownership.owns(home):
             raise RuntimeError(f'session authority requires reserved profile ownership: {home}')
-    instance_id = uuid.uuid4().hex
+    from hermes_cli.gateway_runtime_cli import requested_desktop_instance
+
+    instance_id = requested_desktop_instance() or uuid.uuid4().hex
     descriptor = {
         'instance_id': instance_id, 'runtime_protocol': 1,
         'state': 'starting', 'capabilities': [],

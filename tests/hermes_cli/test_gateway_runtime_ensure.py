@@ -466,3 +466,72 @@ def test_dead_unmanaged_start_is_a_prompt_terminal_verdict(tmp_path, monkeypatch
     assert "RuntimeError: boot failed with key" in result.detail, result.detail
     assert secret not in result.detail and "OLD_RUN_TRACEBACK" not in result.detail
     assert "gateway-stdio.log" in result.detail
+
+
+@pytest.mark.platforms("linux", "windows")
+@pytest.mark.spawns_gateway_lookalike
+def test_desktop_launch_and_stop_release_dispatcher_lock(tmp_path):
+    from secrets import token_hex
+
+    from gateway.kanban_watchers_common import _acquire_singleton_lock, _release_singleton_lock
+    from hermes_cli.gateway_runtime_cli import DESKTOP_INSTANCE_ENV
+
+    home = tmp_path / "gateway-home"
+    home.mkdir(mode=0o700)
+    (home / "config.yaml").write_text("kanban:\n  dispatch_in_gateway: true\n", encoding="utf-8")
+    (home / ".env").write_text(f"{DESKTOP_INSTANCE_ENV}=invalid-profile-setting\n", encoding="utf-8")
+    env = {
+        **os.environ, "HOME": str(tmp_path), "USERPROFILE": str(tmp_path), "HERMES_HOME": str(home),
+        "HERMES_KANBAN_HOME": str(home), "HERMES_GATEWAY_LOCK_DIR": str(tmp_path / "locks"),
+        "HERMES_GATEWAY_NO_SUPERVISE": "1", "HERMES_KANBAN_DISPATCH_IN_GATEWAY": "1",
+        "SEMANTIER_RUNTIME": "0",
+    }
+    instance, other_instance = token_hex(16), token_hex(16)
+    lock = home / "kanban" / ".dispatcher.lock"
+    command = [sys.executable, "-m", "hermes_cli.main", "--profile", "default", "gateway"]
+
+    def cli(*args, instance_env=None):
+        child_env = dict(env)
+        child_env.pop(DESKTOP_INSTANCE_ENV, None)
+        if instance_env:
+            child_env[DESKTOP_INSTANCE_ENV] = instance_env
+        return subprocess.run([*command, *args], env=child_env, stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True, timeout=45, check=False)
+
+    def ensure(instance_env):
+        result = cli("ensure", "--json", "--timeout", "25", instance_env=instance_env)
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        return json.loads(result.stdout)["endpoint"]["instance_id"]
+
+    def lock_state():
+        handle, state = _acquire_singleton_lock(lock)
+        _release_singleton_lock(handle)
+        return state
+
+    stopped = False
+    try:
+        assert ensure(instance) == instance
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if lock.exists() and lock_state() == "contended":
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail("Gateway never acquired the dispatcher lock")
+
+        # A second Desktop invocation attaches to the original; its quit cannot stop that owner.
+        assert ensure(other_instance) == instance
+        result = cli("stop", "--desktop-instance", other_instance)
+        assert result.returncode == 0, result.stderr
+        assert ensure(other_instance) == instance
+        assert lock_state() == "contended"
+
+        result = cli("stop", "--desktop-instance", instance)
+        assert result.returncode == 0, result.stderr
+        stopped = True
+        assert lock.exists()
+        assert lock_state() == "held"
+    finally:
+        if not stopped:
+            cli("stop", "--desktop-instance", instance)
+            cli("stop", "--desktop-instance", other_instance)

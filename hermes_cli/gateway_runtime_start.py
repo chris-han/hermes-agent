@@ -25,7 +25,8 @@ DAEMON_STRIPPED_ENV = (
 )
 
 
-def spawn_unmanaged_gateway(profile_home: Path, *, deadline: float, idle_exit: bool = False) -> subprocess.Popen:
+def spawn_unmanaged_gateway(profile_home: Path, *, deadline: float, idle_exit: bool = False,
+                            desktop_instance: str | None = None) -> subprocess.Popen:
     """Request a daemon, not readiness. Refuse Windows no-breakaway fallback.
 
     No --replace, persistence, login changes, elevation, shell, or inherited stdio.
@@ -61,6 +62,10 @@ def spawn_unmanaged_gateway(profile_home: Path, *, deadline: float, idle_exit: b
     from gateway.session_context import _VAR_MAP  # the launching turn's session identity, too
     for key in (*DAEMON_STRIPPED_ENV, *_VAR_MAP):
         env.pop(key, None)
+    from hermes_cli.gateway_runtime_cli import DESKTOP_INSTANCE_ENV
+    env.pop(DESKTOP_INSTANCE_ENV, None)
+    if desktop_instance is not None:
+        env[DESKTOP_INSTANCE_ENV] = desktop_instance
     remaining(deadline)
     logs = home / "logs"
     logs.mkdir(parents=True, exist_ok=True)

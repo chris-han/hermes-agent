@@ -159,26 +159,51 @@ def _wait_gone(pid: int, seconds: float) -> bool:
     return True
 
 
-def replace_incompatible_owner(home: Path, *, deadline: float, for_package_update: bool = False) -> str | None:
-    """Stop the older-Hermes gateway answering for *home*; None once it is gone, else a refusal code
+def replace_incompatible_owner(home: Path, *, deadline: float, for_package_update: bool = False,
+                               desktop_instance: str | None = None) -> str | None:
+    """Stop the verified gateway answering for *home*; None once it is gone, else a refusal code
     (see :data:`REFUSAL_DETAIL`). Never starts anything: the caller's ensure loop does that."""
     from gateway.status import terminate_pid
     budget = deadline - time.monotonic()
     if budget <= 0:
         return "owner_unreachable"
-    try:
-        found = _identify(home, timeout=min(2.0, budget))
-    except (OSError, ValueError, TypeError):  # timeout, refused/denied peer, malformed reply
-        return "owner_unreachable"
-    if found is None:
-        return None  # it is already gone: nothing to replace
+    while True:
+        try:
+            found = _identify(home, timeout=min(2.0, budget))
+        except (OSError, ValueError, TypeError):  # timeout, refused/denied peer, malformed reply
+            return "owner_unreachable"
+        if found is not None:
+            break
+        if desktop_instance is None:
+            return None
+        # An ensure deadline can leave a daemon booting with a reservation but
+        # without a control endpoint. Wait for its identity before deciding.
+        from hermes_cli.gateway_runtime_discovery import missing_owner_state
+        from hermes_cli.gateway_runtime_multiplex import multiplexer_root_for
+        states = [missing_owner_state(home)]
+        if (host := multiplexer_root_for(home)) is not None:
+            states.append(missing_owner_state(host))
+        if all(state == "absent" for state in states):
+            return None
+        if "inaccessible" in states or budget <= _FORCED_STOP_SECONDS + 1:
+            return "owner_unreachable"
+        time.sleep(0.1)
+        budget = deadline - time.monotonic()
     control, payload = found
+    if desktop_instance is not None and (
+        payload.get("instance_id") != desktop_instance or payload.get("supervisor") != "none"
+    ):
+        return None
     verdict = _verified_owner(control, payload)
     if isinstance(verdict, str):
         return verdict
     pid, start_time = verdict
+    if desktop_instance is not None:
+        from gateway.status import start_time_fingerprints_match
+        if not start_time_fingerprints_match(payload["start_time"], start_time, tolerance=0):
+            return "owner_unverified"
     native = native_package_owner(control, payload)
-    if native == 'same' and not for_package_update:
+    if native == 'same' and not for_package_update and desktop_instance is None:
         return None  # A new owner won the discovery/stop race; do not stop it.
     if for_package_update and native is None:
         return 'owner_unverified'  # This explicit drain never stops an unpackaged owner.
