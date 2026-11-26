@@ -1663,6 +1663,9 @@ function Sign-Copy([string]$InputFile, [string]$Destination) {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $package=[IO.Compression.ZipFile]::OpenRead($InputFile)
     try{[xml]$manifest=Read-ZipText $package 'AppxManifest.xml'}finally{$package.Dispose()}
+    if($env:VITE_PROJECT_CONTINUITY_DEV -ceq '1' -and $ExpectedVersion){
+      Run $BuildPython @((Join-Path $PSScriptRoot 'verify-projects-msix.py'),$InputFile,'--require-version',$ExpectedVersion,'--require-mount')
+    }
     $cert=Get-Item -LiteralPath ('Cert:\CurrentUser\My\'+$Thumbprint)
     if($manifest.Package.Identity.Publisher -cne $cert.Subject){throw 'MSIX Publisher does not match signing certificate; resume -Commit to repackage with the configured publisher.'}
   }
