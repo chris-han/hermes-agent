@@ -273,6 +273,39 @@ function Assert-ExecutionPolicyPreflight {
     Report-Status "UNC/R: unsigned scripts may be blocked before preflight. If so, use pwsh.exe -NoProfile -ExecutionPolicy Bypass -File '$PSCommandPath' with the same arguments."
   }
 }
+function Get-ReleaseDirectoryVersion([string]$Path) {
+  if((Split-Path -Leaf $Path) -cmatch '^SemantierAgent-((?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3})$'){
+    $version=[Version]$Matches[1]
+    if(@($version.Major,$version.Minor,$version.Build,$version.Revision | Where-Object {$_ -gt 65535}).Count -eq 0){return $version}
+  }
+}
+function Test-DeploymentDirectoryName([string]$Path) {
+  return (Split-Path -Leaf $Path) -cmatch '^ecs-deploy-\d{8}-\d{6}-[a-f0-9]{8}$' -or [bool](Get-ReleaseDirectoryVersion $Path)
+}
+function Get-DeploymentPath([string]$Run,[string]$Relative) {
+  if(!(Get-ReleaseDirectoryVersion $Run)){return (Join-Path $Run $Relative)}
+  $group=switch -Regex ($Relative) {
+    '^(source(?:-residue)?(?:[\\/]|$)|\.)' {break}
+    '^(desktop-(?:check-)?job|native-toolchain-preflight|sdk-preflight\.vcxproj|unsigned\.msix|setup-build)(?:[\\/]|$)' {'packaging';break}
+    '^(SemantierAgent\.msix(?:\.sha256)?|setup-download|[^\\/]+\.exe)(?:[\\/]|$)' {'product';break}
+    default {'records'}
+  }
+  if($group){return (Join-Path (Join-Path $Run $group) $Relative)}
+  return (Join-Path $Run $Relative)
+}
+function Initialize-DeploymentDirectory([string]$Run) {
+  Assert-NoReparseAncestor $Run
+  if(!(Test-Path -LiteralPath $Run)){New-Item -ItemType Directory -Path $Run | Out-Null}
+  if(Get-ReleaseDirectoryVersion $Run){
+    foreach($name in @('packaging','product','records','baseline')){
+      $path=Join-Path $Run $name
+      Assert-NoReparseAncestor $path
+      if(!(Test-Path -LiteralPath $path)){New-Item -ItemType Directory -Path $path | Out-Null}
+      elseif(!(Test-Path -LiteralPath $path -PathType Container)){throw 'Release layout path is not a directory.'}
+    }
+  }
+}
+
 function Initialize-ReleasePaths {
   Assert-ExecutionPolicyPreflight
   if([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT){throw 'Run on native Windows.'}
@@ -436,7 +469,7 @@ function Confirm-ToolingTransition($Record,[string]$Inputs,[switch]$RequireExist
   }
   $leases=[Collections.Generic.List[IDisposable]]::new()
   try {
-    foreach($path in @((Join-Path $Output '.source.lock'),(Join-Path $BuildCache '.desktop-build.lock'))){
+    foreach($path in @((Get-DeploymentPath $Output '.source.lock'),(Join-Path $BuildCache '.desktop-build.lock'))){
       Assert-NoReparseAncestor $path
       $lease=[IO.File]::Open($path,'OpenOrCreate','ReadWrite','None');$leases.Add($lease)
       $lease.Lock(0,1)
@@ -508,9 +541,9 @@ function Preserve-ToolingPreparationFailure($Previous) {
     # retained preparation STOP is not an older signed release receipt.
     if($Commit -or !$NativeUpdateFrom -or !$NativePublishOnly -or !$SkipLocalInstall -or !$OssSetupQualification){return $false}
     $build=Read-CommitBuild $script:statusLog
-    if($Msix -ine (Join-Path $Output 'unsigned.msix') -or !$build -or $build.stage -cne 'built' -or $build.commit -cne $SourceCommit -or
+    if($Msix -ine (Get-DeploymentPath $Output 'unsigned.msix') -or !$build -or $build.stage -cne 'built' -or $build.commit -cne $SourceCommit -or
       ($build.version+'.0') -cne $Version -or $build.msix -ine $Msix -or
-      $build.request -ine (Join-Path $Output 'channel-request.json') -or
+      $build.request -ine (Get-DeploymentPath $Output 'channel-request.json') -or
       $build.sha256 -cne $ExpectedInputSha256 -or (Hash $Msix) -cne $ExpectedInputSha256){return $false}
     $request=Get-Content -LiteralPath $build.request -Raw | ConvertFrom-Json
     if($request.buildId -cne $BuildId -or $request.commit -cne $SourceCommit -or $request.version -cne $build.version){return $false}
@@ -575,8 +608,8 @@ function Assert-NoReparseAncestor([string]$Path) {
 function Set-RunBuildSource {
   $run=Assert-LocalWindowsPath $Output
   $work=[IO.Path]::GetFullPath('D:\repo\deliverables\work')
-  if([IO.Path]::GetDirectoryName($run) -ine $work -or (Split-Path -Leaf $run) -cnotmatch '^ecs-deploy-\d{8}-\d{6}-[a-f0-9]{8}$'){
-    throw 'Commit builds require a unique ecs-deploy-<date>-<time>-<id> run directly under D:\repo\deliverables\work.'
+  if([IO.Path]::GetDirectoryName($run) -ine $work -or !(Test-DeploymentDirectoryName $run)){
+    throw 'Commit builds require an approved release directory directly under D:\repo\deliverables\work.'
   }
   $expected=Join-Path $run 'source'
   if($BuildSource -and [IO.Path]::GetFullPath($BuildSource) -ine $expected){throw '-BuildSource must equal the selected run Output\source.'}
@@ -708,19 +741,19 @@ function Remove-SupersededUnsignedInput([string]$Run) {
   $Run=[IO.Path]::GetFullPath($Run)
   if($Run -ine [IO.Path]::GetFullPath($SupersededBuildOutput) -or $Run -ieq [IO.Path]::GetFullPath($Output) -or
      (Split-Path -Parent $Run) -ine 'D:\repo\deliverables\work' -or
-     (Split-Path -Leaf $Run) -cnotmatch '^ecs-deploy-[0-9]{8}-[0-9]{6}-[a-f0-9]{8}$'){
+     !(Test-DeploymentDirectoryName $Run)){
     throw 'Explicit superseded native build run required'
   }
   foreach($name in @('result.json','checkpoints.jsonl','unsigned.msix','SemantierAgent.msix','setup-download\SemantierAgent.msix')){
-    Assert-NoReparseAncestor (Join-Path $Run $name)
+    Assert-NoReparseAncestor (Get-DeploymentPath $Run $name)
   }
-  $priorBytes=[IO.File]::ReadAllText((Join-Path $Run 'result.json'))
+  $priorBytes=[IO.File]::ReadAllText((Get-DeploymentPath $Run 'result.json'))
   $prior=$priorBytes|ConvertFrom-Json
   if($prior.result -cne 'STOP' -or $prior.publication -cne 'NOT_STARTED' -or $prior.ossFullTransferCount -ne 1 -or
      [Version]$prior.plan.version -ge [Version]$ExpectedVersion -or $prior.unsignedSha256 -cnotmatch '^[a-f0-9]{64}$' -or
      $prior.sha256 -cnotmatch '^[a-f0-9]{64}$') {throw 'Superseded run is not an unpublished failed candidate'}
   $owner=$null
-  foreach($line in [IO.File]::ReadAllLines((Join-Path $Run 'checkpoints.jsonl'))){
+  foreach($line in [IO.File]::ReadAllLines((Get-DeploymentPath $Run 'checkpoints.jsonl'))){
     if($line -notmatch '"type"\s*:\s*"source-owner"\s*[,}]'){continue}
     $event=$line|ConvertFrom-Json
     if($event.type -ceq 'source-owner'){$owner=$event.owner}
@@ -729,36 +762,36 @@ function Remove-SupersededUnsignedInput([string]$Run) {
     foreach($name in @('run','source','repository','cache')){$owner.$name=[IO.Path]::GetFullPath([string]$owner.$name)}
   }
   if(!$owner -or $owner.kind -cne 'native-git-worktree-v1' -or $owner.run -ine $Run -or
-     $owner.source -ine (Join-Path $Run 'source') -or $owner.repository -ine [IO.Path]::GetFullPath($Repository) -or
+     $owner.source -ine (Get-DeploymentPath $Run 'source') -or $owner.repository -ine [IO.Path]::GetFullPath($Repository) -or
      $owner.cache -ine [IO.Path]::GetFullPath($BuildCache) -or $owner.commit -cne $prior.plan.sourceCommit){throw 'Superseded source owner differs'}
   $leases=[Collections.Generic.List[IDisposable]]::new()
   try {
-    foreach($path in @((Join-Path $Run '.source.lock'),(Join-Path $BuildCache '.desktop-build.lock'))){
+    foreach($path in @((Get-DeploymentPath $Run '.source.lock'),(Join-Path $BuildCache '.desktop-build.lock'))){
       Assert-NoReparseAncestor $path
       $lease=[IO.File]::Open($path,'OpenOrCreate','ReadWrite','None');$leases.Add($lease);$lease.Lock(0,1)
     }
     Assert-StageInactive $owner
-    if([IO.File]::ReadAllText((Join-Path $Run 'result.json')) -cne $priorBytes){throw 'Superseded receipt changed before retirement'}
-    foreach($path in @((Join-Path $Run 'SemantierAgent.msix'),(Join-Path $Run 'setup-download\SemantierAgent.msix'))){
+    if([IO.File]::ReadAllText((Get-DeploymentPath $Run 'result.json')) -cne $priorBytes){throw 'Superseded receipt changed before retirement'}
+    foreach($path in @((Get-DeploymentPath $Run 'SemantierAgent.msix'),(Get-DeploymentPath $Run 'setup-download\SemantierAgent.msix'))){
       if((Hash $path) -cne $prior.sha256){throw 'Required signed/cache recovery bytes differ'}
       Require-Signature $path
     }
-    $unsigned=Join-Path $Run 'unsigned.msix'
+    $unsigned=Get-DeploymentPath $Run 'unsigned.msix'
     if(!(Test-Path -LiteralPath $unsigned -PathType Leaf)){return}
     if((Hash $unsigned) -cne $prior.unsignedSha256){throw 'Obsolete unsigned input differs'}
     $before=(Get-PSDrive D).Free
     $event=@{type='superseded-unsigned-retirement';at=[DateTime]::UtcNow.ToString('o');path=$unsigned;sha256=$prior.unsignedSha256;replacementVersion=$ExpectedVersion;state='INTENT_SIGNED_AND_CACHE_PRESERVED'}
-    [IO.File]::AppendAllText((Join-Path $Run 'checkpoints.jsonl'),(($event|ConvertTo-Json -Compress)+"`n"),$utf8)
+    [IO.File]::AppendAllText((Get-DeploymentPath $Run 'checkpoints.jsonl'),(($event|ConvertTo-Json -Compress)+"`n"),$utf8)
     [IO.File]::Delete($unsigned)
     $event.state='REMOVED';$event.freeBytesBefore=$before;$event.freeBytesAfter=(Get-PSDrive D).Free
-    [IO.File]::AppendAllText((Join-Path $Run 'checkpoints.jsonl'),(($event|ConvertTo-Json -Compress)+"`n"),$utf8)
+    [IO.File]::AppendAllText((Get-DeploymentPath $Run 'checkpoints.jsonl'),(($event|ConvertTo-Json -Compress)+"`n"),$utf8)
     return $event
   } finally {foreach($lease in $leases){$lease.Dispose()}}
 }
 
-function Read-SourceOwner {
+function Read-SourceOwner([string]$Log=$script:statusLog) {
   $last=$null
-  foreach($line in [IO.File]::ReadLines($script:statusLog)){
+  foreach($line in [IO.File]::ReadLines($Log)){
     if($line -notmatch '"type"\s*:\s*"source-owner"\s*[,}]'){continue}
     try{$event=$line | ConvertFrom-Json -ErrorAction Stop}catch{continue}
     if($event.type -ceq 'source-owner'){$last=$event.owner}
@@ -866,7 +899,7 @@ function Assert-ResidueBindings([string]$Source,[string]$Revision) {
   if(!$record -or $record.commit -cne $Revision -or $record.source -ine $Source -or $record.cache -ine $BuildCache -or
     $record.stage -cne 'reserved' -or $record.version -cnotmatch '^0\.0\.[1-9][0-9]*$') {throw 'Recovery requires the original interrupted reservation.'}
   foreach($pair in @{request='channel-request.json';prepared='desktop-job/prepared.json';msix='unsigned.msix'}.GetEnumerator()){
-    if([IO.Path]::GetFullPath($record.($pair.Key)) -ine (Join-Path $Output $pair.Value)){throw 'Recovery build input escaped the run.'}
+    if([IO.Path]::GetFullPath($record.($pair.Key)) -ine (Get-DeploymentPath $Output $pair.Value)){throw 'Recovery build input escaped the run.'}
   }
   Assert-NoReparseAncestor $VersionState
   Assert-NoReparseAncestor $record.request
@@ -877,7 +910,7 @@ function Assert-ResidueBindings([string]$Source,[string]$Revision) {
     $request.publicBase -cne $record.publicBase -or $request.buildId -cnotmatch '^(?:[a-f0-9]{32}|(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){3})$' -or
     $request.buildId -cne $BuildId -or $request.sequence -ne [int]($record.version.Split('.')[2])){throw 'Recovery reservation/request identity mismatch.'}
   $protected=[ordered]@{}
-  foreach($path in @($VersionState,$record.request,$record.prepared,$record.msix,(Join-Path $Output 'result.json'),
+  foreach($path in @($VersionState,$record.request,$record.prepared,$record.msix,(Get-DeploymentPath $Output 'result.json'),
     $RecoveryMsix,$ChannelRecoveryMsix,$ProfileSampleManifest,$CriticalFileManifest)){
     if(!$path){continue}
     Assert-NoReparseAncestor $path
@@ -902,14 +935,14 @@ function Restore-OwnedSourceResidue($Owner,[string]$Source,[string]$Revision) {
   if(!$script:sourceLease){throw 'Recovery requires the exclusive source lease.'}
   $leases=@()
   try {
-    foreach($path in @((Join-Path $Output '.residue-recovery.lock'),(Join-Path $BuildCache '.desktop-build.lock'))){
+    foreach($path in @((Get-DeploymentPath $Output '.residue-recovery.lock'),(Join-Path $BuildCache '.desktop-build.lock'))){
       Assert-NoReparseAncestor $path
       $lease=[IO.File]::Open($path,'OpenOrCreate','ReadWrite','None');$leases+=,$lease
       $lease.Lock(0,1)
     }
     Assert-StageInactive $Owner
     $binding=Assert-ResidueBindings $Source $Revision
-    $preserved=Join-Path $Output 'source-residue/source'
+    $preserved=Get-DeploymentPath $Output 'source-residue/source'
     Assert-NoReparseAncestor $preserved
     $intent=$null;$complete=$false
     foreach($line in [IO.File]::ReadLines($script:statusLog)){
@@ -966,10 +999,10 @@ function Initialize-LocalBuildSource([string]$Source,[string]$Revision) {
   if($Revision -cnotmatch '^[a-f0-9]{40}$'){throw 'Exact source SHA required.'}
   if($Source -ine $BuildSource){throw 'Stage must be the selected run source.'}
   Assert-NoReparseAncestor $Source
-  $script:statusLog=Join-Path $Output 'checkpoints.jsonl'
+  $script:statusLog=Get-DeploymentPath $Output 'checkpoints.jsonl'
   if(!$script:sourceLease){
-    if(!(Test-Path -LiteralPath $Output)){New-Item -ItemType Directory -Path $Output | Out-Null}
-    $lock=Join-Path $Output '.source.lock'
+    Initialize-DeploymentDirectory $Output
+    $lock=Get-DeploymentPath $Output '.source.lock'
     Assert-NoReparseAncestor $lock
     $script:sourceLease=[IO.File]::Open($lock,'OpenOrCreate','ReadWrite','None')
     if(!(Test-Path -LiteralPath $script:statusLog)){[IO.File]::WriteAllText($script:statusLog,'')}
@@ -977,10 +1010,14 @@ function Initialize-LocalBuildSource([string]$Source,[string]$Revision) {
     $previous=Read-SourceOwner
     if($previous){Assert-SourceOwner $previous $Source $Revision;Assert-StageInactive $previous}
     elseif((Test-Path -LiteralPath $Source) -or (Get-Item -LiteralPath $script:statusLog).Length -gt 0 -or
-      @(Get-ChildItem -LiteralPath $Output -Force | Where-Object {$_.Name -notin @('.source.lock','checkpoints.jsonl')}).Count){
+      @(Get-ChildItem -LiteralPath $Output -Force | Where-Object {$_.Name -notin @('.source.lock','checkpoints.jsonl') -and !(
+          (Get-ReleaseDirectoryVersion $Output) -and $_.Name -in @('packaging','product','records','baseline') -and
+          !@(Get-ChildItem -LiteralPath $_.FullName -Force | Where-Object {
+            $_.FullName -notin @($script:statusLog,(Get-DeploymentPath $Output 'native-preflight.json'),(Join-Path $Output 'baseline\SemantierAgent.msix'))
+          }).Count)}).Count){
       throw 'Occupied run/source has no workflow ownership; preserve it.'
     }
-    if($previous -and ((Test-Path -LiteralPath (Join-Path $Output 'source-residue')) -or
+    if($previous -and ((Test-Path -LiteralPath (Get-DeploymentPath $Output 'source-residue')) -or
       ((Test-Path -LiteralPath $Source) -and !(Test-Path -LiteralPath (Join-Path $Source '.git'))))){
       if(Get-AuthenticatedToolingContinuation){Restore-ToolingContinuationResidue $previous $Source $Revision}
       else {Restore-OwnedSourceResidue $previous $Source $Revision}
@@ -1014,20 +1051,20 @@ function Remove-FailedPreparationFiles([string]$Run,[string]$Revision,[switch]$U
   # Never remove source, registration, cache links, signed bytes or checkpoints.
   $Run=[IO.Path]::GetFullPath($Run)
   if([IO.Path]::GetDirectoryName($Run) -ine 'D:\repo\deliverables\work' -or
-     (Split-Path -Leaf $Run) -cnotmatch '^ecs-deploy-\d{8}-\d{6}-[a-f0-9]{8}$' -or
+     !(Test-DeploymentDirectoryName $Run) -or
      $Revision -cnotmatch '^[a-f0-9]{40}$'){throw 'Explicit failed run and revision required'}
   Assert-NoReparseAncestor $Run
-  $lease=[IO.File]::Open((Join-Path $Run '.source.lock'),'Open','ReadWrite','None')
+  $lease=[IO.File]::Open((Get-DeploymentPath $Run '.source.lock'),'Open','ReadWrite','None')
   try {
-    $result=Get-Content -Raw -LiteralPath (Join-Path $Run 'result.json') | ConvertFrom-Json
+    $result=Get-Content -Raw -LiteralPath (Get-DeploymentPath $Run 'result.json') | ConvertFrom-Json
     if($result.result -cne 'STOP' -or $result.commit -cne $Revision -or
        $result.signing -cne 'NOT_RUN' -or $result.installation -cne 'NOT_RUN' -or
        $result.publication -cne 'NOT_RUN'){throw 'Only an unsigned unpublished preparation failure is reclaimable'}
-    $log=Join-Path $Run 'checkpoints.jsonl';$owner=$null
+    $log=Get-DeploymentPath $Run 'checkpoints.jsonl';$owner=$null
     foreach($line in [IO.File]::ReadLines($log)){
       if($line -match '"type"\s*:\s*"source-owner"'){$owner=($line|ConvertFrom-Json).owner}
     }
-    $source=Join-Path $Run 'source'
+    $source=Get-DeploymentPath $Run 'source'
     if(!$owner -or $owner.kind -cne 'native-git-worktree-v1' -or $owner.run -ine $Run -or
        $owner.source -ine $source -or $owner.commit -cne $Revision){throw 'Failed preparation owner differs'}
     if($owner.repository -ine $Repository -or
@@ -1060,7 +1097,7 @@ function Remove-FailedPreparationFiles([string]$Run,[string]$Revision,[switch]$U
       } finally {$archive.Dispose()}
       $retainedHash=Hash $retainedMsix
       $targets=@('apps/desktop/release/win-unpacked','node_modules')
-      $partial=Join-Path $Run 'unsigned.msix'
+      $partial=Get-DeploymentPath $Run 'unsigned.msix'
       if(Test-Path -LiteralPath $partial){
         Assert-NoReparseAncestor $partial
         if((Get-Item -LiteralPath $partial).Length -ge (Get-Item -LiteralPath $retainedMsix).Length){throw 'Copy is not an incomplete duplicate'}
@@ -1120,7 +1157,7 @@ function Remove-OwnedBuildSource {
 }
 function Reset-StalePreparation([string]$Prepared) {
   if(!$script:sourceRecreated -or !(Test-Path -LiteralPath $Prepared)){return}
-  $expected=Join-Path $Output 'desktop-job\prepared.json'
+  $expected=Get-DeploymentPath $Output 'desktop-job\prepared.json'
   if([IO.Path]::GetFullPath($Prepared) -ine $expected){throw 'Prepared receipt escaped the selected run.'}
   Assert-NoReparseAncestor $Prepared
   # The receipt may reference retired payload paths. Regenerate through the
@@ -1172,10 +1209,10 @@ function Confirm-OssCachedDownload([string]$Package,[string]$Metadata,$PriorOutc
   if(!$script:checkpoints.ContainsKey('oss-setup-transfer-started') -or $receipt.ossFullTransferCount -ne 1){
     throw 'Original single Setup attempt is not recorded; no download permitted'
   }
-  $folder=Join-Path $Output 'setup-download';$download=Join-Path $folder 'SemantierAgent.msix'
+  $folder=Get-DeploymentPath $Output 'setup-download';$download=Join-Path $folder 'SemantierAgent.msix'
   $proof=Join-Path $folder 'download-receipt.json'
   foreach($path in @($Package,$Metadata,$download,$SetupExe,$proof)){Assert-NoReparseAncestor $path}
-  $lease=[IO.File]::Open((Join-Path $Output '.oss-cache-recovery.lock'),'OpenOrCreate','ReadWrite','None')
+  $lease=[IO.File]::Open((Get-DeploymentPath $Output '.oss-cache-recovery.lock'),'OpenOrCreate','ReadWrite','None')
   try {
     $manifest=(Get-Content -LiteralPath $Metadata -Raw|ConvertFrom-Json).manifest
     $artifact=$manifest.packages[0].artifact
@@ -1197,14 +1234,14 @@ function Confirm-OssCachedDownload([string]$Package,[string]$Metadata,$PriorOutc
     Invoke-RetainedSetupVerifiers $SetupExe $download
     # Keep the earlier COPY-era receipt as history; the unchanged byte owner
     # now writes a direct-publication receipt for the same immutable object.
-    $staged=Join-Path $Output 'oss-staged.json'
+    $staged=Get-DeploymentPath $Output 'oss-staged.json'
     if(Test-Path -LiteralPath $staged){
       Assert-NoReparseAncestor $staged
       $legacy=Get-Content -LiteralPath $staged -Raw|ConvertFrom-Json
       if(!$legacy.PSObject.Properties['storagePolicy']){
         if($legacy.buildId -cne $BuildId -or $legacy.key -cne $artifact.key -or
           $legacy.sha256 -cne $receipt.sha256 -or $legacy.size -ne $artifact.size){throw 'Legacy byte receipt differs from the retained candidate'}
-        $preserved=Join-Path $Output 'oss-staged-legacy.json'
+        $preserved=Get-DeploymentPath $Output 'oss-staged-legacy.json'
         Assert-NoReparseAncestor $preserved
         if(Test-Path -LiteralPath $preserved){throw 'Conflicting legacy byte receipt history'}
         Write-RunEvent @{type='oss-direct-publication-handoff';at=[DateTime]::UtcNow.ToString('o');previous=$legacy;preserved=$preserved}
@@ -1294,7 +1331,7 @@ function Restore-SignedRelease {
     $lock=Get-Content -LiteralPath (Join-Path $Repository 'pm/lock.json') -Raw | ConvertFrom-Json
     $script:BuildPython=Join-Path $BuildCache ('tools\python-'+$lock.packages.python.version+'-win32-x64\python.exe')
   }
-  $saved=Read-RunCheckpoint (Join-Path $Output 'checkpoints.jsonl')
+  $saved=Read-RunCheckpoint (Get-DeploymentPath $Output 'checkpoints.jsonl')
   if(!$saved -or !$saved.completed.PSObject.Properties['signed']){throw 'No retained signed checkpoint; resume STOP, never rebuild.'}
   $binding=$saved.binding | ConvertFrom-Json
   if($binding.mode -cne 'Prod' -or !$binding.skipLocalInstall -or !$binding.nativePublishOnly -or
@@ -1311,7 +1348,7 @@ function Restore-SignedRelease {
   foreach($key in $map.Keys){Set-Variable -Scope Script -Name $key -Value $binding.($map[$key]) -WhatIf:$false}
   if($binding.PSObject.Properties['channelRecoveryMsix']){$script:ChannelRecoveryMsix=[string]$binding.channelRecoveryMsix}
   $script:SkipLocalInstall=$true;$script:NativePublishOnly=$true
-  $script:Msix=Join-Path $Output 'SemantierAgent.msix'
+  $script:Msix=Get-DeploymentPath $Output 'SemantierAgent.msix'
   if((Hash $script:Msix) -cne $saved.receipt.sha256){throw 'Retained signed MSIX changed; resume STOP.'}
   $script:resumeInputSha256=$saved.receipt.sha256
   Assert-SignedResumeContract $saved
@@ -1337,7 +1374,7 @@ function Invoke-RollbackRetirement {
   if($LASTEXITCODE -ne 0 -or $dirty){throw 'Retirement tooling must be committed and clean.'}
   if($RemoteRoot -cnotmatch '^/opt/[A-Za-z0-9_/-]+/releases$' -or $RemoteRoot.Contains('/../') -or
      $SshTarget -cnotmatch '^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+$'){throw 'Invalid retirement destination.'}
-  $receiptPath=Join-Path $Output 'result.json'
+  $receiptPath=Get-DeploymentPath $Output 'result.json'
   if(!(Test-Path -LiteralPath $receiptPath)){throw 'Select the existing release receipt directory.'}
   $script:sshOptions=@('-o','ConnectTimeout=15','-o','StrictHostKeyChecking=yes','-o','ServerAliveInterval=15','-o','ServerAliveCountMax=3')
   if($IdentityFile){$script:sshOptions+=@('-i',(Resolve-Path -LiteralPath $IdentityFile).Path)}
@@ -1360,9 +1397,9 @@ function Invoke-RollbackRetirement {
   $saved=Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
   $saved | Add-Member -NotePropertyName rollbackRetirement -NotePropertyValue $result -Force
   Save-Json $saved $receiptPath
-  $script:statusLog=Join-Path $Output 'checkpoints.jsonl'
+  $script:statusLog=Get-DeploymentPath $Output 'checkpoints.jsonl'
   Write-RunEvent @{type='rollback-retirement';at=[DateTime]::UtcNow.ToString('o');result=$result;tooling=$script:SourceBinding}
-  [IO.File]::AppendAllText((Join-Path $Output 'release-note.md'),"`nRollback retirement: $($result.result); build: $RetireRollbackBuild; bytes reclaimed: $($result.reclaimedBytes). Local signed files untouched; remote checks and outcome are recorded in the receipt.`n",$utf8)
+  [IO.File]::AppendAllText((Get-DeploymentPath $Output 'release-note.md'),"`nRollback retirement: $($result.result); build: $RetireRollbackBuild; bytes reclaimed: $($result.reclaimedBytes). Local signed files untouched; remote checks and outcome are recorded in the receipt.`n",$utf8)
   $result | ConvertTo-Json -Depth 10 -Compress
   if($failed){throw 'Rollback retirement STOP; see existing receipt.rollbackRetirement.'}
 }
@@ -1476,7 +1513,7 @@ function Complete-Checkpoint([string]$Stage) {
   Write-RunEvent @{type='milestone-timing';stage=$Stage;seconds=$seconds;mode=$BuildMode;at=[DateTime]::UtcNow.ToString('o')}
   Report-Status ("Milestone {0}: {1:N3}s since previous checkpoint" -f $Stage,$seconds)
   $script:milestoneClock.Restart()
-  Save-Json $receipt (Join-Path $Output 'result.json')
+  Save-Json $receipt (Get-DeploymentPath $Output 'result.json')
   $script:checkpoints[$Stage]=[DateTime]::UtcNow.ToString('o')
   Write-RunEvent @{type='checkpoint';stage=$Stage;status='SUCCESS';at=$script:checkpoints[$Stage];
     binding=$script:runBinding;completed=$script:checkpoints;receipt=$receipt}
@@ -1742,7 +1779,7 @@ function Upload([string]$Path, [string]$RemoteFile) {
 }
 function Prepare-IndependentSetup {
   $setupName=if($LocalSetup){'semantier-setup-ch0.exe'}else{'semantier-setup-ch1.exe'}
-  $setup=Join-Path $Output $setupName
+  $setup=Get-DeploymentPath $Output $setupName
   $setupExpected=if($LocalSetup){'local-adjacent-single-msix'}else{"${PublicBase}/releases/channels/semantier-acceptance.json"}
   $setupContractVersion=$setupExpected+'|cloud-channel-oss-native-v3'
   if($UpdateSetup -and !$receipt.Contains('setupExplicitUpdate')){$script:checkpoints.Remove('setup')}
@@ -1762,7 +1799,7 @@ function Prepare-IndependentSetup {
       (([IO.File]::ReadAllText($cachedContract)).Trim() -ceq ($setupContractVersion+'|asimov-v1'))) {
     try {
       Require-Signature $SetupExe
-      $probe=Join-Path $Output 'setup-contract.txt'
+      $probe=Get-DeploymentPath $Output 'setup-contract.txt'
       Run-Setup $SetupExe @('--describe-fixed-download',$probe)
       if ((Test-Path -LiteralPath $probe -PathType Leaf) -and
           (([IO.File]::ReadAllText($probe)).Trim() -ceq $setupExpected)) {
@@ -1774,7 +1811,7 @@ function Prepare-IndependentSetup {
   if (!$setupIsReusable) {
     Report-Status ('Building small '+$(if($LocalSetup){'offline'}else{'WinHTTP'})+' Setup with Windows .NET Framework; no runtime bundling.')
     $compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-    $setupWork=Join-Path $Output 'setup-build'
+    $setupWork=Get-DeploymentPath $Output 'setup-build'
     New-Item -ItemType Directory -Path $setupWork -Force | Out-Null
     $installerSource=Join-Path $Repository 'win-native-installer'
     $source=[IO.File]::ReadAllText((Join-Path $installerSource 'Program.cs'))+"`n"+
@@ -1801,7 +1838,7 @@ function Prepare-IndependentSetup {
     [IO.File]::WriteAllText($cachedContract,($setupContractVersion+'|asimov-v1'),$utf8)
   }
   Require-Signature $setup
-  $probe=Join-Path $Output 'setup-contract-verified.txt'
+  $probe=Get-DeploymentPath $Output 'setup-contract-verified.txt'
   Run-Setup $setup @('--describe-fixed-download',$probe)
   if (!(Test-Path -LiteralPath $probe -PathType Leaf) -or
       ([IO.File]::ReadAllText($probe)).Trim() -cne $setupExpected) {
@@ -1811,7 +1848,7 @@ function Prepare-IndependentSetup {
   $receipt.setupBytes=(Get-Item -LiteralPath $setup).Length
   $receipt.setupImplementation=if($LocalSetup){'local-framework-asimov-v1'}else{'winhttp-framework-asimov-v2'}
   $receipt.fixedMsixUrl=$setupExpected
-  Save-Json $receipt (Join-Path $Output 'result.json')
+  Save-Json $receipt (Get-DeploymentPath $Output 'result.json')
   if($UpdateSetup){$receipt.setupExplicitUpdate=$true}
   Complete-Checkpoint 'setup'
   }
@@ -1836,25 +1873,71 @@ function Remove-OlderDeploymentRuns([string]$KeepRun, [string]$CurrentVersion) {
   $active=@(Get-CimInstance Win32_Process | Where-Object {$_.ExecutablePath} | ForEach-Object {$_.ExecutablePath})
   $removed=@();$deferred=@()
   foreach($directory in (Get-ChildItem -LiteralPath $root -Directory)){
-    if($directory.Name -cnotmatch '^ecs-deploy-\d{8}-\d{6}-[a-f0-9]{8}$'){continue}
+    if(!(Test-DeploymentDirectoryName $directory.FullName)){continue}
     $path=[IO.Path]::GetFullPath($directory.FullName).TrimEnd('\')
     if($path -ieq $keep){continue}
     if([IO.Path]::GetDirectoryName($path) -ine $root){throw 'Deployment cleanup path escaped work root.'}
-    $build=Read-CommitBuild (Join-Path $path 'checkpoints.jsonl')
-    $version=if($build){[Version]$build.version}else{$null}
+    if($directory.Attributes -band [IO.FileAttributes]::ReparsePoint){$deferred+=@($path);continue}
+    $namedVersion=Get-ReleaseDirectoryVersion $path
+    if($namedVersion -and $namedVersion -ge $current){continue}
+    $log=Get-DeploymentPath $path 'checkpoints.jsonl'
+    Assert-NoReparseAncestor $log
+    $build=Read-CommitBuild $log
+    $version=if($build){$v=[Version]$build.version;if($v.Revision -lt 0){[Version]($v.ToString()+'.0')}else{$v}}else{$null}
     $cancelled=$build -and $build.stage -eq 'cancelled'
-    if(!$version -and (Test-Path -LiteralPath (Join-Path $path 'result.json'))){
-      $old=Get-Content -LiteralPath (Join-Path $path 'result.json') -Raw | ConvertFrom-Json
+    if(!$version -and (Test-Path -LiteralPath (Get-DeploymentPath $path 'result.json'))){
+      $old=Get-Content -LiteralPath (Get-DeploymentPath $path 'result.json') -Raw | ConvertFrom-Json
       if($old.PSObject.Properties['plan'] -and $old.plan.PSObject.Properties['version']){$version=[Version]$old.plan.version}
     }
     if(!$cancelled -and (!$version -or $version -ge $current)){continue}
-    $log=Join-Path $path 'checkpoints.jsonl'
+    $log=Get-DeploymentPath $path 'checkpoints.jsonl'
     $checkpoint=if(Test-Path -LiteralPath $log){Read-RunCheckpoint $log}else{$null}
     if(!$cancelled -and (!$checkpoint -or !$checkpoint.completed.PSObject.Properties['finished'])){continue}
-    if(Test-Path -LiteralPath (Join-Path $path 'source')){$deferred+=@($path);continue}
+    if(Test-Path -LiteralPath (Get-DeploymentPath $path 'source')){$deferred+=@($path);continue}
+    if($namedVersion){
+      if($version -ne $namedVersion -or (Test-Path -LiteralPath (Join-Path $path 'source-residue'))){
+        $deferred+=@($path);continue
+      }
+      $packaging=Join-Path $path 'packaging'
+      if(!(Test-Path -LiteralPath $packaging)){continue}
+      $lock=Join-Path $path '.source.lock'
+      $lease=$null
+      try {
+        Assert-NoReparseAncestor $packaging
+        Assert-NoReparseAncestor $lock
+        $lease=[IO.File]::Open($lock,'Open','ReadWrite','None')
+        $owner=Read-SourceOwner $log
+        if(!$owner -or $owner.kind -cne 'native-git-worktree-v1' -or $owner.run -ine $path -or
+           $owner.source -ine (Join-Path $path 'source') -or $owner.commit -cne $build.commit){
+          throw 'Missing or mismatched source ownership record.'
+        }
+        if(@($active | Where-Object {$_.StartsWith($path+'\',[StringComparison]::OrdinalIgnoreCase)}).Count){
+          throw 'A process is using the release directory.'
+        }
+        Assert-StageInactive $owner
+        $receiptPath=Get-DeploymentPath $path 'result.json'
+        $signed=Get-DeploymentPath $path 'SemantierAgent.msix'
+        Assert-NoReparseAncestor $receiptPath
+        Assert-NoReparseAncestor $signed
+        $receipt=Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
+        if($receipt.publicationVerification -cne 'PASS' -or $receipt.signedMsix -ine $signed -or
+           $receipt.sha256 -cnotmatch '^[a-f0-9]{64}$' -or (Hash $signed) -cne $receipt.sha256){
+          throw 'The retained signed product and publication receipt could not be verified.'
+        }
+        if(@(Get-ChildItem -LiteralPath $packaging -Force -Recurse | Where-Object {
+          ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $_.Extension -ieq '.pfx'
+        }).Count){throw 'Packaging contains a link or certificate.'}
+        Remove-Item -LiteralPath $packaging -Recurse -Force -ErrorAction Stop
+        $removed+=@($packaging)
+      } catch {
+        Report-Status ('Local packaging cleanup deferred: '+$path+'; '+$_.Exception.Message)
+        $deferred+=@($path)
+      } finally {if($lease){$lease.Dispose()}}
+      continue
+    }
     if(@(Get-ChildItem -LiteralPath $path -Recurse -File -Include '*.msix','*.exe','*.pfx').Count){$deferred+=@($path);continue}
     if(($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
-      (Test-Path -LiteralPath (Join-Path $path '.git')) -or
+      (Test-Path -LiteralPath (Get-DeploymentPath $path '.git')) -or
       @($active | Where-Object {$_.StartsWith($path+'\',[StringComparison]::OrdinalIgnoreCase)}).Count){
       $deferred+=@($path);continue
     }
@@ -2016,7 +2099,7 @@ function Initialize-BuildPreflight {
   $null=Get-Command git.exe,curl.exe,tar.exe -ErrorAction Stop
   # Fail before npm if MSBuild itself cannot recognize the selected SDK. This
   # target only checks SDK discovery; it does not compile or install anything.
-  $probe=Join-Path $Output 'sdk-preflight.vcxproj'
+  $probe=Get-DeploymentPath $Output 'sdk-preflight.vcxproj'
   $project=@'
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup><Configuration>Release</Configuration><Platform>x64</Platform><WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion></PropertyGroup>
@@ -2036,7 +2119,7 @@ function Initialize-BuildPreflight {
   # Python wheels invoke link.exe directly, including its rc.exe/mt.exe children.
   # SDK file discovery alone does not prove that these tools are executable.
   $null=Get-Command cl.exe,link.exe,rc.exe,mt.exe -ErrorAction Stop
-  $nativeProbe=Join-Path $Output 'native-toolchain-preflight'
+  $nativeProbe=Get-DeploymentPath $Output 'native-toolchain-preflight'
   New-Item -ItemType Directory -Path $nativeProbe -Force | Out-Null
   $probeC=Join-Path $nativeProbe 'probe.c'
   $probeObj=Join-Path $nativeProbe 'probe.obj'
@@ -2116,7 +2199,7 @@ function Build-DesktopCheck {
   }
   Initialize-LocalBuildSource $BuildSource $Commit
   Initialize-BuildPreflight -NativeOnly
-  $desktopPrepared=Join-Path $Output 'desktop-check-job\prepared.json'
+  $desktopPrepared=Get-DeploymentPath $Output 'desktop-check-job\prepared.json'
   # Rebuild job-local bindings on every Desktop check; PM owns cache validation.
   Run $BuildPython @('-B',(Join-Path $BuildSource 'scripts\bundles\desktop.py'),'--repo',$BuildSource,
     '--commit',$Commit,'--variant','light','--prepare-only','--work',(Split-Path -Parent $desktopPrepared),'--cache',$BuildCache)
@@ -2126,8 +2209,8 @@ function Build-DesktopCheck {
   if($nativeIdentity -isnot [string] -or $nativeIdentity -cnotmatch '^[a-f0-9]{32}$'){throw 'Unsupported native-input receipt; no fallback attempted.'}
   $nativeInputs=Join-Path $BuildCache ('native\node\'+$nativeIdentity)
   if(!(Test-Path -LiteralPath $nativeInputs -PathType Container)){throw 'Prepared native Desktop inputs are unavailable.'}
-  if(!(Test-Path -LiteralPath $Output)){New-Item -ItemType Directory -Path $Output | Out-Null}
-  $script:statusLog=Join-Path $Output 'checkpoints.jsonl'
+  Initialize-DeploymentDirectory $Output
+  $script:statusLog=Get-DeploymentPath $Output 'checkpoints.jsonl'
   Set-ReleaseEnvironment 'HERMES_BUILD_COMMIT' $Commit
   Set-ReleaseEnvironment 'HERMES_DESKTOP_VARIANT' ''
   Set-ReleaseEnvironment 'HERMES_PAYLOAD_TAG' ''
@@ -2224,8 +2307,8 @@ function Build-CommitPackage {
   }
   if(!(Test-Path -LiteralPath $BuildPython -PathType Leaf)){throw 'Existing build Python is unavailable; specify -BuildPython.'}
   if($NewRun -and $script:explicitOutput -and (Test-Path -LiteralPath $Output)){throw '-NewRun requires a fresh -Output directory.'}
-  if(!(Test-Path -LiteralPath $Output)){New-Item -ItemType Directory -Path $Output | Out-Null}
-  $script:statusLog=Join-Path $Output 'checkpoints.jsonl'
+  Initialize-DeploymentDirectory $Output
+  $script:statusLog=Get-DeploymentPath $Output 'checkpoints.jsonl'
   $record=Read-CommitBuild $script:statusLog
   if($record -and ($record.commit -cne $Commit -or $record.publicBase -cne $PublicBase -or $record.cache -cne $BuildCache -or $record.source -cne $BuildSource)){
     throw 'Saved build configuration differs. Use -NewRun or a fresh -Output.'
@@ -2236,7 +2319,7 @@ function Build-CommitPackage {
     operator=(Hash $PSCommandPath);lock=(Hash (Join-Path $Repository 'pm\lock.json'))} | ConvertTo-Json -Compress)
   if($record){
     foreach($entry in @{request='channel-request.json';prepared='desktop-job\prepared.json';msix='unsigned.msix'}.GetEnumerator()){
-      if($record.($entry.Key) -ine (Join-Path $Output $entry.Value)){throw 'Saved build output escaped the selected run.'}
+      if($record.($entry.Key) -ine (Get-DeploymentPath $Output $entry.Value)){throw 'Saved build output escaped the selected run.'}
       Assert-NoReparseAncestor $record.($entry.Key)
     }
     if(!$record.PSObject.Properties['inputs']){throw 'Saved input identity missing.'}
@@ -2251,12 +2334,14 @@ function Build-CommitPackage {
   $null=Assert-LocalWindowsPath $source
   Initialize-LocalBuildSource $source $Commit
   if($script:nativePreflight){Write-RunEvent @{type='native-preflight';preflight=$script:nativePreflight;at=[DateTime]::UtcNow.ToString('o')}}
-  Reset-StalePreparation (Join-Path $Output 'desktop-job\prepared.json')
+  Reset-StalePreparation (Get-DeploymentPath $Output 'desktop-job\prepared.json')
   if(!$record){
-    $next=& (Join-Path $PSScriptRoot 'next-windows-build-version.ps1') -State $VersionState -SourceCommit $Commit
+    $reservation=@{}
+    if($ExpectedVersion){$reservation.ExpectedNextVersion=([Version]$ExpectedVersion).ToString(3)}
+    $next=& (Join-Path $PSScriptRoot 'next-windows-build-version.ps1') -State $VersionState -SourceCommit $Commit @reservation
     $record=[pscustomobject]@{inputs=$inputs;commit=$Commit;version=[string]$next;source=$source;publicBase=$PublicBase;cache=$BuildCache;
-      request=(Join-Path $Output 'channel-request.json');prepared=(Join-Path $Output 'desktop-job\prepared.json');
-      msix=(Join-Path $Output 'unsigned.msix');sha256='';stage='reserved'}
+      request=(Get-DeploymentPath $Output 'channel-request.json');prepared=(Get-DeploymentPath $Output 'desktop-job\prepared.json');
+      msix=(Get-DeploymentPath $Output 'unsigned.msix');sha256='';stage='reserved'}
     Write-RunEvent @{type='build';build=$record;at=[DateTime]::UtcNow.ToString('o')}
     Report-Status ('Reserved version '+$record.version+' for '+$Commit)
   }
@@ -2346,7 +2431,7 @@ function Publish-IndependentSetup {
   if($WhatIfPreference){[ordered]@{kind='Setup only';output=$Output;update=[bool]$UpdateSetup;stages=$(if($LocalSetup){@('build signed offline Setup','verify signature and adjacent-file contract')}else{@('reuse or build signed Setup','verify signature and download contract','SFTP upload Setup only','activate Setup only')});msix='UNCHANGED';CH2='UNCHANGED'} | ConvertTo-Json;return}
   if(!$NewRun -and !$script:explicitOutput -and (Test-Path -LiteralPath (Split-Path -Parent $Output))){
     foreach($candidate in (Get-ChildItem 'D:\repo\deliverables\work' -Directory -Filter 'ecs-setup-*' | Sort-Object LastWriteTime -Descending)){
-      $log=Join-Path $candidate.FullName 'checkpoints.jsonl'
+      $log=Get-DeploymentPath $candidate.FullName 'checkpoints.jsonl'
       if(!(Test-Path -LiteralPath $log)){continue}
       $last=Read-RunCheckpoint $log
       if($last -and $last.binding -ceq $script:runBinding){
@@ -2355,8 +2440,8 @@ function Publish-IndependentSetup {
       }
     }
   }
-  if(!(Test-Path -LiteralPath $Output)){New-Item -ItemType Directory -Path $Output | Out-Null}
-  $script:statusLog=Join-Path $Output 'checkpoints.jsonl'
+  Initialize-DeploymentDirectory $Output
+  $script:statusLog=Get-DeploymentPath $Output 'checkpoints.jsonl'
   $script:checkpoints=@{}
   $receipt=[ordered]@{kind='setup';result='IN_PROGRESS';setupExe=$null;publication='NOT_STARTED';MSIX='UNCHANGED';CH2='UNCHANGED';toolingCommit=(& git.exe -C $Repository rev-parse HEAD)}
   if(Test-Path -LiteralPath $script:statusLog){
@@ -2377,7 +2462,7 @@ function Publish-IndependentSetup {
     $setup=Prepare-IndependentSetup
     if($LocalOnly){$receipt.result='SETUP_LOCAL_VERIFIED';Complete-Checkpoint 'finished';return}
     . (Join-Path $PSScriptRoot 'deploy-ecs-channel1.ps1')
-    $receipt.publication=Invoke-OssByteOperation 'setup' $setup '' (Join-Path $Output 'oss-setup.json')
+    $receipt.publication=Invoke-OssByteOperation 'setup' $setup '' (Get-DeploymentPath $Output 'oss-setup.json')
     $receipt.setupObject='https://assets.semantier.cn/releases/installers/semantier-setup-ch1.exe'
     # Preserve the old ECS Setup until public entrypoints have cut over.
     Complete-Checkpoint 'published'
@@ -2388,8 +2473,8 @@ function Publish-IndependentSetup {
   } finally {
     if($setupLease){$setupLease.Dispose()}
     $receipt.finishedAt=[DateTime]::UtcNow.ToString('o')
-    Save-Json $receipt (Join-Path $Output 'result.json')
-    [IO.File]::WriteAllText((Join-Path $Output 'release-note.md'),"Result: $($receipt.result)`nArtifact: Setup EXE`nSetup: $($receipt.setupExe)`nPublication: $($receipt.publication)`nMSIX: unchanged`nCH2: unchanged`n",$utf8)
+    Save-Json $receipt (Get-DeploymentPath $Output 'result.json')
+    [IO.File]::WriteAllText((Get-DeploymentPath $Output 'release-note.md'),"Result: $($receipt.result)`nArtifact: Setup EXE`nSetup: $($receipt.setupExe)`nPublication: $($receipt.publication)`nMSIX: unchanged`nCH2: unchanged`n",$utf8)
     Report-Status ('Finished: '+$receipt.result)
     Write-Host "Result and evidence: $Output"
   }
@@ -2410,6 +2495,22 @@ if($ResumeSigned){
   if(!$Repository){$Repository=Split-Path -Parent $PSScriptRoot}
   Restore-SignedRelease
 }
+if($NativeUpdateFrom -and $ExpectedVersion -and !$FirstChannel1Head -and
+   (!$PSBoundParameters.ContainsKey('Output') -or (Get-ReleaseDirectoryVersion $Output))){
+  $work='D:\repo\deliverables\work'
+  $versionRoot=if($PSBoundParameters.ContainsKey('Output')){$Output}else{Join-Path $work ('SemantierAgent-'+$ExpectedVersion)}
+  $predecessorRoot=Join-Path $work ('SemantierAgent-'+$NativeUpdateFrom)
+  if(!(Get-ReleaseDirectoryVersion $versionRoot) -or !(Get-ReleaseDirectoryVersion $predecessorRoot)){
+    throw 'A versioned baseline requires canonical target and predecessor versions.'
+  }
+  $existingBaseline=Join-Path $versionRoot 'baseline\SemantierAgent.msix'
+  $publishedProduct=Get-DeploymentPath $predecessorRoot 'SemantierAgent.msix'
+  $defaultBaseline=if(Test-Path -LiteralPath $existingBaseline -PathType Leaf){$existingBaseline}else{$publishedProduct}
+  if(!$ChannelRecoveryMsix -and !$RecoveryMsix -and (Test-Path -LiteralPath $defaultBaseline -PathType Leaf)){
+    $ChannelRecoveryMsix=$defaultBaseline
+    if(!$SkipLocalInstall){$RecoveryMsix=$defaultBaseline}
+  }
+}
 Assert-NativeReleaseOptions
 if($NativePublishOnly -and !$NativeUpdateFrom -and !$FirstChannel1Head){throw '-NativePublishOnly requires the bound native release preflight.'}
 if($Latest){
@@ -2423,6 +2524,22 @@ if($Latest){
 if($BuildOnly -and (!$Commit -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly)){throw '-BuildOnly requires -Commit and cannot be combined with Setup or preflight modes.'}
 if($SkipLocalInstall -and ($BuildOnly -or $LocalOnly -or $DesktopOnly -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or ($PreflightOnly -and !(($NativeUpdateFrom -or $FirstChannel1Head) -and $OssSetupQualification)))){throw '-SkipLocalInstall is for MSIX publication only.'}
 $script:explicitOutput=$PSBoundParameters.ContainsKey('Output')
+if($ExpectedVersion -and !$script:explicitOutput){
+  $Output=Join-Path 'D:\repo\deliverables\work' ('SemantierAgent-'+$ExpectedVersion)
+  if(!(Get-ReleaseDirectoryVersion $Output)){throw 'ExpectedVersion must be a canonical four-component Windows version.'}
+}
+$directoryVersion=Get-ReleaseDirectoryVersion $Output
+if($directoryVersion -and (!($NativeUpdateFrom -or $FirstChannel1Head) -or $directoryVersion.ToString() -cne $ExpectedVersion)){
+  throw 'Versioned release directory must match -ExpectedVersion.'
+}
+if($directoryVersion){
+  if([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Output)) -ine 'D:\repo\deliverables\work'){
+    throw 'Versioned release directory must be directly under the Windows work root.'
+  }
+  if($NewRun -and (Test-Path -LiteralPath $Output)){
+    throw 'Release directory already exists. Resume the exact version without -NewRun.'
+  }
+}
 Initialize-ReleasePaths
 if(($NativeUpdateFrom -or $FirstChannel1Head) -and !$WhatIfPreference){
   . (Join-Path $PSScriptRoot 'deploy-ecs-channel1.ps1')
@@ -2430,18 +2547,29 @@ if(($NativeUpdateFrom -or $FirstChannel1Head) -and !$WhatIfPreference){
   if($IdentityFile){$script:sshOptions+=@('-i',(Resolve-Path -LiteralPath $IdentityFile).Path)}
   if(!(Get-EcsSshPassword $CredentialsEnv)){$script:sshOptions+=@('-o','BatchMode=yes')}
   if(!$FirstChannel1Head -and (Test-NativeCompletedRelease)){return}
+  if($directoryVersion -and $NativeUpdateFrom){
+    $retainedBaseline=Join-Path $Output 'baseline\SemantierAgent.msix'
+    Assert-NoReparseAncestor $retainedBaseline
+    if(Test-Path -LiteralPath $retainedBaseline -PathType Leaf){
+      $script:ChannelRecoveryMsix=$retainedBaseline
+      if(!$SkipLocalInstall){$script:RecoveryMsix=$retainedBaseline}
+    }
+  }
   $script:nativePreflight=Test-NativeReleasePreflight
+  if($directoryVersion -and $NativeUpdateFrom -and !$PreflightOnly){
+    Set-VersionedReleaseBaseline $script:nativePreflight
+  }
   if($PreflightOnly){
-    if(!(Test-Path -LiteralPath $Output)){New-Item -ItemType Directory -Path $Output|Out-Null}
-    Save-Json $script:nativePreflight (Join-Path $Output 'native-preflight.json')
+    Initialize-DeploymentDirectory $Output
+    Save-Json $script:nativePreflight (Get-DeploymentPath $Output 'native-preflight.json')
     Report-Status 'Read-only OSS release preflight passed; no version reservation, build, signing, upload or installation.'
     return
   }
 }
 if($Commit){
-  if(!$NewRun -and !$script:explicitOutput){
+  if(!$NewRun -and !$script:explicitOutput -and !$directoryVersion){
     foreach($candidate in (Get-ChildItem -LiteralPath (Split-Path -Parent $Output) -Directory -Filter 'ecs-deploy-*' | Sort-Object LastWriteTime -Descending)){
-      $log=Join-Path $candidate.FullName 'checkpoints.jsonl';$record=Read-CommitBuild $log
+      $log=Get-DeploymentPath $candidate.FullName 'checkpoints.jsonl';$record=Read-CommitBuild $log
       if($record -and $record.commit -ceq $Commit){
         $checkpoint=if(Test-Path -LiteralPath $log){Read-RunCheckpoint $log}else{$null}
         if(!$checkpoint -or !$checkpoint.completed.PSObject.Properties['finished']){$script:Output=$candidate.FullName}
@@ -2465,8 +2593,8 @@ if($LocalSetup){
 if(($SetupOnly -or $UpdateSetup) -and ($Commit -or $PreflightOnly)){throw 'Setup release is independent: do not combine -SetupOnly/-UpdateSetup with -Commit or -PreflightOnly.'}
 if($PreflightOnly){
   if($WhatIfPreference){Write-Output 'Preflight only: Windows tools, VS/SDK discovery and official prebuilt cache; no version reservation or build.';return}
-  if(!(Test-Path -LiteralPath $Output)){New-Item -ItemType Directory -Path $Output | Out-Null}
-  $script:statusLog=Join-Path $Output 'checkpoints.jsonl'
+  Initialize-DeploymentDirectory $Output
+  $script:statusLog=Get-DeploymentPath $Output 'checkpoints.jsonl'
   Initialize-BuildPreflight -NativeOnly:($BuildMode -ne 'Prod')
   return
 }
@@ -2476,7 +2604,7 @@ if($Commit){
   if($BuildOnly){
     $unsigned=[ordered]@{result='UNSIGNED_LOCAL_BUILD';commit=$Commit;version=$built.version;unsignedMsix=$built.msix;
       sha256=$built.sha256;source=$built.source;binding=$script:SourceBinding;signing='NOT_RUN';installation='NOT_RUN';publication='NOT_RUN'}
-    [IO.File]::WriteAllText((Join-Path $Output 'result.json'),($unsigned | ConvertTo-Json -Depth 8),$utf8)
+    [IO.File]::WriteAllText((Get-DeploymentPath $Output 'result.json'),($unsigned | ConvertTo-Json -Depth 8),$utf8)
     Write-RunEvent @{type='build-only';at=[DateTime]::UtcNow.ToString('o');result=$unsigned}
     Report-Status 'Unsigned local build complete; signing, installation and publication were not run.'
     return
@@ -2501,7 +2629,7 @@ if($SetupOnly -or $UpdateSetup){Publish-IndependentSetup;return}
 $plan = [ordered]@{input=$Msix;version=$Version;sourceCommit=$SourceCommit;ssh=$SshTarget;
   buildId=$BuildId;
   remoteRoot=$RemoteRoot;fixedMsixUrl="$PublicBase/releases/SemantierAgent.msix";
-  profileBackup=(Join-Path $Output 'profile-backup');output=$Output;
+  profileBackup=(Get-DeploymentPath $Output 'profile-backup');output=$Output;
   supersededBuildOutput=$SupersededBuildOutput;mode=$BuildMode;verification=($(if($BuildMode -eq 'Beta'){'SKIPPED_BETA'}else{'REQUIRED_PROD'}));stages=@('verify existing input','sign one MSIX','check independently published Setup',
     'back up profile','install and observe Electron/real PTY','SFTP reput upload with progress to unpublished directory',
     'verify remote hash','atomic replace stable MSIX and commit current channel metadata',
@@ -2566,11 +2694,11 @@ $bindingFields=[ordered]@{mode=$BuildMode;skipLocalInstall=[bool]$SkipLocalInsta
   ossRuntimeRoot=$OssRuntimeRoot;ossWslDistro=$OssWslDistro;ossSetupQualification=[bool]$OssSetupQualification}
 if($ChannelRecoveryMsix){$bindingFields.channelRecoveryMsix=$ChannelRecoveryMsix}
 $script:runBinding=$bindingFields | ConvertTo-Json -Compress
-if (!$Commit -and !$NewRun -and !$PSBoundParameters.ContainsKey('Output')) {
+if (!$Commit -and !$NewRun -and !$directoryVersion -and !$PSBoundParameters.ContainsKey('Output')) {
   $candidates=Get-ChildItem -LiteralPath (Split-Path -Parent $Output) -Directory -Filter 'ecs-deploy-*' |
     Sort-Object LastWriteTime -Descending
   foreach($candidate in $candidates) {
-    $savedPath=Join-Path $candidate.FullName 'checkpoints.jsonl'
+    $savedPath=Get-DeploymentPath $candidate.FullName 'checkpoints.jsonl'
     if (!(Test-Path -LiteralPath $savedPath)) {continue}
     $saved=Read-RunCheckpoint $savedPath
     if ($saved -and $saved.binding -ceq $script:runBinding) {
@@ -2580,9 +2708,9 @@ if (!$Commit -and !$NewRun -and !$PSBoundParameters.ContainsKey('Output')) {
     }
   }
 }
-if (!(Test-Path -LiteralPath $Output)) {New-Item -ItemType Directory -Path $Output | Out-Null}
-$plan.output=$Output;$plan.profileBackup=Join-Path $Output 'profile-backup'
-$script:statusLog = Join-Path $Output 'checkpoints.jsonl'
+Initialize-DeploymentDirectory $Output
+$plan.output=$Output;$plan.profileBackup=Get-DeploymentPath $Output 'profile-backup'
+$script:statusLog = Get-DeploymentPath $Output 'checkpoints.jsonl'
 Report-Status "Input verification passed. Run log: $script:statusLog"
 $receipt=[ordered]@{result='IN_PROGRESS';mode=$BuildMode;plan=$plan;unsignedSha256=$ExpectedInputSha256;CH2='UNCHANGED';
   reused=@('complete MSIX','npm dependencies','node-pty','Electron inputs','Python runtime/venv','uv cache','.NET/NuGet cache');
@@ -2595,15 +2723,15 @@ if($NativeUpdateFrom -and !$Commit){
     publisherSha256=(Hash (Join-Path $PSScriptRoot 'releases/channel1.py'));channel1Sha256=(Hash (Join-Path $PSScriptRoot 'deploy-ecs-channel1.ps1'))}
 }
 $invocationTooling=if($receipt.Contains('tooling')){$receipt.tooling}else{$null}
-if($NativeUpdateFrom -and (Test-Path -LiteralPath (Join-Path $Output 'result.json'))){
-  $priorOutcome=Get-Content -LiteralPath (Join-Path $Output 'result.json') -Raw | ConvertFrom-Json
+if($NativeUpdateFrom -and (Test-Path -LiteralPath (Get-DeploymentPath $Output 'result.json'))){
+  $priorOutcome=Get-Content -LiteralPath (Get-DeploymentPath $Output 'result.json') -Raw | ConvertFrom-Json
   if($priorOutcome.result -in @('FAIL','STOP')){
     $receipt.previousFailure=@{result=$priorOutcome.result;error=$priorOutcome.error;finishedAt=$(if($priorOutcome.PSObject.Properties['finishedAt']){$priorOutcome.finishedAt}else{$null})}
   }
 }
 if($Commit -and $built.PSObject.Properties['tooling']){$receipt.tooling=$built.tooling}
 $script:checkpoints=@{}
-$checkpointPath=Join-Path $Output 'checkpoints.jsonl'
+$checkpointPath=Get-DeploymentPath $Output 'checkpoints.jsonl'
 $saved=Read-RunCheckpoint $checkpointPath
 $rebound=$false
 if($saved -and $saved.binding -cne $script:runBinding){
@@ -2621,14 +2749,14 @@ if($saved) {
   $previous=$saved.receipt
   foreach($property in $previous.PSObject.Properties){$receipt[$property.Name]=$property.Value}
   Report-Status ('Resuming run; completed checkpoints: '+($script:checkpoints.Keys -join ', '))
-} elseif(!$rebound -and (Test-Path -LiteralPath (Join-Path $Output 'result.json'))) {
+} elseif(!$rebound -and (Test-Path -LiteralPath (Get-DeploymentPath $Output 'result.json'))) {
   # Explicitly selected older runs may predate checkpoints. Adopt only their
   # verified signed artifact; never infer local acceptance or publication.
-  $previous=Get-Content -LiteralPath (Join-Path $Output 'result.json') -Raw | ConvertFrom-Json
+  $previous=Get-Content -LiteralPath (Get-DeploymentPath $Output 'result.json') -Raw | ConvertFrom-Json
   if(!(Preserve-ToolingPreparationFailure $previous)){
     if($previous.unsignedSha256 -cne $ExpectedInputSha256 -or $previous.plan.sourceCommit -cne $SourceCommit){throw 'Older run source mismatch.'}
-    if($previous.sha256 -and (Test-Path -LiteralPath (Join-Path $Output 'SemantierAgent.msix')) -and
-      (Hash (Join-Path $Output 'SemantierAgent.msix')) -ceq $previous.sha256) {
+    if($previous.sha256 -and (Test-Path -LiteralPath (Get-DeploymentPath $Output 'SemantierAgent.msix')) -and
+      (Hash (Get-DeploymentPath $Output 'SemantierAgent.msix')) -ceq $previous.sha256) {
       $receipt.sha256=$previous.sha256;$script:checkpoints['signed']='imported-verified-hash'
     }
   }
@@ -2640,8 +2768,8 @@ if($NativeUpdateFrom){
 $receipt.result='IN_PROGRESS'
 Write-RunEvent @{type='checkpoint';stage='resume-ready';binding=$script:runBinding;completed=$script:checkpoints;receipt=$receipt}
 try {
-  Save-Json $receipt (Join-Path $Output 'result.json')
-  $signed=Join-Path $Output 'SemantierAgent.msix'
+  Save-Json $receipt (Get-DeploymentPath $Output 'result.json')
+  $signed=Get-DeploymentPath $Output 'SemantierAgent.msix'
   Report-Status 'Signing and verifying the distribution MSIX copy.'
   if($script:checkpoints.ContainsKey('signed')) {
     if($BuildMode -eq 'Prod' -and (Hash $signed) -cne $receipt.sha256){throw 'Checkpoint signed MSIX hash changed.'}
@@ -2674,11 +2802,11 @@ try {
     $prefix=$package.InstallLocation.TrimEnd('\')+'\'
     Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force
   }
-  $backup=Join-Path $Output 'profile-backup'
+  $backup=Get-DeploymentPath $Output 'profile-backup'
   $profileFiles=@()
   if($script:checkpoints.ContainsKey('backup')) {
     # Direct assignment avoids nesting the JSON array in Windows PowerShell 5.1.
-    $profileFiles=ConvertFrom-Json -InputObject ([IO.File]::ReadAllText((Join-Path $Output 'profile-files.json')))
+    $profileFiles=ConvertFrom-Json -InputObject ([IO.File]::ReadAllText((Get-DeploymentPath $Output 'profile-files.json')))
     foreach($file in $profileFiles){
       if($file.relative -isnot [string]){throw 'Invalid profile inventory entry: expected a single relative path.'}
       if(!(Test-Path -LiteralPath (Join-Path $backup $file.relative) -PathType Leaf)){throw 'Checkpoint profile backup file missing.'}
@@ -2710,7 +2838,7 @@ try {
       @{relative=$_.FullName.Substring($backup.Length+1)}
     })
   }
-  Save-Json @($profileFiles) (Join-Path $Output 'profile-files.json')
+  Save-Json @($profileFiles) (Get-DeploymentPath $Output 'profile-files.json')
   Complete-Checkpoint 'backup'
   }
   Report-Status 'Preparing clean local installation; preserving the backed-up user profile.'
@@ -2745,7 +2873,7 @@ try {
   if ((Hash (Join-Path $registered[0].InstallLocation 'AppxSignature.p7x')) -cne $expectedSignature) {throw 'Windows retained different same-version package bytes.'}
   $receipt.installedSignature=$expectedSignature
   Complete-Checkpoint 'installed'
-  $binding=Join-Path $Output 'installed-binding.json';$uiOutput=Join-Path $Output ('acceptance-'+[Guid]::NewGuid().ToString('N'))
+  $binding=Get-DeploymentPath $Output 'installed-binding.json';$uiOutput=Join-Path $Output ('acceptance-'+[Guid]::NewGuid().ToString('N'))
   # Isolated credential/profile state needs the same private NTFS DACL as native
   # continuity state. Inherited workspace writers are not valid test inputs.
   $privateOwner=Join-Path $Repository 'apps\desktop\scripts\native-package-update.ps1'
@@ -2781,7 +2909,7 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output,{recursive:true});
  fs.writeFileSync(path.join(b.output,'acceptance.json'),JSON.stringify({result:'WINDOW_PTY_PASS',binding:b,facts,pty,errors},null,2));
  }finally{if(app)await app.close();}})().catch(e=>{fs.writeFileSync(path.join(b.output,'failure.txt'),e.stack);process.exitCode=1;});
 '@
-  $harnessPath=Join-Path $Output 'accept-installed.cjs';[IO.File]::WriteAllText($harnessPath,$harness,$utf8)
+  $harnessPath=Get-DeploymentPath $Output 'accept-installed.cjs';[IO.File]::WriteAllText($harnessPath,$harness,$utf8)
   Report-Status 'Opening Electron and testing a real PTY command; backend startup can take several minutes.'
   Run $Node @($harnessPath,$binding)
   $ui=Get-Content -LiteralPath (Join-Path $uiOutput 'acceptance.json') -Raw | ConvertFrom-Json
@@ -2793,7 +2921,7 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output,{recursive:true});
   if($BuildMode -eq 'Prod' -and (Test-Path -LiteralPath $backup)){Preserve-Databases 'verify'}
   $receipt.localAcceptance='LOCAL_SIGNED_MSIX_ELECTRON_PTY_PASS';$receipt.profileBackup=$backup
   Report-Status 'Local Electron, PTY and profile-preservation acceptance passed.'
-  Save-Json $receipt (Join-Path $Output 'result.json')
+  Save-Json $receipt (Get-DeploymentPath $Output 'result.json')
   $receipt.uiReceipt=Join-Path $uiOutput 'acceptance.json'
   Complete-Checkpoint 'local'
   } else {
@@ -2830,7 +2958,7 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output,{recursive:true});
   # Compute the POSIX parent in PowerShell without Windows Split-Path (which uses backslashes).
   Report-Status 'Checking retained references and bounded ECS capacity recovery.'
   $receipt.capacityRecovery=Get-EcsCapacityRecovery -Stage $stage -Size $(if($OssSetupQualification){4MB}else{$msixSize})
-  Save-Json $receipt (Join-Path $Output 'result.json')
+  Save-Json $receipt (Get-DeploymentPath $Output 'result.json')
   if($receipt.capacityRecovery.result -cne 'CAPACITY_READY'){
     $receipt.result='BLOCKED_WITH_EXACT_CAUSE'
     throw ('Insufficient safe ECS capacity after bounded recovery: '+($receipt.capacityRecovery | ConvertTo-Json -Compress -Depth 8))
@@ -2838,9 +2966,9 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output,{recursive:true});
   $receipt.remoteStage=$stage
   Complete-Checkpoint 'upload-prepared'
   Report-Status 'Publishing verified immutable bytes and committing current channel metadata atomically.'
-  if($OssCacheOnlyRecovery -and !$script:checkpoints.ContainsKey('oss-setup-qualified')){Confirm-OssCachedDownload $signed (Join-Path $Output 'channel1-metadata.json') $priorOutcome}
-  $receipt.publication=Publish-Channel1Artifacts -Signed $signed -Root $RemoteRoot -Stage $stage -PackageSha256 $hash -Metadata (Join-Path $Output 'channel1-metadata.json')
-  Save-Json $receipt (Join-Path $Output 'result.json')
+  if($OssCacheOnlyRecovery -and !$script:checkpoints.ContainsKey('oss-setup-qualified')){Confirm-OssCachedDownload $signed (Get-DeploymentPath $Output 'channel1-metadata.json') $priorOutcome}
+  $receipt.publication=Publish-Channel1Artifacts -Signed $signed -Root $RemoteRoot -Stage $stage -PackageSha256 $hash -Metadata (Get-DeploymentPath $Output 'channel1-metadata.json')
+  Save-Json $receipt (Get-DeploymentPath $Output 'result.json')
   Complete-Checkpoint 'published'
   }
   if($BuildMode -eq 'Beta'){
@@ -2850,8 +2978,8 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output,{recursive:true});
   if($NativeUpdateFrom){
     $receipt.result='OSS_PUBLISHED_SETUP_VERIFIED_NATIVE_NOT_RUN'
     $receipt.localAcceptance='NOT_RUN_BEFORE_PUBLICATION'
-    Save-Json $receipt (Join-Path $Output 'result.json')
-    $metadata=Get-Content -LiteralPath (Join-Path $Output 'channel1-metadata.json') -Raw | ConvertFrom-Json
+    Save-Json $receipt (Get-DeploymentPath $Output 'result.json')
+    $metadata=Get-Content -LiteralPath (Get-DeploymentPath $Output 'channel1-metadata.json') -Raw | ConvertFrom-Json
     $receipt.nativePublicAfterPointer=Test-NativePublic $metadata.manifest $signed -Active
     if((Hash $Msix) -cne $(if($ResumeSigned){$script:resumeInputSha256}else{$ExpectedInputSha256}) -or (Hash $signed) -cne $hash){throw 'Local package changed during publication.'}
     $receipt.publicationVerification='PASS'
@@ -2860,15 +2988,15 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output,{recursive:true});
     $receipt.nativeAcceptance='NOT_RUN_OWNER_MANUAL'
     $receipt.publicationStage='OSS_PUBLISHED_SETUP_VERIFIED_NATIVE_NOT_RUN'
     # Once old bytes may be retired, cleanup failure must preserve the verified head.
-    Save-Json $receipt (Join-Path $Output 'result.json')
+    Save-Json $receipt (Get-DeploymentPath $Output 'result.json')
     try {
-      $receipt.ossRetention=Invoke-OssByteOperation 'retention' $signed (Join-Path $Output 'channel1-metadata.json') (Join-Path $Output 'oss-retention.json')
+      $receipt.ossRetention=Invoke-OssByteOperation 'retention' $signed (Get-DeploymentPath $Output 'channel1-metadata.json') (Get-DeploymentPath $Output 'oss-retention.json')
       $receipt.cleanup='OSS_ONE_ACTIVE_MSIX_AND_SETUP_ECS_RECOVERY_RETAINED_PENDING_CUTOVER'
       Complete-Checkpoint 'oss-retention'
     } catch {
       $receipt.result='OSS_PUBLISHED_RETENTION_PENDING';$receipt.retentionError=$_.Exception.Message
       $receipt.cleanup='PENDING_VERIFIED_ACTIVE_HEAD_PRESERVED'
-      Save-Json $receipt (Join-Path $Output 'result.json')
+      Save-Json $receipt (Get-DeploymentPath $Output 'result.json')
       Report-Status ('Verified release retained; OSS cleanup pending: '+$_.Exception.Message)
       return
     }
@@ -2888,7 +3016,7 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output,{recursive:true});
     }
     $receipt.publicReadback='FULL_MSIX_H3_DOWNLOAD_MATCHES_LOCAL_SIGNED_SHA256'
   }
-  Save-Json $receipt (Join-Path $Output 'result.json')
+  Save-Json $receipt (Get-DeploymentPath $Output 'result.json')
 
   if (!$SkipOldCleanup) {
     Report-Status 'Retiring expired inactive ECS upload stages after verified publication.'
@@ -2901,7 +3029,7 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output,{recursive:true});
   # Failed/missing Playwright or an old Landing => retain old catalog/packages.
   $landingReady=$false
   if (!$SkipOldCleanup) {
-    $landingProbe=Join-Path $Output 'verify-live-landing.cjs'
+    $landingProbe=Get-DeploymentPath $Output 'verify-live-landing.cjs'
     $landingProbeSource=@'
 const {chromium}=require(process.argv[2]+'/@playwright/test');
 const fs=require('node:fs');
@@ -2929,7 +3057,7 @@ const fs=require('node:fs');
 })().catch(error=>{console.error(error.stack||String(error));process.exitCode=1;});
 '@
     [IO.File]::WriteAllText($landingProbe,$landingProbeSource,$utf8)
-    $landingEvidence=Join-Path $Output 'landing-cutover.json'
+    $landingEvidence=Get-DeploymentPath $Output 'landing-cutover.json'
     try {
       Report-Status 'Checking both live Landing hosts before cleanup.'
       Run $Node @($landingProbe,$AcceptanceNodeModules,$landingEvidence)
@@ -2944,7 +3072,7 @@ const fs=require('node:fs');
       $receipt.cleanup='DEFERRED_LANDING_CUTOVER_REQUIRED'
       Write-Warning 'MSIX is published and hash verified; legacy cleanup deferred because live Landing is not yet verified on the fixed Setup link.'
     }
-    Save-Json $receipt (Join-Path $Output 'result.json')
+    Save-Json $receipt (Get-DeploymentPath $Output 'result.json')
   }
   if (!$SkipOldCleanup -and $landingReady -and !$script:checkpoints.ContainsKey('cleanup')) {
     # No more version-specific installer/MSIX publication. Keep ALL old Setup
@@ -2979,9 +3107,9 @@ const fs=require('node:fs');
     try{$receipt.tempCleanup=Remove-OlderDeploymentRuns $Output $Version}
     catch{$receipt.tempCleanup=@{error=$_.Exception.Message};Report-Status ('Local temporary-run cleanup deferred: '+$_.Exception.Message)}
   }
-  Save-Json $receipt (Join-Path $Output 'result.json')
+  Save-Json $receipt (Get-DeploymentPath $Output 'result.json')
   Report-Status ('Finished: '+$receipt.result)
-  [IO.File]::WriteAllText((Join-Path $Output 'release-note.md'),
+  [IO.File]::WriteAllText((Get-DeploymentPath $Output 'release-note.md'),
     "Result: $($receipt.result)`nVersion: $Version`nSource: $SourceCommit`nSigned MSIX: $($receipt.signedMsix)`nSHA-256: $($receipt.sha256)`nPublic MSIX: https://assets.semantier.cn/releases/channel-builds/$BuildId/SemantierAgent.msix`nFixed Setup: https://assets.semantier.cn/releases/installers/semantier-setup-ch1.exe`nLocal acceptance: $($receipt.localAcceptance)`nPublication: $($receipt.publication)`nH3: $($receipt.h3)`nPublic readback: $($receipt.publicReadback)`nLanding cutover: $($receipt.landingCutover)`nCleanup: $($receipt.cleanup)`nCH2: unchanged`n",$utf8)
   Write-Host "Result and evidence: $Output"
   $receipt | ConvertTo-Json -Depth 20 -Compress
@@ -2989,8 +3117,8 @@ const fs=require('node:fs');
 
 } catch {
   if($script:sourceOwner -or ($NativeUpdateFrom -and !$WhatIfPreference)){
-    if(!(Test-Path -LiteralPath $Output)){New-Item -ItemType Directory -Path $Output | Out-Null}
-    $failurePath=Join-Path $Output 'result.json'
+    Initialize-DeploymentDirectory $Output
+    $failurePath=Get-DeploymentPath $Output 'result.json'
     if(Test-Path -LiteralPath $failurePath){
       $failure=Get-Content -LiteralPath $failurePath -Raw | ConvertFrom-Json
     } else {
@@ -3007,12 +3135,12 @@ const fs=require('node:fs');
     if($script:sourceLease -and $script:sourceOwner){
       $cleanup=Remove-OwnedBuildSource
       Write-RunEvent @{type='source-cleanup';source=$BuildSource;result=$cleanup;at=[DateTime]::UtcNow.ToString('o')}
-      $resultPath=Join-Path $Output 'result.json'
+      $resultPath=Get-DeploymentPath $Output 'result.json'
       if(Test-Path -LiteralPath $resultPath){
         $result=Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
         $result | Add-Member -NotePropertyName sourceCleanup -NotePropertyValue $cleanup -Force
         Save-Json $result $resultPath
-        [IO.File]::AppendAllText((Join-Path $Output 'release-note.md'),"Result: $($result.result)`nApplication commit: $Commit`nSource cleanup: $cleanup`n",$utf8)
+        [IO.File]::AppendAllText((Get-DeploymentPath $Output 'release-note.md'),"Result: $($result.result)`nApplication commit: $Commit`nSource cleanup: $cleanup`n",$utf8)
       }
     }
   } finally {

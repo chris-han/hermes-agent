@@ -149,7 +149,7 @@ function Test-NativeReleasePreflight {
   $applicationCommit=if($Commit){$Commit}else{$SourceCommit}
   if($script:SourceBinding.hermesGitlink -cne $script:SourceBinding.toolingHermesHead -or
     ($Commit -and $script:SourceBinding.hermesGitlink -cne $Commit)){throw 'Native source pin mismatch'}
-  $saved=Read-CommitBuild (Join-Path $Output 'checkpoints.jsonl')
+  $saved=Read-CommitBuild (Get-DeploymentPath $Output 'checkpoints.jsonl')
   $ledger=Get-Content -LiteralPath $VersionState -Raw | ConvertFrom-Json
   if(!$Commit){
     if(!$NativePublishOnly -or $Version -cne $ExpectedVersion -or ($ledger.version+'.0') -cne $ExpectedVersion -or
@@ -190,6 +190,9 @@ print(json.dumps({'pointerSha256':expected,'record':r,'manifest':manifest,'packa
   $remote=Ssh "printf '%s' '$encoded' | base64 -d | python3 - '$RemoteRoot' '$ExpectedChannelSha256' '$identity'"
   $remote=$remote | ConvertFrom-Json
   $channelRecovery=Test-NativeChannelRecovery $remote $(if($ChannelRecoveryMsix){$ChannelRecoveryMsix}else{$RecoveryMsix})
+  if((Get-ReleaseDirectoryVersion $Output) -and $channelRecovery.version -cne $NativeUpdateFrom){
+    throw 'Versioned release must use the active published predecessor as its installed baseline.'
+  }
   $legacyBaseline=$remote.manifest.packages[0].native.schema -ne 2
   $public=Test-NativePublic $remote.manifest $channelRecovery.path -Active -LegacyBaseline:$legacyBaseline
   return @{result='PASS';stage=$(if($PreflightOnly){'READ_ONLY_PREFLIGHT'}else{'PREPUBLICATION_PREFLIGHT'});producedAt=[DateTime]::UtcNow.ToString('o');source=$script:SourceBinding;
@@ -198,23 +201,60 @@ print(json.dumps({'pointerSha256':expected,'record':r,'manifest':manifest,'packa
     visibleWindow=$(if($window){'PRESENT'}else{'NOT_OBSERVED_NO_UI_ACCEPTANCE'});
     public=$public;profileManifests=$profileManifests;llmCalls=0}
 }
+
+function Set-VersionedReleaseBaseline($Preflight) {
+  $previous=$Preflight.channelRecovery
+  if(!$previous -or $previous.version -cne $NativeUpdateFrom -or $previous.sha256 -cnotmatch '^[a-f0-9]{64}$'){
+    throw 'Missing verified predecessor binding.'
+  }
+  if(!$SkipLocalInstall -and $Preflight.recoverySha256 -cne $previous.sha256){
+    throw 'Local rollback and channel recovery must use the same signed package.'
+  }
+  Initialize-DeploymentDirectory $Output
+  $target=Join-Path $Output 'baseline\SemantierAgent.msix'
+  Assert-NoReparseAncestor $previous.path
+  Assert-NoReparseAncestor $target
+  if(!(Test-Path -LiteralPath $target -PathType Leaf)){
+    $bytes=(Get-Item -LiteralPath $previous.path).Length
+    $free=(Get-PSDrive ([IO.Path]::GetPathRoot($Output).Substring(0,1))).Free
+    if($free -lt ($bytes+(Get-NativeReleaseRequiredSpace $Msix -Build:([bool]$Commit)))){
+      throw 'Insufficient space for the verified baseline and release operation.'
+    }
+    $temp=$target+'.'+[guid]::NewGuid().ToString('N')+'.tmp'
+    try {
+      [IO.File]::Copy($previous.path,$temp,$false)
+      if((Hash $temp) -cne $previous.sha256){throw 'Baseline copy digest mismatch.'}
+      [IO.File]::Move($temp,$target)
+    } finally {
+      if(Test-Path -LiteralPath $temp){[IO.File]::Delete($temp)}
+    }
+  }
+  Require-Signature $target
+  if((Hash $target) -cne $previous.sha256){throw 'Retained baseline digest differs from the active predecessor.'}
+  $script:ChannelRecoveryMsix=$target
+  $previous.path=$target
+  if(!$SkipLocalInstall){
+    $script:RecoveryMsix=$target
+    $Preflight.recoveryMsix=$target
+  }
+}
 function Test-NativeCompletedRelease {
-  $path=Join-Path $Output 'result.json'
+  $path=Get-DeploymentPath $Output 'result.json'
   if(!(Test-Path -LiteralPath $path)){return $false}
   $saved=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
   if($NativePublishOnly -and $saved.result -cin @('OSS_PUBLISHED_SETUP_VERIFIED_NATIVE_NOT_RUN','OSS_PUBLISHED_RETENTION_PENDING')){
     $applicationCommit=if($Commit){$Commit}else{$SourceCommit}
     if($saved.plan.sourceCommit -cne $applicationCommit -or $saved.plan.version -cne $ExpectedVersion -or
-      $saved.signedMsix -ine (Join-Path $Output 'SemantierAgent.msix') -or (Hash $saved.signedMsix) -cne $saved.sha256){throw 'Completed publication binding changed'}
+      $saved.signedMsix -ine (Get-DeploymentPath $Output 'SemantierAgent.msix') -or (Hash $saved.signedMsix) -cne $saved.sha256){throw 'Completed publication binding changed'}
     Require-Signature $saved.signedMsix
     $null=Ssh (Get-Channel1ProofCommand -Root $RemoteRoot -PackageSha256 $saved.sha256 -Build $saved.plan.buildId)
-    $metadata=Get-Content -LiteralPath (Join-Path $Output 'channel1-metadata.json') -Raw | ConvertFrom-Json
-    $cached=Join-Path $Output 'setup-download/SemantierAgent.msix'
-    $proof=Get-Content -LiteralPath (Join-Path $Output 'setup-download/download-receipt.json') -Raw|ConvertFrom-Json
+    $metadata=Get-Content -LiteralPath (Get-DeploymentPath $Output 'channel1-metadata.json') -Raw | ConvertFrom-Json
+    $cached=Get-DeploymentPath $Output 'setup-download/SemantierAgent.msix'
+    $proof=Get-Content -LiteralPath (Get-DeploymentPath $Output 'setup-download/download-receipt.json') -Raw|ConvertFrom-Json
     if($saved.ossFullTransferCount -ne 1 -or $proof.status -cne 'DOWNLOADED_VERIFIED_NOT_INSTALLED' -or
        $proof.selection -cne 'PINNED_STAGED_CANDIDATE' -or $proof.signature -cne 'PINNED_SIGNER_VALID' -or
        $proof.sha256 -cne $saved.sha256 -or $proof.buildId -cne $saved.plan.buildId -or
-       $proof.manifestSha256 -cne (Get-OssManifestHash (Join-Path $Output 'channel1-metadata.json')) -or
+       $proof.manifestSha256 -cne (Get-OssManifestHash (Get-DeploymentPath $Output 'channel1-metadata.json')) -or
        (Hash $cached) -cne $saved.sha256){throw 'Retained one-shot Setup qualification changed; no redownload permitted'}
     $public=Test-NativePublic $metadata.manifest $saved.signedMsix -Active
     $saved | Add-Member -NotePropertyName publicationVerification -NotePropertyValue 'PASS' -Force
@@ -224,7 +264,7 @@ function Test-NativeCompletedRelease {
     Save-Json $saved $path
     if(!$SupersededBuildOutput -and $saved.plan.PSObject.Properties['supersededBuildOutput']){$SupersededBuildOutput=[string]$saved.plan.supersededBuildOutput}
     try {
-      $retention=Invoke-OssByteOperation 'retention' $saved.signedMsix (Join-Path $Output 'channel1-metadata.json') (Join-Path $Output 'oss-retention.json')
+      $retention=Invoke-OssByteOperation 'retention' $saved.signedMsix (Get-DeploymentPath $Output 'channel1-metadata.json') (Get-DeploymentPath $Output 'oss-retention.json')
       $saved | Add-Member -NotePropertyName ossRetention -NotePropertyValue $retention -Force
       $saved.result='OSS_PUBLISHED_SETUP_VERIFIED_NATIVE_NOT_RUN'
     } catch {
@@ -241,7 +281,7 @@ function Test-NativeCompletedRelease {
   if($saved.result -cne 'PASS'){return $false}
   if(!$saved.PSObject.Properties['nativeAcceptance'] -or $saved.nativeAcceptance.result -cne 'PASS' -or
     $saved.nativeAcceptance.from -cne $NativeUpdateFrom -or $saved.nativeAcceptance.to -cne $ExpectedVersion -or
-    $saved.plan.sourceCommit -cne $Commit -or $saved.signedMsix -ine (Join-Path $Output 'SemantierAgent.msix') -or
+    $saved.plan.sourceCommit -cne $Commit -or $saved.signedMsix -ine (Get-DeploymentPath $Output 'SemantierAgent.msix') -or
     (Hash $saved.signedMsix) -cne $saved.sha256 -or $saved.nativeAcceptance.sha256 -cne $saved.sha256){throw 'Completed native release binding changed'}
   Require-Signature $saved.signedMsix
   $package=Get-AppxPackage -Name $identity
@@ -305,7 +345,7 @@ function Test-OssSetupTransport([string]$Setup) {
   Require-Signature $Setup
   $size=(Get-Item -LiteralPath $Setup).Length
   if($size -le 0 -or $size -gt 2097152){throw 'Small Setup size limit exceeded'}
-  $proof=Join-Path $Output 'setup-oss-transport.json'
+  $proof=Get-DeploymentPath $Output 'setup-oss-transport.json'
   Run-Setup $Setup @('--probe-oss-transport',(Hash $Setup),[string]$size,$proof)
   $result=Get-Content -LiteralPath $proof -Raw|ConvertFrom-Json
   if($result.status -cne 'PASS' -or $result.scope -cne 'SMALL_EXE_TRANSPORT_ONLY_NO_INSTALL' -or $result.sha256 -cne (Hash $Setup) -or $result.bytes -lt $size){throw 'Native OSS small Setup transport failed'}
@@ -405,7 +445,7 @@ function Test-OssSetupQualification($Manifest,[string]$Package,[string]$Metadata
   if(!$OssSetupQualification -or !$NativePublishOnly -or !$SkipLocalInstall -or $BuildMode -cne 'Prod'){throw 'OSS activation requires explicit one-shot Setup qualification in Prod publish-only mode'}
   Require-Signature $SetupExe
   $manifestHash=Get-OssManifestHash $Metadata
-  $folder=Join-Path $Output 'setup-download'
+  $folder=Get-DeploymentPath $Output 'setup-download'
   $download=Join-Path $folder 'SemantierAgent.msix'
   $proof=Join-Path $folder 'download-receipt.json'
   if(!$script:checkpoints.ContainsKey('oss-setup-qualified')){
@@ -440,7 +480,7 @@ function Publish-Channel1Artifacts([string]$Signed, [string]$Root, [string]$Stag
     '--expected-sha256',$PackageSha256,'--source-commit',$SourceCommit,'--windows-version',$Version,'--build-id',$BuildId,'--native-digest',$nativeDigest)
   if(!$NativeUpdateFrom -or !$NativePublishOnly -or !$SkipLocalInstall -or $BuildMode -cne 'Prod' -or !$OssSetupQualification){throw 'OSS publication requires the pinned Prod publish-only one-shot flow'}
   $preparedMetadataSha=Hash $Metadata
-  $receipt.ossStaging=Invoke-OssByteOperation 'msix' $Signed $Metadata (Join-Path $Output 'oss-staged.json')
+  $receipt.ossStaging=Invoke-OssByteOperation 'msix' $Signed $Metadata (Get-DeploymentPath $Output 'oss-staged.json')
   if((Hash $Metadata) -cne $preparedMetadataSha){throw 'Prepared release metadata changed during OSS staging'}
   Upload $Metadata "$Stage/channel1-metadata.json"
   Upload $publisher "$Stage/channel1.py"
@@ -449,13 +489,13 @@ function Publish-Channel1Artifacts([string]$Signed, [string]$Root, [string]$Stag
   if($NativeUpdateFrom){
     $recovery=$Root.Substring(0,$Root.LastIndexOf('/'))+'/.channel1-recovery-'+$BuildId
     $receipt.nativeRecovery=$recovery
-    Save-Json $receipt (Join-Path $Output 'result.json')
+    Save-Json $receipt (Get-DeploymentPath $Output 'result.json')
     $guard=" --expected-previous-sha256 '$ExpectedChannelSha256' --recovery '$recovery'"
     $null=Ssh "python3 -B '$Stage/channel1.py' stage-native $arguments $guard --caddy-sha256 '$($script:nativePreflight.remote.caddySha256)'"
     $candidate=Get-Content -LiteralPath $Metadata -Raw | ConvertFrom-Json
     $receipt.nativePublicBeforePointer=Test-NativePublic $candidate.manifest $Signed
     $receipt.ossSetupQualification=Test-OssSetupQualification $candidate.manifest $Signed $Metadata
-    $receipt.result='BUILT_SIGNED_PACKAGE';Save-Json $receipt (Join-Path $Output 'result.json')
+    $receipt.result='BUILT_SIGNED_PACKAGE';Save-Json $receipt (Get-DeploymentPath $Output 'result.json')
     $arguments+=$guard
   }
   return Ssh "python3 -B '$Stage/channel1.py' publish $arguments"
