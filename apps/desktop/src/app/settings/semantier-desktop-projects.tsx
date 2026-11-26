@@ -213,7 +213,7 @@ export function SemantierDesktopProjects({ origin, scope }: { origin: string; sc
         {readFailure === 'materials'
           ? t('Project materials unavailable. You can still open an existing project.', '项目材料不可用。你仍可打开现有项目。')
           : t('Projects unavailable. Check the Workspace account and try again.', '项目不可用。请检查工作区账户后重试。')}
-        <Button onClick={() => { pending.current = null; retryProjectReads(value => value + 1) }} type="button" variant="outline">{t('Retry', '重试')}</Button>
+        <Button onClick={() => retryProjectReads(value => value + 1)} type="button" variant="outline">{t('Retry', '重试')}</Button>
       </div>}
       {!materials && !status && !readFailure && <p className="text-xs" role="status">{t('Loading projects…', '正在加载项目…')}</p>}
       {materials && !materials.graphs.length && !projects.length && <p className="text-xs">{t('No admitted project context is available.', '没有可用的已接纳项目上下文。')}</p>}
