@@ -91,7 +91,7 @@ export function resolvePluginGitUrl(identifier: string): ResolvedGitUrl {
     return { gitUrl: trimmed, subdir: null }
   }
 
-  const parts = trimmed.split('/').filter(Boolean)
+  const parts = trimmed.replace('#', '/').split('/').filter(Boolean)
 
   if (parts.length >= 2) {
     const [owner, repo, ...rest] = parts

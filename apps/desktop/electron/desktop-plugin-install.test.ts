@@ -38,6 +38,13 @@ describe('resolvePluginGitUrl', () => {
     })
   })
 
+  it('resolves the repository and subdirectory selected by the Semantier catalog', () => {
+    expect(resolvePluginGitUrl('chris-han/semantier-skills#plugins/tutor')).toEqual({
+      gitUrl: 'https://github.com/chris-han/semantier-skills.git',
+      subdir: 'plugins/tutor'
+    })
+  })
+
   it('supports hash subdir fragment', () => {
     expect(resolvePluginGitUrl('https://github.com/o/r.git#nested/plugin')).toEqual({
       gitUrl: 'https://github.com/o/r.git',
