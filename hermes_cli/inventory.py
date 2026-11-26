@@ -44,7 +44,9 @@ def load_picker_context() -> ConfigContext:
     from hermes_cli.config import (
         coerce_provider_id, get_compatible_custom_providers, load_config, stringify_provider_map,
     )
-    cfg = load_config()
+    from hermes_cli.cloud_device_client import without_unavailable_cloud_default
+
+    cfg = without_unavailable_cloud_default(load_config())
     model_cfg = cfg.get("model", {})
     if isinstance(model_cfg, dict):
         # YAML parses unquoted scalars as int (`provider: 2070`); keep strings so picker/options

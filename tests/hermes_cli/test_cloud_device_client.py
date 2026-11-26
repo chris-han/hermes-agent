@@ -537,3 +537,26 @@ def test_settings_can_return_to_installed_cloud_from_byok(native, monkeypatch):
     assert saved['providers']['semantier-cloud']['credential_ref'] == 'token-test'
     assert not {'api_key', 'key_env', 'api_key_env'} & saved['model'].keys()
     assert 'private-account-token' not in (home / 'config.yaml').read_text()
+
+
+def test_desktop_cloud_default_requires_local_device_credential(monkeypatch):
+    from hermes_cli import cloud_device_client as device
+
+    cloud = {'model': {'provider': 'semantier-cloud', 'default': 'qwen3.5-plus'},
+             'providers': {'semantier-cloud': {'base_url': 'https://cloud.semantier.cn/v1'}}}
+    assert 'model' not in device.without_unavailable_cloud_default(cloud)
+
+    cloud['providers']['semantier-cloud']['credential_ref'] = 'saved-ref'
+
+    def expired(*args, **kwargs):
+        raise device.CloudCredentialError('Expired')
+
+    monkeypatch.setattr(device, 'credential', expired)
+    assert 'model' not in device.without_unavailable_cloud_default(cloud)
+    assert cloud['model']['default'] == 'qwen3.5-plus'
+
+    monkeypatch.setattr(device, 'credential', lambda ref, *, base_url: 'fixture')
+    assert device.without_unavailable_cloud_default(cloud) == cloud
+
+    local = {'model': {'provider': 'openai-api', 'default': 'gpt-test'}}
+    assert device.without_unavailable_cloud_default(local) == local

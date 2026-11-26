@@ -52,3 +52,37 @@ async def test_model_switch_to_a_keyed_direct_alias_runs_the_next_turn_with_its_
             runtime = _resolve_policy_agent_runtime(runner, switched)[1]
             assert runtime['base_url'].rstrip('/') == far_url
             assert runtime['api_key'] == expected, f'{alias}: the next turn ran without the alias key'
+
+
+@pytest.mark.asyncio
+async def test_explicit_provider_switch_recovers_from_current_route_auth_error(tmp_path, monkeypatch):
+    from dataclasses import asdict
+    from types import SimpleNamespace
+
+    from gateway.session_mutation_model import prepare_model
+    from gateway.session_policy import build_policy, restore_policy
+    from hermes_cli import model_switch
+    from hermes_cli.auth_constants import AuthError
+    from hermes_state import SessionDB
+
+    def unavailable(**kwargs):
+        raise AuthError('Current route unavailable')
+
+    def resolve_target(**kwargs):
+        assert kwargs['explicit_provider'] == 'openai-api'
+        assert not kwargs['current_api_key']
+        return model_switch.ModelSwitchResult(
+            success=True, new_model='gpt-test', target_provider='openai-api',
+            base_url='https://api.openai.com/v1')
+
+    monkeypatch.setattr(model_switch, 'switch_model', resolve_target)
+    with SessionDB(tmp_path / 'state.db') as db:
+        authority = SimpleNamespace(instance_id='i', epoch=1, profile_id='p', db=db,
+                                    runner=SimpleNamespace(_resolve_session_agent_runtime=unavailable))
+        policy = build_policy({'cwd': str(tmp_path), 'model': 'qwen', 'provider': 'custom'}, {})
+        prepared = {'snapshot': {'receipt': {'session_id': 'sid', 'policy': asdict(policy)}}}
+        result = await prepare_model(authority, SimpleNamespace(source=None, route='r'),
+                                     {'model': 'gpt-test', 'provider': 'openai-api'}, prepared)
+        selected = restore_policy(result['policy'])
+        assert selected.provider == 'openai-api'
+        assert selected.base_url == 'https://api.openai.com/v1'

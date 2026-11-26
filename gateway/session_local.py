@@ -174,6 +174,9 @@ def stage_local_session(authority, actor, params, *, trusted_policy=None, truste
     else:
         from gateway.session_local_route import resolve_launch_route
         config = _load_gateway_config()
+        if params.get('source') == 'gui':
+            from hermes_cli.cloud_device_client import without_unavailable_cloud_default
+            config = without_unavailable_cloud_default(config)
         raw_model = params.get('model')
         params = resolve_launch_route(params, config)
         policy = build_policy(params, config, private_secrets=private_secrets)

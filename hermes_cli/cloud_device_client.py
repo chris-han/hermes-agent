@@ -603,6 +603,22 @@ def credential(ref, *, base_url):
         return data['credential']['secret']
 
 
+def without_unavailable_cloud_default(config):
+    """Project a saved Cloud selection only while its local device grant is usable."""
+    model = config.get('model')
+    if not isinstance(model, dict) or model.get('provider') != 'semantier-cloud':
+        return config
+    entry = (config.get('providers') or {}).get('semantier-cloud') or {}
+    ref = entry.get('credential_ref')
+    if ref:
+        try:
+            credential(ref, base_url=entry.get('base_url') or '')
+            return config
+        except ValueError:
+            pass
+    return {key: value for key, value in config.items() if key != 'model'}
+
+
 def status():
     with _locked():
         state = _read()
@@ -637,6 +653,7 @@ def disconnect():
             entry = (cfg.get('providers') or {}).get('semantier-cloud') or {}
             if ref and entry.get('credential_ref') == ref:
                 cfg['providers'].pop('semantier-cloud', None)
+                cfg = without_unavailable_cloud_default(cfg)
                 if (cfg.get('billing') or {}).get('account_id') == state.get('account_id'):
                     cfg['billing'].pop('account_id', None)
                 config_mod.atomic_config_replace(get_hermes_home()/'config.yaml', cfg)

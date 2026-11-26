@@ -11,17 +11,25 @@ async def prepare_model(authority, live, payload, prepared):
     from gateway.session_policy import restore_policy, launch_key, bind_launch_key
     from gateway.session_policy_credentials import recover_config_secrets
     from hermes_cli.model_switch import apply_model_selection, selection_route_changed, switch_model
+    from hermes_cli.auth_constants import AuthError
     from hermes_cli.config import get_compatible_custom_providers
     old = restore_policy(prepared['snapshot']['receipt']['policy'])
     config = old.config(authority)
-    _, runtime = authority.runner._resolve_session_agent_runtime(source=live.source, session_key=live.route)
+    target_provider = payload.get('provider') or ''
+    try:
+        _, runtime = authority.runner._resolve_session_agent_runtime(source=live.source, session_key=live.route)
+    except AuthError as exc:
+        # An explicit provider change is also how users recover from a broken current route.
+        if not target_provider or target_provider.casefold() == (old.provider or '').casefold():
+            raise RuntimeStoreError('model_resolution_failed') from exc
+        runtime = {}
 
     def switch(**kwargs):
         result = switch_model(**kwargs)
         return result, _alias_credential(authority, result)
     result, alias_credential = await asyncio.to_thread(switch, raw_input=payload['model'],
         current_provider=old.provider, current_model=old.model, current_base_url=old.base_url or '',
-        current_api_key=runtime.get('api_key') or '', explicit_provider=payload.get('provider', ''),
+        current_api_key=runtime.get('api_key') or '', explicit_provider=target_provider,
         is_global=False, user_providers=config.get('providers'),
         custom_providers=get_compatible_custom_providers(config))
     if not result.success:
