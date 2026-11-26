@@ -47,7 +47,7 @@ def verify_release_tree(release, manifest, root):
             or str(manifest.get("version")) != release["version"]):
         raise ValueError("Semantier manifest differs from the selected release")
     digest = hashlib.sha256()
-    for file in sorted(root.rglob("*")):
+    for file in sorted(root.rglob("*"), key=lambda path: path.relative_to(root).parts):
         relative = file.relative_to(root)
         if file.is_symlink():
             raise ValueError("Semantier package contains a symbolic link")
