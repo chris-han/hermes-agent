@@ -316,6 +316,22 @@ def _apply_launch_overrides(params, config):
     from urllib.parse import urlsplit
     from hermes_cli.config import resolve_turn_limit
     from hermes_constants import parse_reasoning_effort
+    from hermes_cli.providers import normalize_provider
+    from hermes_cli.route_identity import normalize_route_base_url
+
+    model_config = config.get('model') or {}
+    current_provider = str(model_config.get('provider') or '')
+    provider = params.get('provider')
+    base_url = params.get('base_url')
+    provider_changed = isinstance(provider, str) and normalize_provider(provider) != normalize_provider(current_provider)
+    endpoint_changed = isinstance(base_url, str) and (
+        normalize_route_base_url(base_url) != normalize_route_base_url(model_config.get('base_url')))
+    if provider_changed or endpoint_changed:
+        # These fields describe the inherited route. Resolve them again for the
+        # selected provider, keeping any explicit launch URL and key separate.
+        for key in ('base_url', 'api_mode', 'api_key', 'api_key_from', 'key_env', 'api_key_env',
+                    'context_length', 'capability_revision'):
+            model_config.pop(key, None)
     for key in ('provider', 'base_url'):
         if key in params:
             value = params[key]

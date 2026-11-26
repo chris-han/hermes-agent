@@ -61,3 +61,28 @@ def test_alias_key_is_a_launch_key_not_durable_policy(home):
     policy = build_policy(params, _config(), private_secrets={})
     assert policy.model == "model-alias" and policy.base_url == "http://127.0.0.1:3/v1"
     assert "sk-alias-literal" not in policy.config_json + policy.request_json
+
+
+@pytest.mark.parametrize("explicit_url", [None, "https://openai-proxy.example/v1"])
+def test_launch_provider_owns_endpoint(home, monkeypatch, explicit_url):
+    from gateway.session_policy import build_policy
+    from hermes_cli.runtime_provider import frozen_runtime_config, resolve_runtime_provider
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    profile = {"model": {"provider": "semantier-cloud", "default": "qwen3.5-plus",
+                        "base_url": "https://cloud.semantier.cn/v1", "api_mode": "chat_completions",
+                        "api_key": "sk-cloud-profile", "context_length": 4096}}
+    params = {"source": "gui", "cwd": str(home), "model": "gpt-5", "provider": "openai-api"}
+    if explicit_url:
+        params["base_url"] = explicit_url
+    policy = build_policy(params, profile, private_secrets={})
+    frozen = policy.config()
+    assert policy.base_url == explicit_url
+    assert "api_key" not in frozen["model"]
+    assert "context_length" not in frozen["model"]
+    with frozen_runtime_config(frozen):
+        route = resolve_runtime_provider(requested=policy.provider, target_model=policy.model)
+    assert route["base_url"] == (explicit_url or "https://api.openai.com/v1")
+    assert route["api_key"] == "sk-test-openai"
+    assert profile["model"]["base_url"] == "https://cloud.semantier.cn/v1"
