@@ -79,6 +79,7 @@ param(
   [string]$SignTool = 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe',
   [string]$Node = '',
   [string]$Repository = '',
+  [ValidatePattern('^[a-f0-9]{40}$')][string]$ExpectedRuntimeCommit,
   [string]$CredentialsEnv = '',
   [string]$TimestampUrl = 'http://timestamp.digicert.com',
   [Alias('PrepareOnly')][switch]$LocalOnly,
@@ -119,6 +120,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+$script:ossSession=$null
 if($OssCacheOnlyRecovery -and (!$OssSetupQualification -or !$NativePublishOnly -or !$SkipLocalInstall -or $Commit -or $ResumeSigned -or $BuildMode -cne 'Prod' -or !$PSBoundParameters.ContainsKey('Output'))){throw 'Cache-only recovery requires the original explicit fixed-input Prod OSS publish-only run'}
 if($OssSetupQualification -and $VerifyPublicDownload){throw 'The one full OSS transfer is owned by Setup; standalone full download is forbidden.'}
 $identity = 'Semantier.Agent.Acceptance'
@@ -366,8 +368,12 @@ function Initialize-ReleasePaths {
     $link=& git.exe @runtimeGitArgs ls-tree HEAD hermes-agent
     if($LASTEXITCODE -ne 0 -or $link -notmatch '^160000 commit ([a-f0-9]{40})\s'){throw 'Cannot inspect recorded Hermes gitlink.'}
     $script:SourceBinding.runtimeHead=[string]$runtimeHead;$script:SourceBinding.hermesGitlink=$Matches[1]
+    if($ExpectedRuntimeCommit -and $runtimeHead -cne $ExpectedRuntimeCommit){
+      throw 'Windows Runtime HEAD differs from the approved release commit.'
+    }
     Assert-ApplicationToolingBinding
   }
+  if($ExpectedRuntimeCommit -and (!$RuntimeRoot -or !$Commit)){throw 'ExpectedRuntimeCommit requires a Runtime checkout and an exact Hermes Commit.'}
   if($ToolingQualification -and !$RuntimeRoot){throw 'Tooling qualification requires Runtime source ownership.'}
   if($Commit -and !$RuntimeRoot){throw 'Commit builds require the Runtime checkout and its pinned Hermes gitlink.'}
 }
@@ -1156,6 +1162,8 @@ function Remove-OwnedBuildSource {
     Assert-StageInactive $script:sourceOwner
     if(Test-Path -LiteralPath $BuildSource){
       $null=Assert-RegisteredSource $BuildSource $Commit
+      $trackedChanges=Get-SourceGit $BuildSource @('status','--porcelain','--untracked-files=no')
+      if($trackedChanges){throw 'Owned build worktree has tracked changes.'}
       Run 'git.exe' @('-C',$Repository,'worktree','remove','--force',$BuildSource)
     }
     $listed=Get-SourceGit $Repository @('worktree','list','--porcelain')
@@ -2440,6 +2448,7 @@ function Publish-IndependentSetup {
   } catch {
     $receipt.result='FAIL';$receipt.error=$_.Exception.Message;Report-Status ('FAILED: '+$_.Exception.Message);throw
   } finally {
+    if($script:ossSession){Stop-OssSession}
     if($setupLease){$setupLease.Dispose()}
     $receipt.finishedAt=[DateTime]::UtcNow.ToString('o')
     Save-Json $receipt (Get-DeploymentPath $Output 'result.json')
@@ -2533,6 +2542,7 @@ if(($NativeUpdateFrom -or $FirstChannel1Head) -and !$WhatIfPreference){
     return
   }
 }
+if($NativePublishOnly -and $OssSetupQualification -and !$WhatIfPreference){Start-OssSession}
 if($Commit){
   if(!$NewRun -and !$script:explicitOutput -and !$directoryVersion){
     foreach($candidate in (Get-ChildItem -LiteralPath (Split-Path -Parent $Output) -Directory -Filter 'ecs-deploy-*' | Sort-Object LastWriteTime -Descending)){
@@ -3046,6 +3056,7 @@ try {
   }
   throw
 } finally {
+  if($script:ossSession){Stop-OssSession}
   try {
     if($script:sourceLease -and $script:sourceOwner){
       $cleanup=Remove-OwnedBuildSource

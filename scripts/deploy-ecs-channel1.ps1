@@ -354,31 +354,48 @@ function Get-OssSourceHash([string]$Path) {
   $sha=[Security.Cryptography.SHA256]::Create()
   try{return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text)))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
 }
+function Start-OssSession {
+  if($script:ossSession){
+    if($script:ossSession.HasExited){throw 'Retained WSL OSS session exited; use signed resume.'}
+    return
+  }
+  if($OssWslDistro -cnotmatch '^[A-Za-z0-9_.-]+$' -or $OssRuntimeRoot -cnotmatch '^/home/[A-Za-z0-9_./-]+$' -or $OssRuntimeRoot.Contains('/../')){throw 'Invalid WSL OSS owner'}
+  $worker=@'
+import base64,json,subprocess,sys
+print("READY",flush=True)
+for line in sys.stdin:
+    request=json.loads(line)
+    args=request["args"]
+    for index in (2,3,4,9):
+        if args[index]!="-":
+            args[index]=subprocess.check_output(["wslpath","-u",args[index]],text=True).rstrip("\n")
+    operation=base64.b64decode(request["code"]).decode()
+    child=subprocess.run([sys.executable,"-B","-c",operation,*args],stdout=subprocess.PIPE,text=True)
+    print(json.dumps({"status":child.returncode,"body":child.stdout}),flush=True)
+'@
+  $info=[Diagnostics.ProcessStartInfo]::new()
+  $info.FileName=Join-Path $env:SystemRoot 'System32/wsl.exe'
+  $info.UseShellExecute=$false
+  $info.RedirectStandardInput=$true
+  $info.RedirectStandardOutput=$true
+  $info.StandardInputEncoding=[Text.UTF8Encoding]::new($false)
+  foreach($arg in @('-d',$OssWslDistro,'--exec',("$OssRuntimeRoot/.venv/bin/python"),'-B','-u','-c',$worker)){ $info.ArgumentList.Add($arg) }
+  $script:ossSession=[Diagnostics.Process]::Start($info)
+  if($script:ossSession.StandardOutput.ReadLine() -cne 'READY'){throw 'WSL OSS session startup failed'}
+}
+function Stop-OssSession {
+  if($script:ossSession){
+    try {$script:ossSession.StandardInput.Close();$script:ossSession.WaitForExit()}
+    finally {$script:ossSession.Dispose();$script:ossSession=$null}
+  }
+}
 function Invoke-OssByteOperation([string]$Mode,[string]$Artifact,[string]$Metadata,[string]$ResultPath) {
   if($Mode -cnotin @('msix','setup','retention') -or !$script:RuntimeRoot -or
      $OssRuntimeRoot -cnotmatch '^/home/[A-Za-z0-9_./-]+$' -or $OssRuntimeRoot.Contains('/../') -or
      $OssWslDistro -cnotmatch '^[A-Za-z0-9_.-]+$'){throw 'Invalid pinned WSL OSS owner configuration'}
-  $wsl=Join-Path $env:SystemRoot 'System32/wsl.exe'
-  # --exec bypasses the default Linux shell, preserving Windows backslashes
-  # and the Python program as literal argv rather than reparsing shell text.
-  $artifactOutput=@(& $wsl -d $OssWslDistro --exec wslpath -u $Artifact)
-  if($LASTEXITCODE -ne 0 -or $artifactOutput.Count -ne 1){throw 'Cannot resolve signed artifact in the selected WSL owner'}
-  $linuxArtifact=([string]$artifactOutput[0]).Trim()
-  $resultOutput=@(& $wsl -d $OssWslDistro --exec wslpath -u $ResultPath)
-  if($LASTEXITCODE -ne 0 -or $resultOutput.Count -ne 1){throw 'Cannot resolve OSS result path'}
-  $linuxResult=([string]$resultOutput[0]).Trim()
-  $linuxMetadata='-'
-  if($Metadata){
-    $metadataOutput=@(& $wsl -d $OssWslDistro --exec wslpath -u $Metadata)
-    if($LASTEXITCODE -ne 0 -or $metadataOutput.Count -ne 1){throw 'Cannot resolve pinned metadata path'}
-    $linuxMetadata=([string]$metadataOutput[0]).Trim()
-  }
-  $linuxSuperseded='-'
-  if($Mode -ceq 'retention' -and $SupersededBuildOutput){
-    $converted=@(& $wsl -d $OssWslDistro --exec wslpath -u $SupersededBuildOutput)
-    if($LASTEXITCODE -ne 0 -or $converted.Count -ne 1){throw 'Cannot bind superseded release for retention'}
-    $linuxSuperseded=([string]$converted[0]).Trim()
-  }
+  Start-OssSession
+  $metadataArg=if($Metadata){$Metadata}else{'-'}
+  $supersededArg=if($Mode -ceq 'retention' -and $SupersededBuildOutput){$SupersededBuildOutput}else{'-'}
   $core=Join-Path $script:RuntimeRoot 'src/agents/client_operations/oss_release.py'
   $publisher=Join-Path $Repository 'scripts/releases/channel1.py'
   $protocol=Join-Path $Repository 'hermes_cli/release_channels.py'
@@ -419,11 +436,15 @@ else:
 print(json.dumps(result,separators=(',',':')))
 '@
   $encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($code))
-  $entry="import base64;exec(base64.b64decode('$encoded'))"
   Report-Status ('Scoped WSL OSS operation: '+$Mode+'; no active pointer write')
   $previousSetup=if($Mode -ceq 'setup' -and $OssPreviousSetupSha256){$OssPreviousSetupSha256}else{'-'}
-  $body=& $wsl -d $OssWslDistro --exec ("$OssRuntimeRoot/.venv/bin/python") -B -c $entry $OssRuntimeRoot $Mode $linuxArtifact $linuxMetadata $linuxResult (Get-OssSourceHash $core) (Get-OssSourceHash $publisher) (Get-OssSourceHash $protocol) $previousSetup $linuxSuperseded
-  if($LASTEXITCODE -ne 0){
+  $request=@{code=$encoded;args=@($OssRuntimeRoot,$Mode,$Artifact,$metadataArg,$ResultPath,(Get-OssSourceHash $core),(Get-OssSourceHash $publisher),(Get-OssSourceHash $protocol),$previousSetup,$supersededArg)}
+  $script:ossSession.StandardInput.WriteLine(($request | ConvertTo-Json -Compress))
+  $line=$script:ossSession.StandardOutput.ReadLine()
+  if(!$line){throw 'Lost WSL OSS session; reconcile retained publication before signed resume'}
+  $response=$line | ConvertFrom-Json
+  $body=$response.body.Trim()
+  if($response.status -ne 0){
     if($Mode -ceq 'retention' -and ($body -join '') -ceq '{"state":"OSS_RETENTION_UNQUALIFIED"}'){throw 'OSS_RETENTION_UNQUALIFIED'}
     throw 'Scoped WSL OSS byte operation failed; no credential or authority fallback'
   }
