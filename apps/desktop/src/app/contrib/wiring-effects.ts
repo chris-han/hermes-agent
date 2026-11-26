@@ -77,23 +77,25 @@ export function useGatewayScopeRefresh(
   refreshCurrentModel: (force: boolean) => Promise<unknown>,
   refreshHermesConfig: (force: boolean) => Promise<unknown>
 ) {
-  const gatewayScope = `${activeConnectionId ?? ''}\0${activeGatewayProfile}`
-  const lastGatewayScopeRef = useRef(gatewayScope)
+  const lastGatewayScopeRef = useRef({ connectionId: activeConnectionId, profile: activeGatewayProfile })
 
   // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
   useEffect(() => {
-    if (gatewayScope === lastGatewayScopeRef.current) {
+    const previous = lastGatewayScopeRef.current
+    const profileChanged = previous.profile !== activeGatewayProfile
+
+    // A missing descriptor can be a reconnect blip. Keep the last resolved
+    // connection so its return doesn't erase the owner's saved composer pick.
+    if (!profileChanged && (!activeConnectionId || previous.connectionId === activeConnectionId)) {
       return
     }
 
-    lastGatewayScopeRef.current = gatewayScope
-    // Force: the new source/profile pair has its own defaults, so reseed the
-    // selector even if the composer already shows values from the previous
-    // backend. These refreshes carry intent tokens so an in-flight picker
-    // click still wins.
-    void refreshCurrentModel(true)
+    lastGatewayScopeRef.current = { connectionId: activeConnectionId, profile: activeGatewayProfile }
+    // Initial descriptor discovery has already loaded that owner's scoped
+    // selection. Force a reseed only when leaving a known owner or profile.
+    void refreshCurrentModel(profileChanged || previous.connectionId !== null)
     void refreshHermesConfig(true)
     void refreshActiveProfile()
     resetProjectTreeState()
-  }, [gatewayScope, refreshCurrentModel, refreshHermesConfig])
+  }, [activeConnectionId, activeGatewayProfile, refreshCurrentModel, refreshHermesConfig])
 }
