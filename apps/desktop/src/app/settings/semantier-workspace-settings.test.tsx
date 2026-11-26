@@ -118,3 +118,22 @@ it('signs into Project continuity while leaving the local connection alone', asy
   expect(save).not.toHaveBeenCalled()
   expect(onConnect).not.toHaveBeenCalled()
 })
+
+it('keeps a signed project selectable when its materials request times out', async () => {
+  const projectRef = 'project:7b5a28f1740c41f3bf36d091f8f2880e'
+  Object.defineProperty(window, 'hermesDesktop', {
+    configurable: true,
+    value: {
+      workspace: {
+        identity: vi.fn().mockResolvedValue({
+          authenticated: true, user: { user_id: 'a' }, workspace: { id: 'wa' }, organization_id: 'org'
+        }),
+        projects: vi.fn().mockResolvedValue([{ project_ref: projectRef }]),
+        projectMaterials: vi.fn().mockRejectedValue(new Error('TimeoutError'))
+      }
+    }
+  })
+  render(<SemantierWorkspaceSettings connections={[]} projectsOnly />)
+  expect(await screen.findByRole('option', { name: projectRef })).toBeTruthy()
+  expect((await screen.findByRole('alert')).textContent).toContain('Project materials unavailable')
+})

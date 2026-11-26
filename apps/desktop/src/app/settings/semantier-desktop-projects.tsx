@@ -80,6 +80,8 @@ export function SemantierDesktopProjects({ origin, scope }: { origin: string; sc
   const api = window.hermesDesktop.workspace
   const { userId, workspaceId, organizationId } = scope
   const [projects, setProjects] = useState<WorkspaceProject[]>([])
+  const [projectReads, retryProjectReads] = useState(0)
+  const [readFailure, setReadFailure] = useState<'projects' | 'materials' | 'scope' | null>(null)
   const [materials, setMaterials] = useState<WorkspaceProjectMaterials | null>(null)
   const [selected, select] = useState<WorkspaceProjectContinuation | null>(null)
   const [graphRef, setGraphRef] = useState('')
@@ -99,12 +101,35 @@ export function SemantierDesktopProjects({ origin, scope }: { origin: string; sc
     if (!api) {return}
     let active = true
     const current = { userId, workspaceId, organizationId }
-    void Promise.all([api.projects(origin, current), api.projectMaterials(origin, current)]).then(([rows, choices]) => {
-      if (active) { setProjects(rows); setMaterials(choices) }
-    }).catch(() => { if (active) {setStatus('error')} })
+    function failRead(error: unknown, stage: 'projects' | 'materials') {
+      if (!active) {return}
+      const message = error instanceof Error ? error.message : ''
+      if (/account or workspace changed|\((401|403)\)/i.test(message)) {
+        setProjects([])
+        setMaterials(null)
+        select(null)
+        setHistory(null)
+        setDraft(initial)
+        setReadFailure('scope')
+      } else {
+        setReadFailure(stage)
+      }
+    }
+
+    setReadFailure(null)
+    void api.projects(origin, current).then(async rows => {
+      if (!active) {return}
+      setProjects(rows)
+      try {
+        const choices = await api.projectMaterials(origin, current)
+        if (active) {setMaterials(choices)}
+      } catch (error) {
+        failRead(error, 'materials')
+      }
+    }).catch(error => failRead(error, 'projects'))
 
     return () => { active = false }
-  }, [api, origin, userId, workspaceId, organizationId])
+  }, [api, origin, userId, workspaceId, organizationId, projectReads])
 
   async function run(operation: () => Promise<void>) {
     setBusy(true)
@@ -184,7 +209,13 @@ export function SemantierDesktopProjects({ origin, scope }: { origin: string; sc
         {status === 'conflict' ? t('Another edit advanced this project. Load the latest decision before saving.', '项目已有更新。请加载最新决策后再保存。') : t('Project unavailable. Check the Workspace account and try again.', '项目不可用。请检查工作区账户后重试。')}
       </p>}
       {busy && <p className="text-xs" role="status">{t('Updating project…', '正在更新项目…')}</p>}
-      {!materials && !status && <p className="text-xs" role="status">{t('Loading projects…', '正在加载项目…')}</p>}
+      {readFailure && <div className="text-xs text-destructive" role="alert">
+        {readFailure === 'materials'
+          ? t('Project materials unavailable. You can still open an existing project.', '项目材料不可用。你仍可打开现有项目。')
+          : t('Projects unavailable. Check the Workspace account and try again.', '项目不可用。请检查工作区账户后重试。')}
+        <Button onClick={() => { pending.current = null; retryProjectReads(value => value + 1) }} type="button" variant="outline">{t('Retry', '重试')}</Button>
+      </div>}
+      {!materials && !status && !readFailure && <p className="text-xs" role="status">{t('Loading projects…', '正在加载项目…')}</p>}
       {materials && !materials.graphs.length && !projects.length && <p className="text-xs">{t('No admitted project context is available.', '没有可用的已接纳项目上下文。')}</p>}
       {projects.length > 0 && <label className="grid gap-1 text-xs">
         {t('Project', '项目')}
