@@ -100,7 +100,8 @@ describe('TreeGroup', () => {
     expect(header.querySelector('[data-zone-tabstrip]')).not.toBeNull()
     const dragHandle = header.querySelector<HTMLElement>('[data-window-drag-handle]')!
     expect(dragHandle.contains(header.querySelector('[data-organization-brand]'))).toBe(true)
-    expect(dragHandle.style.width).toBe('48px')
+    expect(dragHandle.classList.contains('[-webkit-app-region:drag]')).toBe(true)
+    expect(dragHandle.querySelector('img')?.classList.contains('size-8')).toBe(true)
     expect(dragHandle.compareDocumentPosition(header.querySelector('[aria-label="Hide sidebar"]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     const bots = header.querySelector<HTMLElement>('[data-tree-tab="bots"]')!
     expect(bots.tabIndex).toBe(0)
