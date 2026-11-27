@@ -84,6 +84,29 @@ describe('narrow overlay of a stacked zone', () => {
     expect(queryByTestId('sessions-body')).toBeNull()
   })
 
+  it('keeps the organization and sidebar control above the tabs when switching panes', () => {
+    const view = render(<NarrowOverlays />)
+
+    revealPane('sessions')
+
+    const header = view.container.querySelector('[data-narrow-sessions-header]')!
+    const brand = header.querySelector('[data-organization-brand]')!
+    const collapse = view.getByRole('button', { name: /hide sidebar/i })
+    const tabs = view.getByRole('tablist')
+
+    expect(brand.querySelector('img')?.classList.contains('size-8')).toBe(true)
+    expect(brand.textContent).toBeTruthy()
+    expect(header.contains(collapse)).toBe(true)
+    expect(header.compareDocumentPosition(tabs)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+
+    fireEvent.pointerDown(overlayTab('bots')!, { button: 0 })
+    expect(view.getByTestId('bots-body')).toBeTruthy()
+    expect(view.getByRole('button', { name: /hide sidebar/i })).toBe(collapse)
+
+    fireEvent.click(collapse)
+    expect(view.queryByRole('tablist')).toBeNull()
+  })
+
   it('keeps the stripless form for a zone with a single collapsible', () => {
     // Direct set: declareDefaultTree only ADOPTS into an existing tree — it
     // would keep the beforeEach zone (with bots) instead of replacing it.

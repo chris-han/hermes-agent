@@ -9,11 +9,16 @@
 import { useStore } from '@nanostores/react'
 import { type MouseEventHandler, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { PaneTab, PaneTabLabel, PaneTabStrip } from '@/components/ui/pane-tab'
+import { TITLEBAR_HEIGHT } from '@/app/shell/titlebar'
+import { TitlebarIcon } from '@/app/shell/titlebar-icon'
+import { OrganizationBrand } from '@/components/organization-brand'
+import { PaneStripGlyph, PaneTab, PaneTabLabel, PaneTabStrip } from '@/components/ui/pane-tab'
 import { ContribBoundary, ContribRender } from '@/contrib/react/boundary'
 import { useContributions } from '@/contrib/react/use-contributions'
 import type { Contribution } from '@/contrib/types'
+import { useI18n } from '@/i18n'
 import { ESCAPE_PRIORITY, isTopEscapeLayer, pushEscapeLayer } from '@/lib/escape-layers'
+import { triggerHaptic } from '@/lib/haptics'
 import { cn } from '@/lib/utils'
 import { $chatOnboardingSolo } from '@/store/onboarding-intro'
 import { $paneStates } from '@/store/panes'
@@ -46,6 +51,7 @@ export function narrowOverlayWidth(ctx: TrackContext, tree: LayoutNode | null, r
 }
 
 export function NarrowOverlays() {
+  const { t } = useI18n()
   const narrow = useStore($narrowViewport)
   const solo = useStore($chatOnboardingSolo)
   const tree = useStore($layoutTree)
@@ -184,6 +190,10 @@ export function NarrowOverlays() {
 
     return shown.length > 0 ? shown : [revealed]
   })()
+  const showSessionsHeader = zonePanes.some(pane => pane.id === 'sessions')
+  // The branded row must clear the fixed app controls even when the native
+  // controls do not overlap the sidebar.
+  const topInset = Math.max(wcOverlap ? wcOverlap.y + wcOverlap.height : 0, showSessionsHeader ? TITLEBAR_HEIGHT : 0)
 
   return (
     <>
@@ -219,11 +229,8 @@ export function NarrowOverlays() {
           ref={overlayRef}
           // Match the pane's docked width (sessions ~237px, files its rail
           // width) instead of a fat fixed 20rem — capped for tiny screens.
-          // paddingTop keeps the tab strip below the native window controls
-          // (macOS traffic lights); the spacer above keeps that band
-          // draggable, mirroring TreeGroup's reservation.
           style={{
-            paddingTop: wcOverlap ? wcOverlap.y + wcOverlap.height : undefined,
+            paddingTop: topInset || undefined,
             width: `min(${overlayWidth}, 85vw)`
           }}
         >
@@ -233,6 +240,23 @@ export function NarrowOverlays() {
               className="pointer-events-none absolute z-10 [-webkit-app-region:drag]"
               style={{ height: wcOverlap.height, left: wcOverlap.x, top: wcOverlap.y, width: wcOverlap.width }}
             />
+          )}
+          {showSessionsHeader && (
+            <div
+              className="flex min-h-10 shrink-0 items-center justify-between gap-2 px-2 py-1 [-webkit-app-region:drag]"
+              data-narrow-sessions-header=""
+              data-window-drag-handle=""
+            >
+              <OrganizationBrand compact markClassName="size-8" />
+              <PaneStripGlyph
+                icon={<TitlebarIcon name="layout-sidebar-left" />}
+                label={t.titlebar.hideSidebar}
+                onSelect={() => {
+                  triggerHaptic('tap')
+                  setReveal(null)
+                }}
+              />
+            </div>
           )}
           {/* Zone-mates share the overlay through the zone's own tab strip
               (SESSIONS | BOTS) — a lone pane keeps the stripless form. */}

@@ -26,10 +26,9 @@
 @import '@fontsource/noto-sans-sc/600.css';
 @import '@fontsource/noto-sans-sc/700.css';
 
-/* Integrated left-rail chrome replaces the standalone titlebar toggle and
-   body branding only while its compact header is present. */
-body:has([data-compact-sessions-header]) [data-titlebar-cluster='left'] [data-tour='sidebar-toggle'],
-[data-compact-sessions-header] [data-sidebar-organization-brand] {
+/* Docked and revealed sessions headers have their own brand and toggle. */
+body:has([data-compact-sessions-header], [data-narrow-sessions-header]) [data-titlebar-cluster='left'] [data-tour='sidebar-toggle'],
+:is([data-compact-sessions-header], [data-narrow-overlay]:has([data-narrow-sessions-header])) [data-sidebar-organization-brand] {
   display: none;
 }
 
@@ -39,7 +38,7 @@ body:has([data-collapsed-sessions-rail]) [data-titlebar-cluster='left'] [data-to
   translate: -12px 0;
 }
 
-[data-compact-sessions-header] [data-tour='sessions-sidebar'] [data-slot='sidebar-group'] {
+:is([data-compact-sessions-header], [data-narrow-overlay]:has([data-narrow-sessions-header])) [data-tour='sessions-sidebar'] [data-slot='sidebar-group'] {
   padding-top: 0.375rem;
 }
 
