@@ -25,7 +25,7 @@ export function NativePluginCatalog({
   const c = useInventoryCopy()
   const [query, setQuery] = useState(initialQuery)
 
-  const [provider, setProvider] = useState("nous")
+  const [provider, setProvider] = useState('nous')
 
   const catalog = useQuery(
     {
@@ -33,7 +33,7 @@ export function NativePluginCatalog({
       queryFn: () =>
         request<{ available: boolean; entries: (PluginCatalogEntry & { description: string })[] }>(
           'plugins.catalog.list',
-          { ...(profile ? { profile } : {}), ...(provider === "semantier" ? { provider } : {}) },
+          { ...(profile ? { profile } : {}), ...(provider === 'semantier' ? { provider } : {}) },
           20_000
         ),
       retry: false

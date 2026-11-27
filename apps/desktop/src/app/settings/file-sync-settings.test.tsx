@@ -61,7 +61,8 @@ it('ignores a completed folder operation from the previous account', async () =>
 it('clears a failed status poll after recovery and retains current engine errors', async () => {
   vi.useFakeTimers()
 
-  const status = vi.fn()
+  const status = vi
+    .fn()
     .mockRejectedValueOnce(new Error('identity timeout'))
     .mockResolvedValueOnce({ state: 'Synced', folder: 'pilot' })
     .mockResolvedValue({ state: 'Error', folder: 'pilot', message: 'Engine unavailable' })
@@ -74,10 +75,14 @@ it('clears a failed status poll after recovery and retains current engine errors
   render(<FileSyncSettings />)
   await act(async () => {})
   expect(screen.getByRole('alert').textContent).toContain('Reconnect your Workspace')
-  await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(2000)
+  })
   expect(screen.getByText('Synced')).toBeTruthy()
   expect(screen.queryByRole('alert')).toBeNull()
-  await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(2000)
+  })
   expect(screen.getByText('Error')).toBeTruthy()
   expect(screen.getByRole('alert').textContent).toBe('Engine unavailable')
 })
@@ -87,8 +92,14 @@ it('does not let a previous account poll clear the current account error', async
 
   let finish: (value: any) => void = () => {}
 
-  const status = vi.fn()
-    .mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  const status = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve
+        })
+    )
     .mockRejectedValue(new Error('current owner offline'))
 
   window.hermesDesktop = {
@@ -97,9 +108,13 @@ it('does not let a previous account poll clear the current account error', async
   }
   connect('a')
   render(<FileSyncSettings />)
-  await act(async () => { connect('b') })
+  await act(async () => {
+    connect('b')
+  })
   expect(screen.getByRole('alert').textContent).toContain('Reconnect your Workspace')
-  await act(async () => { finish({ state: 'Synced', folder: 'A-private-folder' }) })
+  await act(async () => {
+    finish({ state: 'Synced', folder: 'A-private-folder' })
+  })
   expect(screen.getByRole('alert').textContent).toContain('Reconnect your Workspace')
   expect(screen.queryByText('A-private-folder')).toBeNull()
 })
@@ -109,18 +124,36 @@ it('keeps the current account poll when earlier success and failure settle late'
   let oldSuccess!: (value: any) => void
   let oldFailure!: (reason: Error) => void
 
-  const status = vi.fn()
-    .mockImplementationOnce(() => new Promise(resolve => { oldSuccess = resolve }))
-    .mockImplementationOnce(() => new Promise((_, reject) => { oldFailure = reject }))
+  const status = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          oldSuccess = resolve
+        })
+    )
+    .mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          oldFailure = reject
+        })
+    )
     .mockResolvedValue({ state: 'Conflict', folder: 'current-folder' })
 
   window.hermesDesktop = { ...original, fileSync: { status, choose: vi.fn(), pause: vi.fn(), resume: vi.fn() } }
   connect('a')
   render(<FileSyncSettings />)
-  await act(async () => { connect('b') })
-  await act(async () => { connect('c') })
+  await act(async () => {
+    connect('b')
+  })
+  await act(async () => {
+    connect('c')
+  })
   expect(screen.getByText('Conflict')).toBeTruthy()
-  await act(async () => { oldSuccess({ state: 'Paused', folder: 'old-folder' }); oldFailure(new Error('obsolete')) })
+  await act(async () => {
+    oldSuccess({ state: 'Paused', folder: 'old-folder' })
+    oldFailure(new Error('obsolete'))
+  })
   expect(screen.getByText('Conflict')).toBeTruthy()
   expect(screen.getByText('current-folder')).toBeTruthy()
   expect(screen.queryByText('old-folder')).toBeNull()
@@ -131,18 +164,36 @@ it('does not let a pre-resume poll overwrite the resumed folder', async () => {
   vi.useFakeTimers()
   let finish!: (value: any) => void
 
-  const status = vi.fn()
+  const status = vi
+    .fn()
     .mockResolvedValueOnce({ state: 'Paused', folder: 'current-folder' })
-    .mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    .mockImplementation(
+      () =>
+        new Promise(resolve => {
+          finish = resolve
+        })
+    )
 
-  window.hermesDesktop = { ...original, fileSync: { status, choose: vi.fn(), pause: vi.fn(), resume: async () => ({ state: 'Synced', folder: 'current-folder' }) } }
+  window.hermesDesktop = {
+    ...original,
+    fileSync: {
+      status,
+      choose: vi.fn(),
+      pause: vi.fn(),
+      resume: async () => ({ state: 'Synced', folder: 'current-folder' })
+    }
+  }
   connect('a')
   render(<FileSyncSettings />)
   await act(async () => {})
-  await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(2000)
+  })
   fireEvent.click(screen.getByRole('button', { name: 'Resume' }))
   await act(async () => {})
-  await act(async () => { finish({ state: 'Paused', folder: 'old-folder' }) })
+  await act(async () => {
+    finish({ state: 'Paused', folder: 'old-folder' })
+  })
   expect(screen.getByText('Synced')).toBeTruthy()
   expect(screen.queryByText('old-folder')).toBeNull()
 })
@@ -150,18 +201,30 @@ it('does not let a pre-resume poll overwrite the resumed folder', async () => {
 it('rejects late A results after A to B to A and displays current Error and Paused', async () => {
   let finish!: (value: any) => void
 
-  const status = vi.fn()
-    .mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  const status = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve
+        })
+    )
     .mockResolvedValueOnce({ state: 'Paused', folder: 'B-folder' })
     .mockResolvedValue({ state: 'Error', folder: 'A-current', message: 'Actual engine error' })
 
   window.hermesDesktop = { ...original, fileSync: { status, choose: vi.fn(), pause: vi.fn(), resume: vi.fn() } }
   connect('a')
   render(<FileSyncSettings />)
-  await act(async () => { connect('b') })
+  await act(async () => {
+    connect('b')
+  })
   expect(screen.getByText('Paused')).toBeTruthy()
-  await act(async () => { connect('a') })
-  await act(async () => { finish({ state: 'Synced', folder: 'A-old' }) })
+  await act(async () => {
+    connect('a')
+  })
+  await act(async () => {
+    finish({ state: 'Synced', folder: 'A-old' })
+  })
   expect(screen.getByText('Error')).toBeTruthy()
   expect(screen.getByRole('alert').textContent).toBe('Actual engine error')
   expect(screen.getByText('A-current')).toBeTruthy()
@@ -173,21 +236,33 @@ it('publishes a slow settled poll so the selected folder can be resumed', async 
   vi.useFakeTimers()
   let finish!: (value: any) => void
 
-  const status = vi.fn()
-    .mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  const status = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve
+        })
+    )
     .mockImplementation(() => new Promise(() => {}))
 
   window.hermesDesktop = { ...original, fileSync: { status, choose: vi.fn(), pause: vi.fn(), resume: vi.fn() } }
   connect('a')
   render(<FileSyncSettings />)
-  await act(async () => { await vi.advanceTimersByTimeAsync(8000) })
-  await act(async () => { finish({ state: 'Paused', folder: 'current-folder' }) })
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(8000)
+  })
+  await act(async () => {
+    finish({ state: 'Paused', folder: 'current-folder' })
+  })
   expect(screen.getByText('current-folder')).toBeTruthy()
   expect(screen.getByRole('button', { name: 'Resume' }).hasAttribute('disabled')).toBe(false)
   expect(status).toHaveBeenCalledTimes(1)
 
   status.mockResolvedValue({ state: 'Synced', folder: 'current-folder' })
-  await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(2000)
+  })
   expect(screen.getByText('Synced')).toBeTruthy()
 })
 
@@ -195,20 +270,32 @@ it('surfaces a slow failed poll and recovers after it settles', async () => {
   vi.useFakeTimers()
   let fail!: (reason: Error) => void
 
-  const status = vi.fn()
-    .mockImplementationOnce(() => new Promise((_, reject) => { fail = reject }))
+  const status = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          fail = reject
+        })
+    )
     .mockImplementation(() => new Promise(() => {}))
 
   window.hermesDesktop = { ...original, fileSync: { status, choose: vi.fn(), pause: vi.fn(), resume: vi.fn() } }
   connect('a')
   render(<FileSyncSettings />)
-  await act(async () => { await vi.advanceTimersByTimeAsync(8000) })
-  await act(async () => { fail(new Error('slow identity timeout')) })
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(8000)
+  })
+  await act(async () => {
+    fail(new Error('slow identity timeout'))
+  })
   expect(screen.getByRole('alert').textContent).toContain('Reconnect your Workspace')
   expect(status).toHaveBeenCalledTimes(1)
 
   status.mockResolvedValue({ state: 'Synced', folder: 'current-folder' })
-  await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(2000)
+  })
   expect(screen.getByText('Synced')).toBeTruthy()
   expect(screen.queryByRole('alert')).toBeNull()
 })

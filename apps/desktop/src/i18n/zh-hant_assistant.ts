@@ -95,7 +95,8 @@ export const zhHantAssistant = {
         },
         ssl_cert_verification: {
           title: '安全連線失敗',
-          body: provider => `Semantier 無法驗證與 ${provider} 的安全連線。請檢查網路或代理設定，或切換服務商後重新傳送。`
+          body: provider =>
+            `Semantier 無法驗證與 ${provider} 的安全連線。請檢查網路或代理設定，或切換服務商後重新傳送。`
         }
       },
       errorLayers: {

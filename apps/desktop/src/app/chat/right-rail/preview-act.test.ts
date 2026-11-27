@@ -156,9 +156,9 @@ describe('actOnActivePreview (drive_preview tool)', () => {
       const before = run.mock.calls.length
       expect((await actOnActivePreview({ kind: 'click', ref }, undefined, 'other-session')).success).toBe(false)
       expect(run).toHaveBeenCalledTimes(before)
-      expect((await actOnActivePreview({ kind: 'type', ref, text: 'fixture budget' }, undefined, 'budget-owner')).success).toBe(
-        true
-      )
+      expect(
+        (await actOnActivePreview({ kind: 'type', ref, text: 'fixture budget' }, undefined, 'budget-owner')).success
+      ).toBe(true)
       expect(document.querySelector('input')!.value).toBe('fixture budget')
     } finally {
       rect.mockRestore()
@@ -173,33 +173,56 @@ describe('actOnActivePreview (drive_preview tool)', () => {
     const send = vi.fn()
     cleanups.push(registerPreviewScriptRunner(tabId, async () => ''))
     cleanups.push(registerPreviewInput(tabId, { focus: vi.fn(), send }))
-    cleanups.push(registerPreviewFrameRunner(tabId, {
-      list: async () => [{ token: 'main' }, { token }],
-      input: async (_token, event) => { send(event) },
-      mapPoint: async (_token, point) => ({ visible: true, x: point.x + 100, y: point.y + 50 }),
-      run: async (frame, code) => code.includes('"kind":"locate"')
-        ? JSON.stringify({ success: true, acted: 'looking at button "Save"', point: { x: 10, y: 20 } })
-        : JSON.stringify({ success: true, elements: [{ label: frame === 'main' ? 'Outer' : 'Save', ref: 'btn-save', role: 'button' }], hit: { tag: 'BUTTON', trusted: true } })
-    }))
+    cleanups.push(
+      registerPreviewFrameRunner(tabId, {
+        list: async () => [{ token: 'main' }, { token }],
+        input: async (_token, event) => {
+          send(event)
+        },
+        mapPoint: async (_token, point) => ({ visible: true, x: point.x + 100, y: point.y + 50 }),
+        run: async (frame, code) =>
+          code.includes('"kind":"locate"')
+            ? JSON.stringify({ success: true, acted: 'looking at button "Save"', point: { x: 10, y: 20 } })
+            : JSON.stringify({
+                success: true,
+                elements: [{ label: frame === 'main' ? 'Outer' : 'Save', ref: 'btn-save', role: 'button' }],
+                hit: { tag: 'BUTTON', trusted: true }
+              })
+      })
+    )
     const inventory = await actOnActivePreview({ kind: 'elements' })
     expect(inventory.elements?.map(item => item.ref)).toEqual(['btn-save', `frame:${token}:btn-save`])
     const clicked = await actOnActivePreview({ kind: 'click', ref: `frame:${token}:btn-save` })
     expect(clicked.success).toBe(true)
-    expect(send.mock.calls.map(([event]) => event).find(event => event.type === 'mouseDown')).toMatchObject({ x: 110, y: 70 })
+    expect(send.mock.calls.map(([event]) => event).find(event => event.type === 'mouseDown')).toMatchObject({
+      x: 110,
+      y: 70
+    })
   })
 
   it('does not report an empty outer page when a child frame has controls', async () => {
     const tabId = openBrowserTab()
     const token = '12345678-1234-1234-1234-123456789abc'
     cleanups.push(registerPreviewScriptRunner(tabId, async () => ''))
-    cleanups.push(registerPreviewFrameRunner(tabId, {
-      list: async () => [{ token: 'main' }, { token }],
-      input: async () => {},
-      mapPoint: async (_token, point) => ({ visible: true, ...point }),
-      run: async frame => JSON.stringify(frame === 'main'
-        ? { success: true, elements: [], title: 'Outer', url: 'https://example.com/', note: 'No interactive elements found — the page may still be loading.' }
-        : { success: true, elements: [{ label: 'Child', ref: 'btn-child', role: 'button' }] })
-    }))
+    cleanups.push(
+      registerPreviewFrameRunner(tabId, {
+        list: async () => [{ token: 'main' }, { token }],
+        input: async () => {},
+        mapPoint: async (_token, point) => ({ visible: true, ...point }),
+        run: async frame =>
+          JSON.stringify(
+            frame === 'main'
+              ? {
+                  success: true,
+                  elements: [],
+                  title: 'Outer',
+                  url: 'https://example.com/',
+                  note: 'No interactive elements found — the page may still be loading.'
+                }
+              : { success: true, elements: [{ label: 'Child', ref: 'btn-child', role: 'button' }] }
+          )
+      })
+    )
     const result = await actOnActivePreview({ kind: 'elements' })
     expect(result.elements?.[0].ref).toBe(`frame:${token}:btn-child`)
     expect(result.title).toBe('Outer')
@@ -213,12 +236,16 @@ describe('actOnActivePreview (drive_preview tool)', () => {
     const send = vi.fn()
     cleanups.push(registerPreviewScriptRunner(tabId, async () => ''))
     cleanups.push(registerPreviewInput(tabId, { focus: vi.fn(), send }))
-    cleanups.push(registerPreviewFrameRunner(tabId, {
-      list: async () => [{ token }],
-      input: async (_token, event) => { send(event) },
-      mapPoint: async (_token, point) => ({ visible: false, ...point }),
-      run: async () => JSON.stringify({ success: true, point: { x: 10, y: 20 } })
-    }))
+    cleanups.push(
+      registerPreviewFrameRunner(tabId, {
+        list: async () => [{ token }],
+        input: async (_token, event) => {
+          send(event)
+        },
+        mapPoint: async (_token, point) => ({ visible: false, ...point }),
+        run: async () => JSON.stringify({ success: true, point: { x: 10, y: 20 } })
+      })
+    )
     const result = await actOnActivePreview({ kind: 'click', ref: `frame:${token}:btn-save` })
     expect(result.success).toBe(false)
     expect(send).not.toHaveBeenCalled()
@@ -255,31 +282,59 @@ describe('actOnActivePreview (drive_preview tool)', () => {
 
   const sentTypes = (send: ReturnType<typeof vi.fn>) => send.mock.calls.map(([event]) => event.type)
 
-  it.each(['navigation', 'replacement', 'cancellation'])('keeps completed input separate from %s during readback', async change => {
-    withDrivenPane()
-    const tabId = $rightRailActiveTabId.get()!
-    let epoch = 1
-    let guest = 17
-    const controller = new AbortController()
-    cleanups.push(registerPreviewPageReader(tabId, async () => ({ text: '', title: '', url: 'https://example.com' }),
-      () => ({ guest_id: guest, page_epoch: epoch, loading: false })))
-    cleanups.push(registerPreviewInput(tabId, { focus: () => {}, send: event => {
-      if (event.type !== 'mouseUp') {return}
+  it.each(['navigation', 'replacement', 'cancellation'])(
+    'keeps completed input separate from %s during readback',
+    async change => {
+      withDrivenPane()
+      const tabId = $rightRailActiveTabId.get()!
+      let epoch = 1
+      let guest = 17
+      const controller = new AbortController()
+      cleanups.push(
+        registerPreviewPageReader(
+          tabId,
+          async () => ({ text: '', title: '', url: 'https://example.com' }),
+          () => ({ guest_id: guest, page_epoch: epoch, loading: false })
+        )
+      )
+      cleanups.push(
+        registerPreviewInput(tabId, {
+          focus: () => {},
+          send: event => {
+            if (event.type !== 'mouseUp') {
+              return
+            }
 
-      if (change === 'navigation') {epoch++}
+            if (change === 'navigation') {
+              epoch++
+            }
 
-      if (change === 'replacement') {guest++}
+            if (change === 'replacement') {
+              guest++
+            }
 
-      if (change === 'cancellation') {controller.abort('interrupted')}
-    } }))
-    const result = actOnActivePreview({ kind: 'click', ref: '@e1', expectedBinding: activePreviewBinding()! }, controller.signal)
+            if (change === 'cancellation') {
+              controller.abort('interrupted')
+            }
+          }
+        })
+      )
+      const result = actOnActivePreview(
+        { kind: 'click', ref: '@e1', expectedBinding: activePreviewBinding()! },
+        controller.signal
+      )
 
-    if (change === 'navigation') {
-      await expect(result).resolves.toMatchObject({ success: true, acted: expect.stringContaining('clicked'), note: expect.stringContaining('navigating') })
-    } else {
-      await expect(result).rejects.toThrow('STALE_TARGET')
+      if (change === 'navigation') {
+        await expect(result).resolves.toMatchObject({
+          success: true,
+          acted: expect.stringContaining('clicked'),
+          note: expect.stringContaining('navigating')
+        })
+      } else {
+        await expect(result).rejects.toThrow('STALE_TARGET')
+      }
     }
-  })
+  )
 
   it('clicks with real input, walking the pointer to where the page said', async () => {
     const send = withDrivenPane()

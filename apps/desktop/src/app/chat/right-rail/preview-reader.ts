@@ -86,64 +86,114 @@ const identities = new Map<string, () => PreviewIdentity>()
 const PREVIEW_READ_LOAD_TIMEOUT_MS = 4_000
 
 export function activePreviewBinding(owner?: PreviewOwner, includeLoading = false): PreviewBinding | null {
-  const tab=resolveActivePreviewTab(previewTabsFor(owner), { includeHover: false })
+  const tab = resolveActivePreviewTab(previewTabsFor(owner), { includeHover: false })
 
-  if(!tab){return null}
+  if (!tab) {
+    return null
+  }
   let identity: PreviewIdentity | undefined
 
-  try {identity=identities.get(tab.id)?.()} catch {return null}
+  try {
+    identity = identities.get(tab.id)?.()
+  } catch {
+    return null
+  }
 
-  if(!identity || identity.guest_id<0 || (!includeLoading && identity.loading)){return null}
-  const who=ownerIdentity(owner ?? null)
+  if (!identity || identity.guest_id < 0 || (!includeLoading && identity.loading)) {
+    return null
+  }
+  const who = ownerIdentity(owner ?? null)
 
-  return {profile_id:who.profile ?? previewProfileScope(),user_selection:browserUserSelection(tab.id) ?? 0,session_id:who.runtimeId ?? who.sessionId ?? '',window_id:previewWindowId,tab_id:tab.id,guest_id:identity.guest_id,page_epoch:identity.page_epoch}
+  return {
+    profile_id: who.profile ?? previewProfileScope(),
+    user_selection: browserUserSelection(tab.id) ?? 0,
+    session_id: who.runtimeId ?? who.sessionId ?? '',
+    window_id: previewWindowId,
+    tab_id: tab.id,
+    guest_id: identity.guest_id,
+    page_epoch: identity.page_epoch
+  }
 }
 
 /** Top-level navigation commits are separate from starts and subframe changes. */
 export function activePreviewCommittedEpoch(owner: PreviewOwner, guestId: number): number | undefined {
   const tab = resolveActivePreviewTab(previewTabsFor(owner))
 
-  if (!tab) { return undefined }
+  if (!tab) {
+    return undefined
+  }
 
   try {
     const identity = identities.get(tab.id)?.()
 
     return identity?.guest_id === guestId ? identity.committed_epoch : undefined
-  } catch { return undefined }
+  } catch {
+    return undefined
+  }
 }
 
 /** Whether the owned tab's registered guest currently reports a load in progress. */
 export function isActivePreviewLoading(owner: PreviewOwner, guestId: number): boolean {
   const tab = resolveActivePreviewTab(previewTabsFor(owner))
 
-  if (!tab) { return false }
+  if (!tab) {
+    return false
+  }
 
   try {
     const identity = identities.get(tab.id)?.()
 
     return identity?.guest_id === guestId && identity.loading === true
-  } catch { return false }
+  } catch {
+    return false
+  }
 }
 
-export function bindingStatus(expected: PreviewBinding, allowEpochRefresh = false, owner?: PreviewOwner, allowLoading = false): 'WRONG_OWNER' | 'STALE_TARGET' | null {
+export function bindingStatus(
+  expected: PreviewBinding,
+  allowEpochRefresh = false,
+  owner?: PreviewOwner,
+  allowLoading = false
+): 'WRONG_OWNER' | 'STALE_TARGET' | null {
   const who = ownerIdentity(owner ?? null)
   const tabs = previewTabsFor(owner)
 
-  if (expected.profile_id && expected.profile_id !== (who.profile ?? previewProfileScope())) { return 'WRONG_OWNER' }
+  if (expected.profile_id && expected.profile_id !== (who.profile ?? previewProfileScope())) {
+    return 'WRONG_OWNER'
+  }
 
-  if (expected.window_id !== previewWindowId || expected.session_id !== (who.runtimeId ?? who.sessionId ?? '') || !tabs.some(tab => tab.id === expected.tab_id)) { return 'WRONG_OWNER' }
+  if (
+    expected.window_id !== previewWindowId ||
+    expected.session_id !== (who.runtimeId ?? who.sessionId ?? '') ||
+    !tabs.some(tab => tab.id === expected.tab_id)
+  ) {
+    return 'WRONG_OWNER'
+  }
 
-  if (resolveActivePreviewTab(tabs, { includeHover: false })?.id !== expected.tab_id) { return 'STALE_TARGET' }
+  if (resolveActivePreviewTab(tabs, { includeHover: false })?.id !== expected.tab_id) {
+    return 'STALE_TARGET'
+  }
   const live = identities.get(expected.tab_id)?.()
 
-  return !live || (!allowLoading && live.loading) || live.guest_id !== expected.guest_id || (!allowEpochRefresh && live.page_epoch !== expected.page_epoch) ? 'STALE_TARGET' : null
+  return !live ||
+    (!allowLoading && live.loading) ||
+    live.guest_id !== expected.guest_id ||
+    (!allowEpochRefresh && live.page_epoch !== expected.page_epoch)
+    ? 'STALE_TARGET'
+    : null
 }
 
 /** Register a live preview's page reader; returns an idempotent unregister. */
-export function registerPreviewPageReader(tabId: string, reader: PageReader, identity?: () => PreviewIdentity): () => void {
+export function registerPreviewPageReader(
+  tabId: string,
+  reader: PageReader,
+  identity?: () => PreviewIdentity
+): () => void {
   readers.set(tabId, reader)
 
-  if (identity) { identities.set(tabId, identity) }
+  if (identity) {
+    identities.set(tabId, identity)
+  }
 
   return () => {
     if (readers.get(tabId) === reader) {
@@ -188,53 +238,101 @@ function withMultiNote(note: string | undefined, multi: boolean): string | undef
   return note ? `${note} ${extra}` : extra
 }
 
-async function readLivePreviewPage(tab: PreviewTab, reader: PageReader, opts: PreviewReadOptions, sessionId?: PreviewOwner) {
+async function readLivePreviewPage(
+  tab: PreviewTab,
+  reader: PageReader,
+  opts: PreviewReadOptions,
+  sessionId?: PreviewOwner
+) {
   const before = identities.get(tab.id)?.()
 
-  if (opts.require_live && (!before || before.guest_id < 0 || before.loading)) { throw new Error('PANE_UNAVAILABLE') }
+  if (opts.require_live && (!before || before.guest_id < 0 || before.loading)) {
+    throw new Error('PANE_UNAVAILABLE')
+  }
   const page = await reader()
   const identity = identities.get(tab.id)?.()
 
-  if (opts.require_live && before && identity &&
-    (before.guest_id !== identity.guest_id || before.page_epoch !== identity.page_epoch)) { throw new Error('STALE_TARGET') }
+  if (
+    opts.require_live &&
+    before &&
+    identity &&
+    (before.guest_id !== identity.guest_id || before.page_epoch !== identity.page_epoch)
+  ) {
+    throw new Error('STALE_TARGET')
+  }
 
-  if (opts.require_live && (!identity || identity.guest_id < 0 || identity.loading)) { throw new Error('PANE_UNAVAILABLE') }
+  if (opts.require_live && (!identity || identity.guest_id < 0 || identity.loading)) {
+    throw new Error('PANE_UNAVAILABLE')
+  }
   const who = ownerIdentity(sessionId ?? null)
-  const binding = identity ? {profile_id:who.profile ?? previewProfileScope(),user_selection:browserUserSelection(tab.id) ?? 0,session_id:who.runtimeId ?? who.sessionId ?? '',window_id:previewWindowId,tab_id:tab.id,guest_id:identity.guest_id,page_epoch:identity.page_epoch} : undefined
+  const binding = identity
+    ? {
+        profile_id: who.profile ?? previewProfileScope(),
+        user_selection: browserUserSelection(tab.id) ?? 0,
+        session_id: who.runtimeId ?? who.sessionId ?? '',
+        window_id: previewWindowId,
+        tab_id: tab.id,
+        guest_id: identity.guest_id,
+        page_epoch: identity.page_epoch
+      }
+    : undefined
 
   const status = opts.expected_binding && bindingStatus(opts.expected_binding, opts.refresh_binding, sessionId)
-  if (status) { throw new Error(status) }
 
-  if (opts.require_live && !page.url) { throw new Error('PANE_UNAVAILABLE') }
+  if (status) {
+    throw new Error(status)
+  }
 
-  return {page, binding}
+  if (opts.require_live && !page.url) {
+    throw new Error('PANE_UNAVAILABLE')
+  }
+
+  return { page, binding }
 }
 
 async function readRefreshingPreviewPage(
-  tab: PreviewTab, reader: PageReader, opts: PreviewReadOptions, expected: PreviewBinding, owner?: PreviewOwner
+  tab: PreviewTab,
+  reader: PageReader,
+  opts: PreviewReadOptions,
+  expected: PreviewBinding,
+  owner?: PreviewOwner
 ) {
   const deadline = Date.now() + PREVIEW_READ_LOAD_TIMEOUT_MS
+
   const waitForPage = async () => {
     for (;;) {
       // Accept a new page epoch only inside the already verified owner, tab and guest.
       const status = bindingStatus(expected, true, owner, true)
-      if (status) { throw new Error(status) }
+
+      if (status) {
+        throw new Error(status)
+      }
       const identity = identities.get(tab.id)!()
-      if (!identity.loading) { return identity }
-      if (Date.now() >= deadline) { throw new Error('PAGE_LOADING') }
+
+      if (!identity.loading) {
+        return identity
+      }
+
+      if (Date.now() >= deadline) {
+        throw new Error('PAGE_LOADING')
+      }
       await new Promise(resolve => setTimeout(resolve, 100))
     }
   }
 
   const before = await waitForPage()
+
   try {
     return await readLivePreviewPage(tab, reader, opts, owner)
   } catch (error) {
     const after = identities.get(tab.id)?.()
-    if (!after || after.guest_id !== before.guest_id ||
-      (!after.loading && after.page_epoch === before.page_epoch)) { throw error }
+
+    if (!after || after.guest_id !== before.guest_id || (!after.loading && after.page_epoch === before.page_epoch)) {
+      throw error
+    }
 
     await waitForPage()
+
     return await readLivePreviewPage(tab, reader, opts, owner)
   }
 }
@@ -247,7 +345,9 @@ export async function readActivePreview(
   sessionId?: PreviewOwner
 ): Promise<null | PreviewReadResult> {
   const tabs = previewTabsFor(sessionId)
-  const tab = opts.expected_binding ? tabs.find(tab => tab.id === opts.expected_binding!.tab_id) : resolveActivePreviewTab(tabs)
+  const tab = opts.expected_binding
+    ? tabs.find(tab => tab.id === opts.expected_binding!.tab_id)
+    : resolveActivePreviewTab(tabs)
 
   if (!tab) {
     return null
@@ -256,18 +356,22 @@ export async function readActivePreview(
   const { target } = tab
 
   if (opts.binding_only) {
-    const binding=activePreviewBinding(sessionId,true)
+    const binding = activePreviewBinding(sessionId, true)
 
-    if(!binding || binding.tab_id!==tab.id){throw new Error('PANE_UNAVAILABLE')}
+    if (!binding || binding.tab_id !== tab.id) {
+      throw new Error('PANE_UNAVAILABLE')
+    }
 
-    return windowText({binding,success:true,kind:target.kind,title:target.label,url:target.url},'',opts)
+    return windowText({ binding, success: true, kind: target.kind, title: target.label, url: target.url }, '', opts)
   }
-
 
   const expected = opts.expected_binding
   const canRefresh = opts.require_live && opts.refresh_binding && expected
   const status = expected && bindingStatus(expected, opts.refresh_binding, sessionId, Boolean(canRefresh))
-  if (status) { throw new Error(status) }
+
+  if (status) {
+    throw new Error(status)
+  }
 
   const reader = readers.get(tab.id)
   const multi = tabs.length > 1
@@ -289,7 +393,7 @@ export async function readActivePreview(
       return windowText(
         {
           ...meta,
-          ...(opts.require_live ? {binding,success:true} : {}),
+          ...(opts.require_live ? { binding, success: true } : {}),
           kind: target.kind,
           note: withMultiNote(undefined, multi),
           path: target.path,
@@ -300,13 +404,17 @@ export async function readActivePreview(
         opts
       )
     } catch (error) {
-      if (opts.require_live) { throw error }
+      if (opts.require_live) {
+        throw error
+      }
       // Webview not ready (still booting / just navigated) — fall through to
       // the identity answer, whose note says to retry.
     }
   }
 
-  if (opts.require_live) { throw new Error('PANE_UNAVAILABLE') }
+  if (opts.require_live) {
+    throw new Error('PANE_UNAVAILABLE')
+  }
 
   // No live webview behind the tab (a file peek, an artifact, or a page still
   // booting): answer with the tab's identity so the agent knows what's on

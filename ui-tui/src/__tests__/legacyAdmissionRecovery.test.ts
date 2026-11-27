@@ -36,6 +36,7 @@ it('never redispatches an ambiguous legacy attempt after native journal reload',
     if (params.submission_id) {
       throw Object.assign(new Error('unsupported'), { code: 4094 })
     }
+
     throw new Error('lost legacy ACK')
   })
 

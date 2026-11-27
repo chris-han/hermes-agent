@@ -208,8 +208,9 @@ export class ChannelResolver {
 
     const manifest = decodeChannelManifest(await this.read(head.manifestKey, head.sha256))
 
-    if (manifest.schema !== (head === channel.nativeHead ? 2 : 1))
-      {throw new Error('Channel manifest schema/head mismatch')}
+    if (manifest.schema !== (head === channel.nativeHead ? 2 : 1)) {
+      throw new Error('Channel manifest schema/head mismatch')
+    }
 
     const request = manifest.request
 
@@ -265,10 +266,14 @@ export class ChannelResolver {
     entry: ChannelPackage,
     request: ChannelManifest['request']
   ): Promise<NativePackageGraph | undefined> {
-    if (!entry.native) {return undefined}
+    if (!entry.native) {
+      return undefined
+    }
     const body = await this.read(entry.native.graph.key, entry.native.graph.sha256)
 
-    if (Buffer.byteLength(body) !== entry.native.graph.size) {throw new Error('Native graph descriptor size mismatch')}
+    if (Buffer.byteLength(body) !== entry.native.graph.size) {
+      throw new Error('Native graph descriptor size mismatch')
+    }
 
     return decodeNativePackageGraph(body, request, entry)
   }

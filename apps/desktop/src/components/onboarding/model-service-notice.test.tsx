@@ -22,16 +22,30 @@ const { $desktopBoot } = await import('@/store/boot')
 const { ModelServiceNotice } = await import('./model-service-notice')
 
 function show(state: 'plan' | 'unavailable' | 'reauth' | 'setup', profile = 'work') {
-  $desktopOnboarding.set({ ...$desktopOnboarding.get(), readiness: {
-    ready: false, source: 'runtime', modelService: { state }
-  } as never, readinessScope: { connectionId: null, profile } })
+  $desktopOnboarding.set({
+    ...$desktopOnboarding.get(),
+    readiness: {
+      ready: false,
+      source: 'runtime',
+      modelService: { state }
+    } as never,
+    readinessScope: { connectionId: null, profile }
+  })
 
-  return render(<MemoryRouter><I18nProvider configClient={null} initialLocale="en">
-    <ModelServiceNotice profile="work" requestGateway={vi.fn()} />
-  </I18nProvider></MemoryRouter>)
+  return render(
+    <MemoryRouter>
+      <I18nProvider configClient={null} initialLocale="en">
+        <ModelServiceNotice profile="work" requestGateway={vi.fn()} />
+      </I18nProvider>
+    </MemoryRouter>
+  )
 }
 
-afterEach(() => { cleanup(); vi.clearAllMocks(); $desktopBoot.set({ ...$desktopBoot.get(), running: false }) })
+afterEach(() => {
+  cleanup()
+  vi.clearAllMocks()
+  $desktopBoot.set({ ...$desktopBoot.get(), running: false })
+})
 
 test('background readiness is quiet and a failed transport offers explicit retry, not sign-in', () => {
   show('unavailable')
@@ -55,7 +69,6 @@ test('late readiness for a different profile cannot present a recovery action', 
   expect(screen.queryByRole('status')).toBeNull()
   expect(signIn).not.toHaveBeenCalled()
 })
-
 
 test('a fresh unconfigured Cloud account offers explicit sign-in without automatically opening it', () => {
   show('setup')

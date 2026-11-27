@@ -57,7 +57,9 @@ export function getGlobalModelOptions(
   }
 
   if (opts?.queryOnly) {
-    if (!opts.queryScope?.trim()) {throw new Error('A connection scope is required for provider model discovery.')}
+    if (!opts.queryScope?.trim()) {
+      throw new Error('A connection scope is required for provider model discovery.')
+    }
     params.set('query_only', '1')
     params.set('query_scope', opts.queryScope.trim())
   }
@@ -153,7 +155,10 @@ export interface ModelTestResult {
 
 export function testProviderModel(provider: string, model: string, scope: ProfileScope): Promise<ModelTestResult> {
   return hermesApi<ModelTestResult>({
-    ...capabilityScoped(scope), path: '/api/model/test', method: 'POST',
-    body: { provider, model, accept_cost: true }, timeoutMs: 25_000
+    ...capabilityScoped(scope),
+    path: '/api/model/test',
+    method: 'POST',
+    body: { provider, model, accept_cost: true },
+    timeoutMs: 25_000
   })
 }

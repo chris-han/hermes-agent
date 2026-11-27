@@ -111,15 +111,25 @@ it('enrolls with explicit unverified DEVELOPMENT assurance and identifies this P
 })
 
 it('keeps account-first DEVELOPMENT sync independent of device enrollment', async () => {
-  const managedDevices=vi.fn().mockResolvedValue({included_windows_seats:2,devices:[],additional_seat_checkout:'unavailable',
-    enrollment_policy:'development_account_first',enrollment_available:false})
+  const managedDevices = vi
+    .fn()
+    .mockResolvedValue({
+      included_windows_seats: 2,
+      devices: [],
+      additional_seat_checkout: 'unavailable',
+      enrollment_policy: 'development_account_first',
+      enrollment_available: false
+    })
 
-  const managedDeviceEnroll=vi.fn()
-  Object.defineProperty(window,'hermesDesktop',{configurable:true,value:{workspace:{managedDevices,managedDeviceEnroll}}})
+  const managedDeviceEnroll = vi.fn()
+  Object.defineProperty(window, 'hermesDesktop', {
+    configurable: true,
+    value: { workspace: { managedDevices, managedDeviceEnroll } }
+  })
   render(<SemantierManagedDevices origin="https://cloud.example" scope={scope} />)
-  fireEvent.click(screen.getByRole('button',{name:'View Windows PCs'}))
+  fireEvent.click(screen.getByRole('button', { name: 'View Windows PCs' }))
   await screen.findByText(/DEVELOPMENT device records are observational/)
-  expect(screen.queryByRole('button',{name:'Enroll or reconnect this PC'})).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Enroll or reconnect this PC' })).toBeNull()
   expect(screen.queryByText(/Enrollment is unavailable until hardware/)).toBeNull()
   expect(managedDeviceEnroll).not.toHaveBeenCalled()
 })

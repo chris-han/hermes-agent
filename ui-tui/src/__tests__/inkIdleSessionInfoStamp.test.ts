@@ -69,12 +69,14 @@ it('an idle canonical session.info keeps its payload stamp and passes the lifecy
   vi.useFakeTimers()
   delete process.env.HERMES_TUI_GATEWAY_URL
   delete process.env.HERMES_TUI_SIDECAR_URL
+
   const gw = new GatewayClient(async () => ({
     url: 'ws://gateway.test/api/ws',
     protocols: [],
     instance_id: 'owner',
     profile_id: 'fixture'
   }))
+
   const events: any[] = []
   gw.on('event', event => events.push(event))
 

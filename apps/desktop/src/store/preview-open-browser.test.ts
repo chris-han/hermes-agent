@@ -50,14 +50,14 @@ describe('openBrowserTab', () => {
   })
 })
 
- it('records user Browser reopen separately from tool opens', () => {
-    const id = openPreview({ kind: 'url', label: 'Example', source: 'https://example.com', url: 'https://example.com' })!
-    expect(browserUserSelection(id)).toBeUndefined()
-    openBrowserTab()
-    const first = browserUserSelection(id)!
-    expect(first).toBeGreaterThan(0)
-    openPreview({ kind: 'url', label: 'Example', source: 'https://example.com', url: 'https://example.com' })
-    expect(browserUserSelection(id)).toBe(first)
-    openBrowserTab()
-    expect(browserUserSelection(id)).toBeGreaterThan(first)
-  })
+it('records user Browser reopen separately from tool opens', () => {
+  const id = openPreview({ kind: 'url', label: 'Example', source: 'https://example.com', url: 'https://example.com' })!
+  expect(browserUserSelection(id)).toBeUndefined()
+  openBrowserTab()
+  const first = browserUserSelection(id)!
+  expect(first).toBeGreaterThan(0)
+  openPreview({ kind: 'url', label: 'Example', source: 'https://example.com', url: 'https://example.com' })
+  expect(browserUserSelection(id)).toBe(first)
+  openBrowserTab()
+  expect(browserUserSelection(id)).toBeGreaterThan(first)
+})

@@ -190,6 +190,7 @@ export function NarrowOverlays() {
 
     return shown.length > 0 ? shown : [revealed]
   })()
+
   const showSessionsHeader = zonePanes.some(pane => pane.id === 'sessions')
   // The branded row must clear the fixed app controls even when the native
   // controls do not overlap the sidebar.

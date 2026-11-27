@@ -47,7 +47,17 @@ export type OnboardingFlow =
   | { status: 'idle' }
   | { provider: OAuthProvider; status: 'starting' }
   | { code: string; provider: OAuthProvider; start: PkceStart; status: 'awaiting_user' }
-  | { copied: boolean; provider: OAuthProvider; start: DeviceStart; status: 'polling'; browserOwner?: { profile: ReturnType<typeof previewProfileScope>; session: ReturnType<typeof $focusedStoredSessionId.get>; runtime: ReturnType<typeof $activeSessionId.get> } }
+  | {
+      copied: boolean
+      provider: OAuthProvider
+      start: DeviceStart
+      status: 'polling'
+      browserOwner?: {
+        profile: ReturnType<typeof previewProfileScope>
+        session: ReturnType<typeof $focusedStoredSessionId.get>
+        runtime: ReturnType<typeof $activeSessionId.get>
+      }
+    }
   | { provider: OAuthProvider; start: OAuthStartResponse; status: 'submitting' }
   | { copied: boolean; provider: OAuthProvider; status: 'external_pending' }
   | { provider: OAuthProvider; status: 'success' }
@@ -65,7 +75,14 @@ export type OnboardingFlow =
       saving: boolean
       status: 'confirming_model'
     }
-  | { detail?: string; message: string; provider?: OAuthProvider; start?: OAuthStartResponse; status: 'error'; installed?: boolean }
+  | {
+      detail?: string
+      message: string
+      provider?: OAuthProvider
+      start?: OAuthStartResponse
+      status: 'error'
+      installed?: boolean
+    }
 
 export interface DesktopOnboardingState {
   /** null until the first runtime check resolves. Seeded from localStorage so
@@ -208,7 +225,11 @@ function signInDidNotFinish(provider: OAuthProvider, raw: unknown): { message: s
     const failure = decodeCloudSignInError(raw)
 
     return {
-      message: translateNow('onboarding.cloudSignInError', failure.code, failure.profile || flowScope?.profile || 'default'),
+      message: translateNow(
+        'onboarding.cloudSignInError',
+        failure.code,
+        failure.profile || flowScope?.profile || 'default'
+      ),
       detail: [
         failure.code,
         failure.diagnostics,
@@ -388,9 +409,18 @@ async function fetchProviderDefaultModel(
   const cloud = preferredSlugs.includes('semantier-cloud')
 
   try {
-    options = await getGlobalModelOptions({ includeUnconfigured: true, explicitOnly: false, ...(cloud ? { queryOnly: true, queryScope: await cloudDiscoveryScope(profile), refresh: true } : {}) }, profile)
+    options = await getGlobalModelOptions(
+      {
+        includeUnconfigured: true,
+        explicitOnly: false,
+        ...(cloud ? { queryOnly: true, queryScope: await cloudDiscoveryScope(profile), refresh: true } : {})
+      },
+      profile
+    )
   } catch (error) {
-    if (cloud) {throw error}
+    if (cloud) {
+      throw error
+    }
 
     return null
   }
@@ -398,7 +428,9 @@ async function fetchProviderDefaultModel(
   const providers = options?.providers ?? []
 
   if (providers.length === 0) {
-    if (cloud) {throw new Error(JSON.stringify({ code: 'cloud_catalog_empty' }))}
+    if (cloud) {
+      throw new Error(JSON.stringify({ code: 'cloud_catalog_empty' }))
+    }
 
     return null
   }
@@ -409,10 +441,13 @@ async function fetchProviderDefaultModel(
   const lower = preferredSlugs.map(s => s.toLowerCase())
 
   const matched =
-    providers.find((p: ModelOptionProvider) => lower.includes(String(p.slug).toLowerCase())) ?? (cloud ? undefined : providers[0])
+    providers.find((p: ModelOptionProvider) => lower.includes(String(p.slug).toLowerCase())) ??
+    (cloud ? undefined : providers[0])
 
   if (!matched) {
-    if (cloud) {throw new Error(JSON.stringify({code: 'cloud_catalog_unavailable'}))}
+    if (cloud) {
+      throw new Error(JSON.stringify({ code: 'cloud_catalog_unavailable' }))
+    }
 
     return null
   }
@@ -420,7 +455,17 @@ async function fetchProviderDefaultModel(
   const models = matched.models ?? []
 
   if (models.length === 0) {
-    if (cloud) {throw new Error(JSON.stringify({code: matched.discovery_status || (matched.discovery_state === 'fresh' || matched.discovery_state === 'cached' ? 'cloud_catalog_empty' : 'cloud_catalog_unavailable')}))}
+    if (cloud) {
+      throw new Error(
+        JSON.stringify({
+          code:
+            matched.discovery_status ||
+            (matched.discovery_state === 'fresh' || matched.discovery_state === 'cached'
+              ? 'cloud_catalog_empty'
+              : 'cloud_catalog_unavailable')
+        })
+      )
+    }
 
     return null
   }
@@ -483,7 +528,10 @@ async function completeWithModelConfirm(
   ignoreRuntimeGate = false
 ) {
   const generation = flowGeneration
-  const current = () => generation === flowGeneration && (!preferredSlugs.includes('semantier-cloud') || JSON.stringify(captureOnboardingScope()) === JSON.stringify(ctx.scope))
+  const current = () =>
+    generation === flowGeneration &&
+    (!preferredSlugs.includes('semantier-cloud') ||
+      JSON.stringify(captureOnboardingScope()) === JSON.stringify(ctx.scope))
 
   // Scoped readiness reads fresh credentials; reload.env only mutates the
   // launch process environment and cannot reload another profile safely.
@@ -726,7 +774,9 @@ export function startManualProviderOAuth(providerId: string, profile?: ProfileSc
     void openCloudSignIn(scope).catch(error => notifyError(error, translateNow('common.error')))
     const source = $connectionsRegistry.get()?.connections.find(connection => connection.id === scope.connectionId)
 
-    if (source?.transport === 'semantier-workspace-http') { return }
+    if (source?.transport === 'semantier-workspace-http') {
+      return
+    }
   }
 
   pendingProviderOAuthId = providerId
@@ -992,11 +1042,26 @@ export function reopenCloudVerification(): boolean {
   const state = $desktopOnboarding.get()
   const flow = state.flow
 
-  if (flow.status !== 'polling' || flow.provider.id !== 'semantier-cloud') { return false }
+  if (flow.status !== 'polling' || flow.provider.id !== 'semantier-cloud') {
+    return false
+  }
   const owner = flow.browserOwner
 
-  if (!owner || JSON.stringify(captureOnboardingScope()) !== JSON.stringify(state.targetScope) || owner.profile !== previewProfileScope() || owner.session !== $focusedStoredSessionId.get() || owner.runtime !== $activeSessionId.get()) {
-    notifyError(translateNow('onboarding.cloudSignInError', 'cloud_browser_owner_changed', state.targetScope?.profile || 'default'), translateNow('common.error'))
+  if (
+    !owner ||
+    JSON.stringify(captureOnboardingScope()) !== JSON.stringify(state.targetScope) ||
+    owner.profile !== previewProfileScope() ||
+    owner.session !== $focusedStoredSessionId.get() ||
+    owner.runtime !== $activeSessionId.get()
+  ) {
+    notifyError(
+      translateNow(
+        'onboarding.cloudSignInError',
+        'cloud_browser_owner_changed',
+        state.targetScope?.profile || 'default'
+      ),
+      translateNow('common.error')
+    )
 
     return false
   }
@@ -1004,7 +1069,14 @@ export function reopenCloudVerification(): boolean {
   const target = new URL(flow.start.verification_url)
   target.searchParams.set('entry', 'windows')
   const url = target.href
-  openPreview({ kind: 'url', label: 'Semantier Billing', source: url, url }, owner.session, owner.runtime, owner.profile, undefined, 'matching-url')
+  openPreview(
+    { kind: 'url', label: 'Semantier Billing', source: url, url },
+    owner.session,
+    owner.runtime,
+    owner.profile,
+    undefined,
+    'matching-url'
+  )
 
   return true
 }
@@ -1021,12 +1093,18 @@ async function beginProviderOAuth(provider: OAuthProvider, ctx: OnboardingContex
     return
   }
 
-  const browserOwner = { profile: previewProfileScope(), session: $focusedStoredSessionId.get(), runtime: $activeSessionId.get() }
+  const browserOwner = {
+    profile: previewProfileScope(),
+    session: $focusedStoredSessionId.get(),
+    runtime: $activeSessionId.get()
+  }
   setFlow({ status: 'starting', provider })
 
   try {
     if (provider.id === 'semantier-cloud') {
-      if (JSON.stringify(captureOnboardingScope()) !== JSON.stringify(ctx.scope)) {throw new Error(JSON.stringify({code: 'cloud_profile_mismatch'}))}
+      if (JSON.stringify(captureOnboardingScope()) !== JSON.stringify(ctx.scope)) {
+        throw new Error(JSON.stringify({ code: 'cloud_profile_mismatch' }))
+      }
       patch({ targetScope: ctx.scope })
     }
 
@@ -1043,15 +1121,27 @@ async function beginProviderOAuth(provider: OAuthProvider, ctx: OnboardingContex
     if (provider.id === 'semantier-cloud') {
       // The backend validates the portal origin and intent. Retain its exact URL;
       // never replace another working browser tab or retarget an agent's tools.
-      if (JSON.stringify(captureOnboardingScope()) !== JSON.stringify(ctx.scope) || browserOwner.profile !== previewProfileScope() || browserOwner.session !== $focusedStoredSessionId.get() || browserOwner.runtime !== $activeSessionId.get()) {
+      if (
+        JSON.stringify(captureOnboardingScope()) !== JSON.stringify(ctx.scope) ||
+        browserOwner.profile !== previewProfileScope() ||
+        browserOwner.session !== $focusedStoredSessionId.get() ||
+        browserOwner.runtime !== $activeSessionId.get()
+      ) {
         await cancelOAuthSession(start.session_id, ctx.scope)
-        throw new Error(JSON.stringify({code: 'cloud_profile_mismatch'}))
+        throw new Error(JSON.stringify({ code: 'cloud_profile_mismatch' }))
       }
 
       const target = new URL(browserUrl)
       target.searchParams.set('entry', 'windows')
       const url = target.href
-      openPreview({ kind: 'url', label: 'Semantier Billing', source: url, url }, browserOwner.session, browserOwner.runtime, browserOwner.profile, undefined, 'matching-url')
+      openPreview(
+        { kind: 'url', label: 'Semantier Billing', source: url, url },
+        browserOwner.session,
+        browserOwner.runtime,
+        browserOwner.profile,
+        undefined,
+        'matching-url'
+      )
     } else {
       await openSignInUrl(browserUrl)
     }
@@ -1068,7 +1158,13 @@ async function beginProviderOAuth(provider: OAuthProvider, ctx: OnboardingContex
       return
     }
 
-    setFlow({ status: 'polling', provider, start, copied: false, ...(provider.id === 'semantier-cloud' ? { browserOwner } : {}) })
+    setFlow({
+      status: 'polling',
+      provider,
+      start,
+      copied: false,
+      ...(provider.id === 'semantier-cloud' ? { browserOwner } : {})
+    })
     schedulePollExpiry(start, () =>
       setFlow({
         status: 'error',
@@ -1165,7 +1261,8 @@ async function pollSession(provider: OAuthProvider, start: DeviceStart, ctx: Onb
         await retryCloudModelDiscovery(ctx, provider)
       } else {
         await completeWithModelConfirm(ctx, provider.name, [provider.id], reason =>
-          setFlow({ status: 'error', provider, message: providerResolutionFailure(reason) }))
+          setFlow({ status: 'error', provider, message: providerResolutionFailure(reason) })
+        )
       }
     } else if (status !== 'pending') {
       clearPoll()
@@ -1191,15 +1288,24 @@ async function pollSession(provider: OAuthProvider, start: DeviceStart, ctx: Onb
 /** Retrying this read never starts, claims, cancels or revokes a device. */
 export async function retryCloudModelDiscovery(ctx: OnboardingContext, provider: OAuthProvider) {
   const generation = flowGeneration
-  const current = () => generation === flowGeneration && JSON.stringify(captureOnboardingScope()) === JSON.stringify(ctx.scope)
+  const current = () =>
+    generation === flowGeneration && JSON.stringify(captureOnboardingScope()) === JSON.stringify(ctx.scope)
 
-  if (!current()) {return}
+  if (!current()) {
+    return
+  }
   let installed = true
   let detail: string | undefined
-  let message = translateNow('onboarding.cloudSignInError', 'cloud_catalog_unavailable', ctx.scope?.profile ?? 'default')
+  let message = translateNow(
+    'onboarding.cloudSignInError',
+    'cloud_catalog_unavailable',
+    ctx.scope?.profile ?? 'default'
+  )
 
   for (let attempt = 0; attempt < 3; attempt++) {
-    if (!current()) {return}
+    if (!current()) {
+      return
+    }
 
     try {
       let rejected = false
@@ -1208,22 +1314,38 @@ export async function retryCloudModelDiscovery(ctx: OnboardingContext, provider:
         message = reason || message
       })
 
-      if (!rejected) {return}
+      if (!rejected) {
+        return
+      }
     } catch (error) {
       const code = decodeCloudSignInError(error).code
       installed = !['cloud_authorization_required', 'cloud_credential_expired'].includes(code)
       const failure = signInDidNotFinish(provider, error)
       detail = failure.detail
-      const catalogCode = code === 'cloud_server_error' ? 'cloud_catalog_http_error' : code === 'cloud_authorization_denied' ? 'cloud_catalog_access_denied' : null
-      message = installed && catalogCode ? translateNow('onboarding.cloudSignInError', catalogCode, ctx.scope?.profile ?? 'default') : failure.message
+      const catalogCode =
+        code === 'cloud_server_error'
+          ? 'cloud_catalog_http_error'
+          : code === 'cloud_authorization_denied'
+            ? 'cloud_catalog_access_denied'
+            : null
+      message =
+        installed && catalogCode
+          ? translateNow('onboarding.cloudSignInError', catalogCode, ctx.scope?.profile ?? 'default')
+          : failure.message
 
-      if (!installed) {break}
+      if (!installed) {
+        break
+      }
     }
 
-    if (attempt < 2) {await new Promise(resolve => window.setTimeout(resolve, 500 * (attempt + 1)))}
+    if (attempt < 2) {
+      await new Promise(resolve => window.setTimeout(resolve, 500 * (attempt + 1)))
+    }
   }
 
-  if (current()) {setFlow({ status: 'error', installed, provider, message, detail })}
+  if (current()) {
+    setFlow({ status: 'error', installed, provider, message, detail })
+  }
 }
 
 export function setOnboardingCode(code: string) {
@@ -1643,23 +1765,54 @@ export async function confirmOnboardingModel(ctx: OnboardingContext) {
         }
       )
 
-      if (generation !== flowGeneration || (flow.providerSlug === 'semantier-cloud' && JSON.stringify(captureOnboardingScope()) !== JSON.stringify(ctx.scope))) {return}
+      if (
+        generation !== flowGeneration ||
+        (flow.providerSlug === 'semantier-cloud' &&
+          JSON.stringify(captureOnboardingScope()) !== JSON.stringify(ctx.scope))
+      ) {
+        return
+      }
       notifyGatewayTools(res.gateway_tools)
 
       if (flow.providerSlug === 'semantier-cloud') {
         const readiness = await checkRuntime(ctx, flow.providerSlug)
 
-        if (generation !== flowGeneration || (flow.providerSlug === 'semantier-cloud' && JSON.stringify(captureOnboardingScope()) !== JSON.stringify(ctx.scope))) {return}
+        if (
+          generation !== flowGeneration ||
+          (flow.providerSlug === 'semantier-cloud' &&
+            JSON.stringify(captureOnboardingScope()) !== JSON.stringify(ctx.scope))
+        ) {
+          return
+        }
 
-        if (!readiness.ready) { notifyError(readiness.reason || translateNow('onboarding.cloudSignInError', 'cloud_metadata_unavailable', ctx.scope?.profile || 'default'), translateNow('common.error'));
+        if (!readiness.ready) {
+          notifyError(
+            readiness.reason ||
+              translateNow(
+                'onboarding.cloudSignInError',
+                'cloud_metadata_unavailable',
+                ctx.scope?.profile || 'default'
+              ),
+            translateNow('common.error')
+          )
 
- return }
+          return
+        }
       }
     } catch (error) {
-      if (generation !== flowGeneration || (flow.providerSlug === 'semantier-cloud' && JSON.stringify(captureOnboardingScope()) !== JSON.stringify(ctx.scope))) {return}
+      if (
+        generation !== flowGeneration ||
+        (flow.providerSlug === 'semantier-cloud' &&
+          JSON.stringify(captureOnboardingScope()) !== JSON.stringify(ctx.scope))
+      ) {
+        return
+      }
 
       if (flow.providerSlug === 'semantier-cloud') {
-        notifyError(signInDidNotFinish({ id: 'semantier-cloud' } as OAuthProvider, error).message, translateNow('common.error'))
+        notifyError(
+          signInDidNotFinish({ id: 'semantier-cloud' } as OAuthProvider, error).message,
+          translateNow('common.error')
+        )
 
         return
       }

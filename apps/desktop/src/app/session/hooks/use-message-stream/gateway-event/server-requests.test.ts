@@ -6,7 +6,14 @@ import { group } from '@/components/pane-shell/tree/model'
 import { $layoutTree, noteActiveTreeGroup } from '@/components/pane-shell/tree/store'
 import { createClientSessionState } from '@/lib/chat-runtime'
 import { runTour } from '@/lib/tour'
-import { $previewTabs, closeRightRail, closeRightRailTab, openBrowserTab, openPreview, setPreviewTabPinned } from '@/store/preview'
+import {
+  $previewTabs,
+  closeRightRail,
+  closeRightRailTab,
+  openBrowserTab,
+  openPreview,
+  setPreviewTabPinned
+} from '@/store/preview'
 import { hasOpenServerRequest, resetServerRequestsForTests } from '@/store/server-requests'
 import { setActiveSessionId, setSelectedStoredSessionId, setSessions } from '@/store/session'
 import { $sessionStates, $sessionTiles, dropSessionState, publishSessionState } from '@/store/session-states'
@@ -383,9 +390,15 @@ describe('preview pop-out forwarding', () => {
   it('preserves a typed stale-target failure for a bound act', async () => {
     requestPopoutPreviewAct.mockRejectedValueOnce(new Error('STALE_TARGET'))
 
-    const { respond } = deliver('preview.act', { action: 'click', session_id: 'session-a',
-      expected_binding: { session_id: 'session-a', window_id: 'w', tab_id: 'tab', guest_id: 1, page_epoch: 1 }
-    }, 'session-a')
+    const { respond } = deliver(
+      'preview.act',
+      {
+        action: 'click',
+        session_id: 'session-a',
+        expected_binding: { session_id: 'session-a', window_id: 'w', tab_id: 'tab', guest_id: 1, page_epoch: 1 }
+      },
+      'session-a'
+    )
 
     await vi.waitFor(() => expect(respond).toHaveBeenCalledTimes(1), { timeout: 30_000 })
     expect(JSON.parse(respond.mock.calls[0][0].value)).toMatchObject({ success: false, code: 'STALE_TARGET' })
@@ -432,34 +445,58 @@ describe('preview requests act for the session that asked (#73890)', () => {
   it.each([false, true])('requires a newer user selection for reconnect (selected=%s)', async selected => {
     deps.activeSessionIdRef.current = 'rt-a'
     publishSessionState('rt-a', createClientSessionState('stored-a'))
-    const id = openPreview({ kind: 'url', label: 'page', source: 'test', url: 'https://test.example/start' }, 'stored-a')!
+    const id = openPreview(
+      { kind: 'url', label: 'page', source: 'test', url: 'https://test.example/start' },
+      'stored-a'
+    )!
     let guest = 3
-    const unbind = registerPreviewPageReader(id, async () => ({ text: 'live', title: '', url: 'https://test.example/start' }), () => ({ guest_id: guest, page_epoch: 1 }))
+    const unbind = registerPreviewPageReader(
+      id,
+      async () => ({ text: 'live', title: '', url: 'https://test.example/start' }),
+      () => ({ guest_id: guest, page_epoch: 1 })
+    )
 
     try {
       const owner = { sessionId: 'stored-a', runtimeId: 'rt-a', profile: 'default' }
       const expected = activePreviewBinding(owner)!
       guest = 4
 
-      if (selected) { openBrowserTab() }
+      if (selected) {
+        openBrowserTab()
+      }
       const { respond } = deliver('preview.reconnect', { session_id: 'rt-a', expected_binding: expected }, 'rt-a')
       await vi.waitFor(() => expect(respond).toHaveBeenCalledTimes(1))
-      expect(JSON.parse(respond.mock.calls[0][0].value)).toMatchObject(selected
-        ? { success: true, live_verified: true, explicit_user_selection: true, binding: { guest_id: 4 } }
-        : { success: false, code: 'USER_INTENT_REQUIRED' })
-    } finally { unbind() }
+      expect(JSON.parse(respond.mock.calls[0][0].value)).toMatchObject(
+        selected
+          ? { success: true, live_verified: true, explicit_user_selection: true, binding: { guest_id: 4 } }
+          : { success: false, code: 'USER_INTENT_REQUIRED' }
+      )
+    } finally {
+      unbind()
+    }
   })
 
   it('opens the live destination of a redirected owned browser without replacing its guest', async () => {
     deps.activeSessionIdRef.current = 'rt-a'
     publishSessionState('rt-a', createClientSessionState('stored-a'))
-    const id = openPreview({ kind: 'url', label: 'redirect', source: 'test', url: 'https://test.example/start' }, 'stored-a')!
-    const unbind = registerPreviewPageReader(id, async () => ({ text: 'destination', title: 'destination', url: 'https://test.example/end' }), () => ({ guest_id: 3, page_epoch: 4, loading: false }))
+    const id = openPreview(
+      { kind: 'url', label: 'redirect', source: 'test', url: 'https://test.example/start' },
+      'stored-a'
+    )!
+    const unbind = registerPreviewPageReader(
+      id,
+      async () => ({ text: 'destination', title: 'destination', url: 'https://test.example/end' }),
+      () => ({ guest_id: 3, page_epoch: 4, loading: false })
+    )
 
     try {
       const { respond } = deliver('preview.open', { session_id: 'rt-a', url: 'https://test.example/end' }, 'rt-a')
       await vi.waitFor(() => expect(respond).toHaveBeenCalledTimes(1), { timeout: 1500 })
-      expect(JSON.parse(respond.mock.calls[0][0].value)).toMatchObject({ success: true, url: 'https://test.example/end', binding: { tab_id: id, guest_id: 3, page_epoch: 4 } })
+      expect(JSON.parse(respond.mock.calls[0][0].value)).toMatchObject({
+        success: true,
+        url: 'https://test.example/end',
+        binding: { tab_id: id, guest_id: 3, page_epoch: 4 }
+      })
     } finally {
       unbind()
       dropSessionState('rt-a')
@@ -475,23 +512,42 @@ describe('preview requests act for the session that asked (#73890)', () => {
     let guest = 3
     let epoch = 4
     let loading = scenario === 'loading'
-    const unbind = registerPreviewPageReader(id, async () => ({ text: 'page', title: '', url: loading ? url : scenario === 'loading' ? url : 'https://test.example/end' }), () => ({ guest_id: guest, page_epoch: epoch, committed_epoch: epoch, loading }))
+    const unbind = registerPreviewPageReader(
+      id,
+      async () => ({
+        text: 'page',
+        title: '',
+        url: loading ? url : scenario === 'loading' ? url : 'https://test.example/end'
+      }),
+      () => ({ guest_id: guest, page_epoch: epoch, committed_epoch: epoch, loading })
+    )
 
     try {
       const { respond } = deliver('preview.open', { session_id: 'rt-a', url }, 'rt-a')
       await new Promise(resolve => setTimeout(resolve, 150))
       expect(respond).not.toHaveBeenCalled()
 
-      if (scenario === 'replacement') {guest++}
-      else if (scenario === 'loading') {loading = false}
-      else {epoch++}
+      if (scenario === 'replacement') {
+        guest++
+      } else if (scenario === 'loading') {
+        loading = false
+      } else {
+        epoch++
+      }
 
       await vi.waitFor(() => expect(respond).toHaveBeenCalledTimes(1))
       const answer = JSON.parse(respond.mock.calls[0][0].value)
 
-      if (scenario === 'replacement') {expect(answer).toMatchObject({ success: false, code: 'STALE_TARGET' })}
-      else {expect(answer).toMatchObject({ success: true, binding: { tab_id: id, guest_id: 3 } })}
-    } finally { unbind(); dropSessionState('rt-a'); deps.activeSessionIdRef.current = null }
+      if (scenario === 'replacement') {
+        expect(answer).toMatchObject({ success: false, code: 'STALE_TARGET' })
+      } else {
+        expect(answer).toMatchObject({ success: true, binding: { tab_id: id, guest_id: 3 } })
+      }
+    } finally {
+      unbind()
+      dropSessionState('rt-a')
+      deps.activeSessionIdRef.current = null
+    }
   })
 
   it('does not accept an old page just because navigation started without committing', async () => {
@@ -501,7 +557,11 @@ describe('preview requests act for the session that asked (#73890)', () => {
     const id = openPreview({ kind: 'url', label: 'start', source: 'test', url }, 'stored-a')!
     let epoch = 4
     let committed = 1
-    const unbind = registerPreviewPageReader(id, async () => ({ text: 'old', title: '', url: 'https://test.example/old' }), () => ({ guest_id: 3, page_epoch: epoch, committed_epoch: committed }))
+    const unbind = registerPreviewPageReader(
+      id,
+      async () => ({ text: 'old', title: '', url: 'https://test.example/old' }),
+      () => ({ guest_id: 3, page_epoch: epoch, committed_epoch: committed })
+    )
 
     try {
       const { respond } = deliver('preview.open', { session_id: 'rt-a', url }, 'rt-a')
@@ -512,7 +572,11 @@ describe('preview requests act for the session that asked (#73890)', () => {
       committed++
       await vi.waitFor(() => expect(respond).toHaveBeenCalledTimes(1))
       expect(JSON.parse(respond.mock.calls[0][0].value)).toMatchObject({ success: true, binding: { guest_id: 3 } })
-    } finally { unbind(); dropSessionState('rt-a'); deps.activeSessionIdRef.current = null }
+    } finally {
+      unbind()
+      dropSessionState('rt-a')
+      deps.activeSessionIdRef.current = null
+    }
   })
 
   it('retries a read interrupted by navigation in the same guest', async () => {
@@ -522,13 +586,20 @@ describe('preview requests act for the session that asked (#73890)', () => {
     const id = openPreview({ kind: 'url', label: 'start', source: 'test', url }, 'stored-a')!
     let epoch = 4
     let rejectRead!: (error: Error) => void
-    const pending = new Promise<never>((_, reject) => { rejectRead = reject })
+    const pending = new Promise<never>((_, reject) => {
+      rejectRead = reject
+    })
 
-    const reader = vi.fn()
+    const reader = vi
+      .fn()
       .mockImplementationOnce(() => pending)
       .mockResolvedValue({ text: 'redirected', title: '', url: 'https://test.example/end' })
 
-    const unbind = registerPreviewPageReader(id, reader, () => ({ guest_id: 3, page_epoch: epoch, committed_epoch: epoch }))
+    const unbind = registerPreviewPageReader(id, reader, () => ({
+      guest_id: 3,
+      page_epoch: epoch,
+      committed_epoch: epoch
+    }))
 
     try {
       const { respond } = deliver('preview.open', { session_id: 'rt-a', url }, 'rt-a')
@@ -536,8 +607,16 @@ describe('preview requests act for the session that asked (#73890)', () => {
       epoch++
       rejectRead(new Error('Session with given id not found'))
       await vi.waitFor(() => expect(respond).toHaveBeenCalledTimes(1))
-      expect(JSON.parse(respond.mock.calls[0][0].value)).toMatchObject({ success: true, url: 'https://test.example/end', binding: { guest_id: 3, page_epoch: 5 } })
-    } finally { unbind(); dropSessionState('rt-a'); deps.activeSessionIdRef.current = null }
+      expect(JSON.parse(respond.mock.calls[0][0].value)).toMatchObject({
+        success: true,
+        url: 'https://test.example/end',
+        binding: { guest_id: 3, page_epoch: 5 }
+      })
+    } finally {
+      unbind()
+      dropSessionState('rt-a')
+      deps.activeSessionIdRef.current = null
+    }
   })
 
   it('retries a frame transition while the same guest is loading before its epoch advances', async () => {
@@ -547,8 +626,13 @@ describe('preview requests act for the session that asked (#73890)', () => {
     const id = openPreview({ kind: 'url', label: 'start', source: 'test', url }, 'stored-a')!
     let loading = false
     let rejectRead!: (error: Error) => void
-    const pending = new Promise<never>((_, reject) => { rejectRead = reject })
-    const reader = vi.fn().mockImplementationOnce(() => pending).mockResolvedValue({ text: 'ready', title: '', url })
+    const pending = new Promise<never>((_, reject) => {
+      rejectRead = reject
+    })
+    const reader = vi
+      .fn()
+      .mockImplementationOnce(() => pending)
+      .mockResolvedValue({ text: 'ready', title: '', url })
     const unbind = registerPreviewPageReader(id, reader, () => ({ guest_id: 3, page_epoch: 4, loading }))
 
     try {
@@ -561,7 +645,11 @@ describe('preview requests act for the session that asked (#73890)', () => {
       loading = false
       await vi.waitFor(() => expect(respond).toHaveBeenCalledTimes(1))
       expect(JSON.parse(respond.mock.calls[0][0].value)).toMatchObject({ success: true, binding: { guest_id: 3 } })
-    } finally { unbind(); dropSessionState('rt-a'); deps.activeSessionIdRef.current = null }
+    } finally {
+      unbind()
+      dropSessionState('rt-a')
+      deps.activeSessionIdRef.current = null
+    }
   })
 
   it.each(['STALE_TARGET', 'WRONG_OWNER'])('propagates %s from a read without a navigation race', async code => {
@@ -569,13 +657,23 @@ describe('preview requests act for the session that asked (#73890)', () => {
     publishSessionState('rt-a', createClientSessionState('stored-a'))
     const url = 'https://test.example/start'
     const id = openPreview({ kind: 'url', label: 'start', source: 'test', url }, 'stored-a')!
-    const unbind = registerPreviewPageReader(id, async () => { throw new Error(code) }, () => ({ guest_id: 3, page_epoch: 4 }))
+    const unbind = registerPreviewPageReader(
+      id,
+      async () => {
+        throw new Error(code)
+      },
+      () => ({ guest_id: 3, page_epoch: 4 })
+    )
 
     try {
       const { respond } = deliver('preview.open', { session_id: 'rt-a', url }, 'rt-a')
       await vi.waitFor(() => expect(respond).toHaveBeenCalledTimes(1))
       expect(JSON.parse(respond.mock.calls[0][0].value)).toMatchObject({ success: false, code })
-    } finally { unbind(); dropSessionState('rt-a'); deps.activeSessionIdRef.current = null }
+    } finally {
+      unbind()
+      dropSessionState('rt-a')
+      deps.activeSessionIdRef.current = null
+    }
   })
 
   it('does not switch guests after a new tab starts mounting', async () => {
@@ -589,14 +687,22 @@ describe('preview requests act for the session that asked (#73890)', () => {
       const url = 'https://test.example/start'
       const { respond } = deliver('preview.open', { session_id: 'rt-a', url }, 'rt-a')
       const id = $previewTabs.get().find(tab => tab.target.url === url)!.id
-      unbind = registerPreviewPageReader(id, async () => ({ text: '', title: '', url }), () => ({ guest_id: guest, page_epoch: 1, loading }))
+      unbind = registerPreviewPageReader(
+        id,
+        async () => ({ text: '', title: '', url }),
+        () => ({ guest_id: guest, page_epoch: 1, loading })
+      )
       await new Promise(resolve => setTimeout(resolve, 150))
       expect(respond).not.toHaveBeenCalled()
       guest = 4
       loading = false
       await vi.waitFor(() => expect(respond).toHaveBeenCalledTimes(1))
       expect(JSON.parse(respond.mock.calls[0][0].value)).toMatchObject({ success: false, code: 'STALE_TARGET' })
-    } finally { unbind(); dropSessionState('rt-a'); deps.activeSessionIdRef.current = null }
+    } finally {
+      unbind()
+      dropSessionState('rt-a')
+      deps.activeSessionIdRef.current = null
+    }
   })
 
   it('rejects a replaced tab while an open read is in flight', async () => {
@@ -605,7 +711,9 @@ describe('preview requests act for the session that asked (#73890)', () => {
     const url = 'https://test.example/start'
     const id = openPreview({ kind: 'url', label: 'start', source: 'test', url }, 'stored-a')!
     let resolveRead!: (value: { text: string; title: string; url: string }) => void
-    const pending = new Promise<{ text: string; title: string; url: string }>(resolve => { resolveRead = resolve })
+    const pending = new Promise<{ text: string; title: string; url: string }>(resolve => {
+      resolveRead = resolve
+    })
     const reader = vi.fn(() => pending)
     const unbind = registerPreviewPageReader(id, reader, () => ({ guest_id: 3, page_epoch: 4 }))
 
@@ -618,7 +726,11 @@ describe('preview requests act for the session that asked (#73890)', () => {
       resolveRead({ text: 'old', title: '', url })
       await vi.waitFor(() => expect(respond).toHaveBeenCalledTimes(1))
       expect(JSON.parse(respond.mock.calls[0][0].value)).toMatchObject({ success: false, code: 'STALE_TARGET' })
-    } finally { unbind(); dropSessionState('rt-a'); deps.activeSessionIdRef.current = null }
+    } finally {
+      unbind()
+      dropSessionState('rt-a')
+      deps.activeSessionIdRef.current = null
+    }
   })
 
   it('does not hide an unrelated reader error as a loading retry', async () => {
@@ -626,7 +738,9 @@ describe('preview requests act for the session that asked (#73890)', () => {
     publishSessionState('rt-a', createClientSessionState('stored-a'))
     const url = 'https://test.example/start'
     const id = openPreview({ kind: 'url', label: 'start', source: 'test', url }, 'stored-a')!
-    const reader = vi.fn(async (): Promise<never> => { throw new Error('unexpected read failure') })
+    const reader = vi.fn(async (): Promise<never> => {
+      throw new Error('unexpected read failure')
+    })
     const unbind = registerPreviewPageReader(id, reader, () => ({ guest_id: 3, page_epoch: 4 }))
 
     try {
@@ -634,7 +748,11 @@ describe('preview requests act for the session that asked (#73890)', () => {
       await vi.waitFor(() => expect(respond).toHaveBeenCalledTimes(1), { timeout: 500 })
       expect(reader).toHaveBeenCalledTimes(1)
       expect(JSON.parse(respond.mock.calls[0][0].value)).toMatchObject({ success: false, code: 'PANE_UNAVAILABLE' })
-    } finally { unbind(); dropSessionState('rt-a'); deps.activeSessionIdRef.current = null }
+    } finally {
+      unbind()
+      dropSessionState('rt-a')
+      deps.activeSessionIdRef.current = null
+    }
   })
 
   it('does not hide an unrelated read error merely because the page epoch changed', async () => {
@@ -643,15 +761,26 @@ describe('preview requests act for the session that asked (#73890)', () => {
     const url = 'https://test.example/start'
     const id = openPreview({ kind: 'url', label: 'start', source: 'test', url }, 'stored-a')!
     let epoch = 4
-    const reader = vi.fn(async (): Promise<never> => { epoch++; throw new Error('unexpected failure') })
-    const unbind = registerPreviewPageReader(id, reader, () => ({ guest_id: 3, page_epoch: epoch, committed_epoch: epoch }))
+    const reader = vi.fn(async (): Promise<never> => {
+      epoch++
+      throw new Error('unexpected failure')
+    })
+    const unbind = registerPreviewPageReader(id, reader, () => ({
+      guest_id: 3,
+      page_epoch: epoch,
+      committed_epoch: epoch
+    }))
 
     try {
       const { respond } = deliver('preview.open', { session_id: 'rt-a', url }, 'rt-a')
       await vi.waitFor(() => expect(respond).toHaveBeenCalledTimes(1), { timeout: 500 })
       expect(reader).toHaveBeenCalledTimes(1)
       expect(JSON.parse(respond.mock.calls[0][0].value)).toMatchObject({ success: false, code: 'PANE_UNAVAILABLE' })
-    } finally { unbind(); dropSessionState('rt-a'); deps.activeSessionIdRef.current = null }
+    } finally {
+      unbind()
+      dropSessionState('rt-a')
+      deps.activeSessionIdRef.current = null
+    }
   })
 
   it('preserves wrong-owner and stale binding failures', async () => {
@@ -659,17 +788,28 @@ describe('preview requests act for the session that asked (#73890)', () => {
     publishSessionState('rt-a', createClientSessionState('stored-a'))
     const url = 'https://test.example/start'
     const id = openPreview({ kind: 'url', label: 'start', source: 'test', url }, 'stored-a')!
-    const unbind = registerPreviewPageReader(id, async () => ({ text: '', title: '', url }), () => ({ guest_id: 3, page_epoch: 4 }))
+    const unbind = registerPreviewPageReader(
+      id,
+      async () => ({ text: '', title: '', url }),
+      () => ({ guest_id: 3, page_epoch: 4 })
+    )
 
     try {
       const binding = activePreviewBinding({ profile: 'default', runtimeId: 'rt-a', sessionId: 'stored-a', tabId: id })!
 
-      for (const [expected_binding, code] of [[{ ...binding, window_id: 'other' }, 'WRONG_OWNER'], [{ ...binding, guest_id: 9 }, 'STALE_TARGET']] as const) {
+      for (const [expected_binding, code] of [
+        [{ ...binding, window_id: 'other' }, 'WRONG_OWNER'],
+        [{ ...binding, guest_id: 9 }, 'STALE_TARGET']
+      ] as const) {
         const { respond } = deliver('preview.open', { session_id: 'rt-a', url, expected_binding }, 'rt-a')
         await vi.waitFor(() => expect(respond).toHaveBeenCalledTimes(1))
         expect(JSON.parse(respond.mock.calls[0][0].value)).toMatchObject({ success: false, code })
       }
-    } finally { unbind(); dropSessionState('rt-a'); deps.activeSessionIdRef.current = null }
+    } finally {
+      unbind()
+      dropSessionState('rt-a')
+      deps.activeSessionIdRef.current = null
+    }
   })
 
   it.each(['unmounted', 'loading'])('returns pane unavailable when %s exceeds the deadline', async scenario => {
@@ -679,15 +819,25 @@ describe('preview requests act for the session that asked (#73890)', () => {
     const url = 'https://test.example/start'
     const id = openPreview({ kind: 'url', label: 'start', source: 'test', url }, 'stored-a')!
 
-    const unbind = scenario === 'loading'
-      ? registerPreviewPageReader(id, async () => ({ text: '', title: '', url }), () => ({ guest_id: 3, page_epoch: 4, loading: true }))
-      : () => undefined
+    const unbind =
+      scenario === 'loading'
+        ? registerPreviewPageReader(
+            id,
+            async () => ({ text: '', title: '', url }),
+            () => ({ guest_id: 3, page_epoch: 4, loading: true })
+          )
+        : () => undefined
 
     try {
       const { respond } = deliver('preview.open', { session_id: 'rt-a', url }, 'rt-a')
       await vi.advanceTimersByTimeAsync(8100)
       expect(JSON.parse(respond.mock.calls[0][0].value)).toMatchObject({ success: false, code: 'PANE_UNAVAILABLE' })
-    } finally { unbind(); vi.useRealTimers(); dropSessionState('rt-a'); deps.activeSessionIdRef.current = null }
+    } finally {
+      unbind()
+      vi.useRealTimers()
+      dropSessionState('rt-a')
+      deps.activeSessionIdRef.current = null
+    }
   })
 
   // Tile B holds focus while the primary session A's agent is the one asking.

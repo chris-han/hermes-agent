@@ -40,7 +40,11 @@ export function OrganizationBrand({
       <div className={cn('flex min-w-0 gap-3', compact ? 'items-center' : 'flex-col items-center')}>
         <img
           alt=""
-          className={cn('shrink-0 object-contain', compact ? 'size-7' : markOnly ? 'size-12' : 'size-14', markClassName)}
+          className={cn(
+            'shrink-0 object-contain',
+            compact ? 'size-7' : markOnly ? 'size-12' : 'size-14',
+            markClassName
+          )}
           src={value.logo ?? semantierLogo}
         />
         {!markOnly && (

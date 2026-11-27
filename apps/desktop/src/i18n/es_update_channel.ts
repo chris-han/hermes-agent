@@ -1,7 +1,8 @@
 export const esUpdateChannel = {
-  production: "Producción",
-  development: "Desarrollo",
-  packagedDescription: "Producción sigue las versiones publicadas. Desarrollo incluye versiones de prueba. Cambiar de canal solo busca actualizaciones; tú decides cuándo instalarlas.",
+  production: 'Producción',
+  development: 'Desarrollo',
+  packagedDescription:
+    'Producción sigue las versiones publicadas. Desarrollo incluye versiones de prueba. Cambiar de canal solo busca actualizaciones; tú decides cuándo instalarlas.',
   title: 'Canal de actualizaciones',
   description: 'Estable instala solo versiones publicadas. Cada commit sigue la rama main a medida que llegan cambios.',
   stable: 'Versiones estables',

@@ -560,8 +560,11 @@ export function resolveDesktopCommand(command: string): DesktopCommandSpec | nul
   const catalog = specFromCatalog(command)
   const spec = local ?? catalog
 
-  if (spec && globalThis.window?.hermesDesktop?.semantierProduct &&
-      (canonical === '/topup' || canonical === '/subscription')) {
+  if (
+    spec &&
+    globalThis.window?.hermesDesktop?.semantierProduct &&
+    (canonical === '/topup' || canonical === '/subscription')
+  ) {
     return { ...spec, surface: { kind: 'unavailable', reason: 'settings' } }
   }
 

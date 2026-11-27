@@ -252,7 +252,6 @@ describe('ConnectionSwitcher', () => {
   })
 })
 
-
 describe('Semantier execution environment', () => {
   const signedIdentity = {
     authenticated: true,
@@ -271,21 +270,29 @@ describe('Semantier execution environment', () => {
     const save = vi.fn().mockResolvedValue({ connection: { id: 'cloud' } })
     vi.stubGlobal('hermesDesktop', {
       connections: { save },
-      workspace: { identity: vi.fn().mockResolvedValue(alreadySignedIn ? signedIdentity : { authenticated: false }), login }
+      workspace: {
+        identity: vi.fn().mockResolvedValue(alreadySignedIn ? signedIdentity : { authenticated: false }),
+        login
+      }
     })
 
     try {
       render(<ConnectionSwitcher onConnect={onConnect} readiness="Ready" />)
       fireEvent.pointerDown(screen.getByRole('button', { name: 'Execution environment: This device · Ready' }), {
-        button: 0, pointerType: 'mouse'
+        button: 0,
+        pointerType: 'mouse'
       })
       fireEvent.click(screen.getByRole('menuitem', { name: 'Semantier Cloud' }))
-      await waitFor(() => expect(screen.getByRole('group', { name: 'Execution environment' }).getAttribute('aria-busy')).toBe('false'))
+      await waitFor(() =>
+        expect(screen.getByRole('group', { name: 'Execution environment' }).getAttribute('aria-busy')).toBe('false')
+      )
       expect(login).toHaveBeenCalledTimes(alreadySignedIn ? 0 : 1)
       expect(save).toHaveBeenCalledTimes(cancel ? 0 : 1)
       expect(selectConnection).toHaveBeenCalledTimes(cancel ? 0 : 1)
 
-      if (!cancel) {expect(selectConnection).toHaveBeenCalledWith('cloud')}
+      if (!cancel) {
+        expect(selectConnection).toHaveBeenCalledWith('cloud')
+      }
       expect($activeConnectionId.get()).toBe('local')
     } finally {
       vi.unstubAllGlobals()

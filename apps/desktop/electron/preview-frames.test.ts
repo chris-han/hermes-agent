@@ -131,9 +131,13 @@ describe('preview frame debugger', () => {
 
       return original(method, params, session)
     })
-    await expect(frames.input(child, { type: 'mouseUp', x: 23, y: 42, button: 'left', clickCount: 1 })).resolves.toBeUndefined()
+    await expect(
+      frames.input(child, { type: 'mouseUp', x: 23, y: 42, button: 'left', clickCount: 1 })
+    ).resolves.toBeUndefined()
     // A subsequent action still cannot target the retired document.
-    await expect(frames.input(child, { type: 'mouseDown', x: 23, y: 42, button: 'left', clickCount: 1 })).rejects.toThrow('STALE_FRAME')
+    await expect(
+      frames.input(child, { type: 'mouseDown', x: 23, y: 42, button: 'left', clickCount: 1 })
+    ).rejects.toThrow('STALE_FRAME')
     frames.dispose()
   })
 
