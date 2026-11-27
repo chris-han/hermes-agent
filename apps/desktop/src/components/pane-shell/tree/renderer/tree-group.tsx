@@ -590,7 +590,8 @@ export function TreeGroup({
               className="flex shrink-0 items-center px-2 [-webkit-app-region:drag]"
               data-window-drag-handle=""
             >
-              <OrganizationBrand compact markClassName="size-8" markOnly />
+              {/* 34px titlebar with 4px clearance on each edge. */}
+              <OrganizationBrand compact markClassName="size-6.5" markOnly />
             </div>
           )}
           {pageHeader && headerVisible ? (

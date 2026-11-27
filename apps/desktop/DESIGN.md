@@ -708,7 +708,9 @@ Version & updates reuses the UpdateChannelRow/ListRow/SegmentedControl to select
 
 Use one execution-environment selector with a readable readiness state and a route to diagnostics. Keep active context visible while a new environment connects. The Cloud choice invokes the existing hosted sign-in when needed and activates the requested environment after verified identity and connection. Closing sign-in leaves the active context in place.
 
-Use the existing gear as the Configuration Center entry. Keep profile selection and management under Agent configuration and retain session ownership when opening the settings. The integrated Sessions navigation header uses a 32 CSS px organization mark with an 8 px inline inset and preserves the existing artwork and drag affordance.
+Use the existing gear as the Configuration Center entry. Keep profile selection and management under Agent configuration and retain session ownership when opening the settings.
+
+The docked Sessions navigation header keeps the existing 34 CSS px titlebar. The organization mark is the bar height minus 8 px, giving a 26 × 26 px mark with 4 px clearance above and below. Use an 8 px left inset and an 8 px gap to the tab strip. Center the mark, tab labels and sidebar toggle vertically. Preserve the original green logo asset, drag behavior, and Asimov theme tokens for the neutral light-gray surface, muted controls, yellow active-tab underline and corresponding dark appearance. Below 640 CSS px, the overlay keeps its separate 40 px branding row with a 32 px mark, organization title and right-aligned toggle above the tabs.
 
 
 ## Semantier native theme
