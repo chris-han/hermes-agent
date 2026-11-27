@@ -74,14 +74,25 @@ describe('useBackgroundSync profile-scoped session refresh', () => {
 
   it('refreshes the saved default for each new draft while already on an empty draft', async () => {
     const refreshModel = vi.fn()
-    render('default', 'local', vi.fn(async () => undefined), requestGateway, true, refreshModel)
+    render(
+      'default',
+      'local',
+      vi.fn(async () => undefined),
+      requestGateway,
+      true,
+      refreshModel
+    )
     await act(async () => undefined)
     const initialCalls = refreshModel.mock.calls.length
 
-    await act(async () => { rotateFreshDraftKey() })
+    await act(async () => {
+      rotateFreshDraftKey()
+    })
     expect(refreshModel).toHaveBeenCalledTimes(initialCalls + 1)
 
-    await act(async () => { rotateFreshDraftKey() })
+    await act(async () => {
+      rotateFreshDraftKey()
+    })
     expect(refreshModel).toHaveBeenCalledTimes(initialCalls + 2)
   })
 

@@ -218,7 +218,9 @@ export function TitlebarControls({ leftTools = [], tools = [], onOpenSettings }:
       actionId: 'nav.settings',
       icon: <TitlebarIcon name="settings-gear" />,
       id: 'settings',
-      label: window.hermesDesktop?.semantierProduct ? semantierWorkspaceCopy(locale).configurationCenter : t.titlebar.openSettings,
+      label: window.hermesDesktop?.semantierProduct
+        ? semantierWorkspaceCopy(locale).configurationCenter
+        : t.titlebar.openSettings,
       onSelect: () => {
         triggerHaptic('open')
         onOpenSettings()

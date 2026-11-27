@@ -404,6 +404,7 @@ export function useQueue(gw?: { request: (method: string, params: Record<string,
       if (getUiState().gatewayConnected === false) {
         return undefined
       }
+
       const queue = getQueue()
       const item = queue.items[0]
 

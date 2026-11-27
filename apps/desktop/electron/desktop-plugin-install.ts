@@ -317,8 +317,9 @@ function sparseCheckoutPattern(subdir: string): string {
 // file in the repository and times out on slow connections.
 async function cloneToTemp(gitBin: string, gitUrl: string, subdir: string | null, commit?: string): Promise<string> {
   if (commit !== undefined && !/^[0-9a-f]{40}$/.test(commit)) {
-    throw new Error("Expected an immutable plugin commit.")
+    throw new Error('Expected an immutable plugin commit.')
   }
+
   const tmpRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'hermes-plugin-'))
 
   try {
@@ -329,14 +330,17 @@ async function cloneToTemp(gitBin: string, gitUrl: string, subdir: string | null
     }
 
     await runGitOrThrow(gitBin, ['clone', '--depth', '1', '--filter=blob:none', '--no-checkout', gitUrl, tmpRoot])
+
     if (subdir) {
       await runGitOrThrow(gitBin, ['config', 'core.sparseCheckout', 'true'], tmpRoot)
       await fsp.mkdir(path.join(tmpRoot, '.git', 'info'), { recursive: true })
       await fsp.writeFile(path.join(tmpRoot, '.git', 'info', 'sparse-checkout'), sparseCheckoutPattern(subdir), 'utf8')
     }
+
     if (commit) {
       await runGitOrThrow(gitBin, ['fetch', '--depth', '1', 'origin', commit], tmpRoot)
     }
+
     await runGitOrThrow(gitBin, ['checkout', '--detach', commit ?? 'HEAD'], tmpRoot)
 
     return tmpRoot

@@ -12,6 +12,7 @@ export const markBubbleShown = (inputId?: string) => {
     shown.add(inputId)
   }
 }
+
 export const resetBubbleLedger = () => shown.clear()
 
 // Rows the authority just moved queued → started whose bubble nobody painted.
@@ -21,6 +22,7 @@ export function newlyStartedRows(previous: PendingRow[] | undefined, incoming: P
   if (!previous || !incoming) {
     return []
   }
+
   const wasQueued = new Set(previous.filter(row => row.status === 'queued').map(row => row.admission_id))
 
   return incoming.filter(

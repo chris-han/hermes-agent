@@ -29,8 +29,7 @@ export const deSharedMetrics = {
     'Sendet Statistiken einmal täglich mit einer zufälligen ID für dieses Profil an Semantier. Abgesehen vom einmaligen Installationshinweis werden Statistiken von vor Ihrer Zustimmung nie gesendet. Erfordert aktive Erfassung.',
   unavailable: 'Aktualisieren Sie das Hermes-Backend, um diese Einstellung zu ändern.',
   stripBody: 'Nur Zählwerte. Niemals Ihre Nachrichten oder Dateien.',
-  stripReaskBody:
-    'Bitte erneut wählen: Nutzungsstatistiken gehen jetzt an Semantier statt an Nous.',
+  stripReaskBody: 'Bitte erneut wählen: Nutzungsstatistiken gehen jetzt an Semantier statt an Nous.',
   stripChoices: { share: 'Mit Semantier teilen', local: 'Auf diesem Computer behalten', off: 'Nein danke' },
   stripDetails: 'Details'
 }

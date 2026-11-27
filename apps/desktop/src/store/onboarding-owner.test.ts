@@ -305,7 +305,9 @@ it('observes the same native operation after a lost poll reply without starting 
 
 it('deduplicates concurrent Cloud starts on the same owning profile', async () => {
   let release!: () => void
-  const gate = new Promise<void>(resolve => { release = resolve })
+  const gate = new Promise<void>(resolve => {
+    release = resolve
+  })
   deferStart = () => gate
   const ctx = beginContext()
   const provider = { ...makeOAuthProvider('semantier-cloud'), flow: 'device_code' as const }
@@ -322,12 +324,18 @@ it('deduplicates concurrent Cloud starts on the same owning profile', async () =
 it('shows Cloud recovery instead of the raw Electron transport error', async () => {
   const ctx = beginContext()
 
-  deferStart = async () => { throw new Error('Error invoking remote method \'hermes:api\': Error: 503: {"detail":{"code":"cloud_http3_unavailable","message":"PRIVATE ENDPOINT","profile":"leverage-ai"}}') }
+  deferStart = async () => {
+    throw new Error(
+      'Error invoking remote method \'hermes:api\': Error: 503: {"detail":{"code":"cloud_http3_unavailable","message":"PRIVATE ENDPOINT","profile":"leverage-ai"}}'
+    )
+  }
   await startProviderOAuth({ ...makeOAuthProvider('semantier-cloud'), flow: 'device_code' }, ctx)
   const flow = $desktopOnboarding.get().flow
   expect(flow.status).toBe('error')
 
-  if (flow.status !== 'error') { throw new Error('Expected Cloud failure') }
+  if (flow.status !== 'error') {
+    throw new Error('Expected Cloud failure')
+  }
   expect(flow.message).toContain('HTTP/3')
   expect(flow.detail).toContain('cloud_http3_unavailable')
   expect(JSON.stringify(flow)).not.toContain('PRIVATE ENDPOINT')
@@ -335,7 +343,10 @@ it('shows Cloud recovery instead of the raw Electron transport error', async () 
 
 it('starts a reopened same-owner Cloud flow after the retired start is cancelled', async () => {
   let release!: () => void
-  deferStart = () => new Promise<void>(resolve => { release = resolve })
+  deferStart = () =>
+    new Promise<void>(resolve => {
+      release = resolve
+    })
   const ctx = beginContext()
   const provider = { ...makeOAuthProvider('semantier-cloud'), flow: 'device_code' as const }
   const retired = startProviderOAuth(provider, ctx)
@@ -354,7 +365,12 @@ it('starts a reopened same-owner Cloud flow after the retired start is cancelled
 
 it('opens Cloud Billing separately and preserves an authenticated-style tab', async () => {
   const ctx = beginContext()
-  const original = openPreview({ kind: 'url', url: 'https://bank.invalid/session', source: 'https://bank.invalid/session', label: 'Existing session' })
+  const original = openPreview({
+    kind: 'url',
+    url: 'https://bank.invalid/session',
+    source: 'https://bank.invalid/session',
+    label: 'Existing session'
+  })
   await startProviderOAuth({ ...makeOAuthProvider('semantier-cloud'), flow: 'device_code' }, ctx)
   expect(window.hermesDesktop.openExternal).not.toHaveBeenCalled()
   expect($previewTabs.get()).toHaveLength(2)
@@ -395,7 +411,9 @@ it('keeps Cloud reopen bound to its initiating chat runtime', async () => {
     $activeSessionId.set(originalRuntime)
     expect(reopenCloudVerification()).toBe(true)
     expect($previewTabs.get()).toHaveLength(1)
-  } finally { $activeSessionId.set(originalRuntime) }
+  } finally {
+    $activeSessionId.set(originalRuntime)
+  }
 })
 
 it.each([
@@ -408,7 +426,9 @@ it.each([
     if (request.path.startsWith('/api/model/options')) {
       requests.push(request)
 
-      return { providers: [{ slug: 'semantier-cloud', models: [], discovery_state: 'error', discovery_status: code }] } as never
+      return {
+        providers: [{ slug: 'semantier-cloud', models: [], discovery_state: 'error', discovery_status: code }]
+      } as never
     }
 
     return original(request) as never
@@ -416,19 +436,42 @@ it.each([
   const task = retryCloudModelDiscovery(ctx, { ...makeOAuthProvider('semantier-cloud'), flow: 'device_code' })
   await vi.advanceTimersByTimeAsync(2000)
   await task
-  expect($desktopOnboarding.get().flow).toMatchObject({ status: 'error', installed: true, message: expect.stringContaining(message) })
-  expect(requests.filter(request => request.path.startsWith('/api/model/options')).every(request => new URL(request.path, 'https://fixture.test').searchParams.get('query_scope') === owner.connectionId)).toBe(true)
+  expect($desktopOnboarding.get().flow).toMatchObject({
+    status: 'error',
+    installed: true,
+    message: expect.stringContaining(message)
+  })
+  expect(
+    requests
+      .filter(request => request.path.startsWith('/api/model/options'))
+      .every(
+        request => new URL(request.path, 'https://fixture.test').searchParams.get('query_scope') === owner.connectionId
+      )
+  ).toBe(true)
   expect(requests.filter(request => request.path.endsWith('/start'))).toHaveLength(0)
 })
 
-
 it('opens the selected Cloud login inside Browser Pane even when provider discovery is unavailable', async () => {
-  $connectionsRegistry.set({version:2,primary:owner.connectionId,launchMode:'primary',lastUsed:owner.connectionId,connections:[
-    {id:owner.connectionId,kind:'cloud',label:'Local Docker',url:'https://127.0.0.1',transport:'semantier-workspace-http'}
-  ]} as never)
+  $connectionsRegistry.set({
+    version: 2,
+    primary: owner.connectionId,
+    launchMode: 'primary',
+    lastUsed: owner.connectionId,
+    connections: [
+      {
+        id: owner.connectionId,
+        kind: 'cloud',
+        label: 'Local Docker',
+        url: 'https://127.0.0.1',
+        transport: 'semantier-workspace-http'
+      }
+    ]
+  } as never)
   window.hermesDesktop.api = vi.fn().mockRejectedValue(new Error('Provider discovery unavailable'))
   startManualProviderOAuth('semantier-cloud', owner)
-  await vi.waitFor(() => expect($previewTabs.get().map(tab => tab.target.url)).toContain('https://127.0.0.1/billing?entry=windows'))
+  await vi.waitFor(() =>
+    expect($previewTabs.get().map(tab => tab.target.url)).toContain('https://127.0.0.1/billing?entry=windows')
+  )
   expect(window.hermesDesktop.openExternal).not.toHaveBeenCalled()
   expect(window.hermesDesktop.api).not.toHaveBeenCalled()
 })
@@ -437,32 +480,44 @@ it('opens the configured Cloud portal before attempting native provider discover
   const api = window.hermesDesktop.api
   window.hermesDesktop.api = vi.fn(async request => {
     if (request.path.startsWith('/api/config')) {
-      return {providers:{'semantier-cloud':{base_url:'https://inference.example/v1',portal_origin:'https://accounts.example'}}}
+      return {
+        providers: {
+          'semantier-cloud': { base_url: 'https://inference.example/v1', portal_origin: 'https://accounts.example' }
+        }
+      }
     }
 
     return api(request)
   }) as typeof api
   startManualProviderOAuth('semantier-cloud', owner)
-  await vi.waitFor(() => expect($previewTabs.get().map(tab => tab.target.url)).toContain('https://accounts.example/billing?entry=windows'))
+  await vi.waitFor(() =>
+    expect($previewTabs.get().map(tab => tab.target.url)).toContain('https://accounts.example/billing?entry=windows')
+  )
   expectOwnerRequests()
   expect(window.hermesDesktop.openExternal).not.toHaveBeenCalled()
 })
 
-
 it('keeps the public Cloud login available when native settings cannot be read', async () => {
   window.hermesDesktop.api = vi.fn().mockRejectedValue(new Error('Native runtime unavailable'))
   startManualProviderOAuth('semantier-cloud', owner)
-  await vi.waitFor(() => expect($previewTabs.get().map(tab => tab.target.url)).toContain('https://cloud.semantier.cn/billing?entry=windows'))
+  await vi.waitFor(() =>
+    expect($previewTabs.get().map(tab => tab.target.url)).toContain('https://cloud.semantier.cn/billing?entry=windows')
+  )
   expect(window.hermesDesktop.openExternal).not.toHaveBeenCalled()
 })
 
 it('does not open a late Cloud login after the foreground owner changes', async () => {
   let release!: (config: unknown) => void
-  window.hermesDesktop.api = vi.fn(() => new Promise(resolve => { release = resolve })) as typeof window.hermesDesktop.api
+  window.hermesDesktop.api = vi.fn(
+    () =>
+      new Promise(resolve => {
+        release = resolve
+      })
+  ) as typeof window.hermesDesktop.api
   const { openCloudSignIn } = await import('./cloud-sign-in')
   const opening = openCloudSignIn(owner)
   switchForeground()
-  release({providers:{'semantier-cloud':{portal_origin:'https://accounts.example'}}})
+  release({ providers: { 'semantier-cloud': { portal_origin: 'https://accounts.example' } } })
   await opening
   expect($previewTabs.get()).toHaveLength(0)
 })

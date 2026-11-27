@@ -67,19 +67,32 @@ export function ModelVisibilityDialog({
 
   const modelOptions = useQuery({
     queryKey: modelOptionsQueryKey(profile, sessionId, ownerKey),
-    queryFn: (): Promise<ModelOptionsResult> => requestDiscoveredModelOptions({
-      connection, gateway: gw, ownerConnectionId, profile, sessionId,
-      request: <T,>(method: string, params?: Record<string, unknown>) =>
-        requestGatewayForAgent<T>(ownerConnectionId ?? connection?.connectionId ?? null, profile, method, params)
-    }),
+    queryFn: (): Promise<ModelOptionsResult> =>
+      requestDiscoveredModelOptions({
+        connection,
+        gateway: gw,
+        ownerConnectionId,
+        profile,
+        sessionId,
+        request: <T,>(method: string, params?: Record<string, unknown>) =>
+          requestGatewayForAgent<T>(ownerConnectionId ?? connection?.connectionId ?? null, profile, method, params)
+      }),
     enabled: open && !!ownerKey
   })
 
   const providers = useMemo(
     () =>
       (modelOptions.data?.providers ?? [])
-        .map(provider => provider.discovery_state == null ? provider : withManualModelChoices(provider,
-          customs.filter(entry => entry.scope === manualScope && entry.provider === provider.slug).map(entry => entry.model)))
+        .map(provider =>
+          provider.discovery_state == null
+            ? provider
+            : withManualModelChoices(
+                provider,
+                customs
+                  .filter(entry => entry.scope === manualScope && entry.provider === provider.slug)
+                  .map(entry => entry.model)
+              )
+        )
         .filter(provider => (provider.models ?? []).length > 0),
     [modelOptions.data, customs, manualScope]
   )
@@ -135,7 +148,9 @@ export function ModelVisibilityDialog({
 
         <div className="max-h-[55vh] overflow-y-auto pb-1">
           <ModelDiscoveryRefreshStatus ownerKey={ownerKey} profile={profile} />
-          {(modelOptions.data?.providers ?? []).map(provider => <ModelDiscoveryStatus key={provider.slug} provider={provider} />)}
+          {(modelOptions.data?.providers ?? []).map(provider => (
+            <ModelDiscoveryStatus key={provider.slug} provider={provider} />
+          ))}
           {providers.length === 0 ? (
             <div className="px-3 py-5 text-center text-xs text-muted-foreground">
               {modelOptions.isPending ? <GlyphSpinner className="mx-auto text-sm" /> : copy.noAuthenticatedProviders}

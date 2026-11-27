@@ -16,7 +16,13 @@
  * itself here as the delegate so tile UI stays dependency-light.
  */
 
-import { backendScopeKey, backendScopePrefix, type GatewayEvent, LOCAL_CONNECTION_ID, registryBackendScopeKey } from '@hermes/shared'
+import {
+  backendScopeKey,
+  backendScopePrefix,
+  type GatewayEvent,
+  LOCAL_CONNECTION_ID,
+  registryBackendScopeKey
+} from '@hermes/shared'
 import { atom, computed } from 'nanostores'
 
 import { setSessionOwnerResolver } from '@/api/client'
@@ -2838,27 +2844,39 @@ export function dropTilesForProfile(
 export function dropTilesForConnection(connectionId: string): void {
   const id = connectionId.trim()
 
-  if (!id || id === LOCAL_CONNECTION_ID) { return }
+  if (!id || id === LOCAL_CONNECTION_ID) {
+    return
+  }
   const prefix = backendScopePrefix(id)
 
   for (const buckets of [tilesByProfile, closedTilesByProfile]) {
     for (const key of Object.keys(buckets)) {
-      const remaining = buckets[key].filter(tile => tile.ownerRoute?.connectionId
-        ? tile.ownerRoute.connectionId !== id : !key.startsWith(prefix))
+      const remaining = buckets[key].filter(tile =>
+        tile.ownerRoute?.connectionId ? tile.ownerRoute.connectionId !== id : !key.startsWith(prefix)
+      )
 
-      if (remaining.length) { buckets[key] = remaining }
-      else { delete buckets[key] }
+      if (remaining.length) {
+        buckets[key] = remaining
+      } else {
+        delete buckets[key]
+      }
     }
   }
 
-  const remaining = $sessionTiles.get().filter(tile => tile.ownerRoute?.connectionId
-    ? tile.ownerRoute.connectionId !== id
-    : tile.workspaceMode === 'bots' || !visibleTileScope.startsWith(prefix))
+  const remaining = $sessionTiles
+    .get()
+    .filter(tile =>
+      tile.ownerRoute?.connectionId
+        ? tile.ownerRoute.connectionId !== id
+        : tile.workspaceMode === 'bots' || !visibleTileScope.startsWith(prefix)
+    )
 
   $sessionTiles.set(remaining)
 
   for (const [runtimeId, owner] of sessionOwnerByRuntimeId) {
-    if (owner && typeof owner === 'object' && owner.connectionId === id) { dropSessionState(runtimeId) }
+    if (owner && typeof owner === 'object' && owner.connectionId === id) {
+      dropSessionState(runtimeId)
+    }
   }
 
   persistTiles()

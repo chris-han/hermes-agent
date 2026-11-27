@@ -292,10 +292,13 @@ describe('VersionHero bundle banners', () => {
   })
 })
 
-
 it('keeps failure details collapsed and leaves the check action available', () => {
   $updateApply.set(IDLE_APPLY)
-  $updateStatus.set({ supported: true, error: 'check-failed', message: 'Native channel operation failed (exit code 7)' })
+  $updateStatus.set({
+    supported: true,
+    error: 'check-failed',
+    message: 'Native channel operation failed (exit code 7)'
+  })
   const { container } = render(<UpdateStatusCard target="client" />)
   const detail = container.querySelector('details')
   expect(detail).not.toBeNull()
@@ -306,7 +309,6 @@ it('keeps failure details collapsed and leaves the check action available', () =
   $updateStatus.set(null)
 })
 
-
 it('does not claim latest when the channel explicitly has no published build', () => {
   const view = derive({ supported: true, updateAvailable: false, reason: 'no-build-published' })
   expect(view.line).toBe('No release is available on this channel yet.')
@@ -314,9 +316,13 @@ it('does not claim latest when the channel explicitly has no published build', (
   expect(view.line).not.toBe(en.updates.latestBody)
 })
 
-
 it('names the exact channel target before the user starts an update', () => {
-  const view = derive({ supported: true, updateAvailable: true, latestTag: 'v0.0.42', installedReleaseId: 'baseline-build' })
+  const view = derive({
+    supported: true,
+    updateAvailable: true,
+    latestTag: 'v0.0.42',
+    installedReleaseId: 'baseline-build'
+  })
   expect(view.line).toBe(en.updates.availableBodyRelease('v0.0.42'))
 })
 

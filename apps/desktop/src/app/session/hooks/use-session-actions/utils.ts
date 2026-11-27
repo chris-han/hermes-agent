@@ -1785,7 +1785,8 @@ export function overlayConcurrentMessageChanges(
   const retired = (message: ChatMessage) =>
     dropped.has(message.id) ||
     ((isLiveTailRow(message) || (message.role === 'user' && message.id.startsWith('user-'))) &&
-      baselineById.has(message.id) && !currentIds.has(message.id))
+      baselineById.has(message.id) &&
+      !currentIds.has(message.id))
 
   if (currentMessages.length && overlaid.some(retired)) {
     return overlaid.filter(message => !retired(message))
@@ -2433,8 +2434,11 @@ function publishRuntimeToComposer(state: SessionRuntimeStatePatch): void {
 /** Session-independent side effects of one runtime info snapshot. */
 function reportRuntimeInfoAppState(info: SessionRuntimeInfo): void {
   if (info.stored_session_id) {
-    reconcilePendingSubmissions(info.stored_session_id, info.pending_submissions,
-      pendingSnapshotFence(info.replay_epoch, info.last_sequence))
+    reconcilePendingSubmissions(
+      info.stored_session_id,
+      info.pending_submissions,
+      pendingSnapshotFence(info.replay_epoch, info.last_sequence)
+    )
   }
 
   // App/profile-level reporting is session-independent — a tile's runtime

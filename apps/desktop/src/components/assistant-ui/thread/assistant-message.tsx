@@ -1010,7 +1010,9 @@ const ErrorRecoveryActions: FC = () => {
           {remoteConnection ? copy.errorOpenDesktopLogs : copy.errorOpenLogs}
         </button>
       )}
-      <button className="aui-error-action" onClick={() =>
+      <button
+        className="aui-error-action"
+        onClick={() =>
           requestSendDiagnostics(window.hermesDesktop?.semantierProduct ? undefined : diagnosticsText(), {
             source: 'failed_turn',
             code: surface?.code,
@@ -1018,7 +1020,9 @@ const ErrorRecoveryActions: FC = () => {
             provider: surface?.provider,
             model: surface?.model ?? (model || undefined)
           })
-        } type="button">
+        }
+        type="button"
+      >
         <Upload className="size-3" />
         {copy.errorSendDiagnostics}
       </button>

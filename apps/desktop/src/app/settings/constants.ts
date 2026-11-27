@@ -299,7 +299,9 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
     'en-US-BrianNeural',
     'en-US-GuyNeural',
     'en-GB-SoniaNeural',
-    ...Object.values(LOCALE_VOICE_DEFAULTS).map(defaults => defaults.voice).filter(voice => voice !== 'en-US-AriaNeural')
+    ...Object.values(LOCALE_VOICE_DEFAULTS)
+      .map(defaults => defaults.voice)
+      .filter(voice => voice !== 'en-US-AriaNeural')
   ],
   'tts.gemini.model': ['gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts'],
   // Gemini TTS prebuilt voice set.
