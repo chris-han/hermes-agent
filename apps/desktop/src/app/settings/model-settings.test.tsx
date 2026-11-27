@@ -68,7 +68,9 @@ vi.mock('@/lib/model-options', async importOriginal => ({
     const profile = opts.profile === 'default' ? undefined : opts.profile
     const options = await getGlobalModelOptions(opts.refresh ? { refresh: true } : undefined, profile)
 
-    if (options.model !== undefined && options.provider !== undefined) {return options}
+    if (options.model !== undefined && options.provider !== undefined) {
+      return options
+    }
     const info = await getGlobalModelInfo(profile)
 
     return { model: info.model, provider: info.provider, ...options }
@@ -135,17 +137,26 @@ describe('ModelSettings profile scope', () => {
   it('starts one background discovery for a newly targeted profile', async () => {
     $connection.set({ mode: 'local', baseUrl: 'http://localhost:9119' } as never)
     renderModelSettings('research')
-    await waitFor(() => expect(refreshModelsOnConnectionReady).toHaveBeenCalledWith(null, 'research', expect.any(Object)))
+    await waitFor(() =>
+      expect(refreshModelsOnConnectionReady).toHaveBeenCalledWith(null, 'research', expect.any(Object))
+    )
   })
 
   it('clears the previous catalog while an active profile switch is loading', async () => {
     let finish!: (value: unknown) => void
-    getGlobalModelOptions.mockResolvedValueOnce({ providers: [{ name: 'Private A', slug: 'a', models: ['a-model'] }] })
-      .mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+    getGlobalModelOptions
+      .mockResolvedValueOnce({ providers: [{ name: 'Private A', slug: 'a', models: ['a-model'] }] })
+      .mockReturnValueOnce(
+        new Promise(resolve => {
+          finish = resolve
+        })
+      )
     getGlobalModelInfo.mockResolvedValueOnce({ provider: 'a', model: 'a-model' })
     renderModelSettings()
     expect((await screen.findAllByRole('combobox'))[0].textContent).toContain('Private A')
-    await act(async () => { profileSwitchHandler?.() })
+    await act(async () => {
+      profileSwitchHandler?.()
+    })
     const triggers = screen.queryAllByRole('combobox')
 
     if (triggers.length) {
@@ -153,36 +164,69 @@ describe('ModelSettings profile scope', () => {
       expect(screen.queryByRole('option', { name: 'Private A' })).toBeNull()
     }
 
-    await act(async () => { finish({ providers: [] }) })
+    await act(async () => {
+      finish({ providers: [] })
+    })
   })
 
   it('discards a late response after the explicit settings scope changes', async () => {
     let finishA!: (value: unknown) => void
-    getGlobalModelInfo.mockReturnValueOnce(new Promise(resolve => { finishA = resolve }))
+    getGlobalModelInfo
+      .mockReturnValueOnce(
+        new Promise(resolve => {
+          finishA = resolve
+        })
+      )
       .mockResolvedValueOnce({ provider: 'b', model: 'b-model' })
-    getGlobalModelOptions.mockResolvedValueOnce({ providers: [{ name: 'Private A', slug: 'a', models: ['a-model'] }] })
+    getGlobalModelOptions
+      .mockResolvedValueOnce({ providers: [{ name: 'Private A', slug: 'a', models: ['a-model'] }] })
       .mockResolvedValueOnce({ providers: [{ name: 'Private B', slug: 'b', models: ['b-model'] }] })
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    const view = (profile: string) => <MemoryRouter><QueryClientProvider client={client}><ModelSettings scopeProfile={profile} /></QueryClientProvider></MemoryRouter>
+    const view = (profile: string) => (
+      <MemoryRouter>
+        <QueryClientProvider client={client}>
+          <ModelSettings scopeProfile={profile} />
+        </QueryClientProvider>
+      </MemoryRouter>
+    )
     const { rerender } = render(view('a'))
     rerender(view('b'))
     await waitFor(() => expect(screen.getAllByRole('combobox')[0].textContent).toContain('Private B'))
-    await act(async () => { finishA({ provider: 'a', model: 'a-model' }) })
+    await act(async () => {
+      finishA({ provider: 'a', model: 'a-model' })
+    })
     expect(screen.getAllByRole('combobox')[0].textContent).toContain('Private B')
     expect(screen.queryByText('Private A')).toBeNull()
   })
 
   it('does not retain the old scope catalog when the new scope fails', async () => {
     let failB!: (reason: Error) => void
-    getGlobalModelOptions.mockResolvedValueOnce({ model: 'a-model', provider: 'a', providers: [{ name: 'Private A', slug: 'a', models: ['a-model'] }] })
-      .mockReturnValueOnce(new Promise((_, reject) => { failB = reject }))
+    getGlobalModelOptions
+      .mockResolvedValueOnce({
+        model: 'a-model',
+        provider: 'a',
+        providers: [{ name: 'Private A', slug: 'a', models: ['a-model'] }]
+      })
+      .mockReturnValueOnce(
+        new Promise((_, reject) => {
+          failB = reject
+        })
+      )
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    const view = (profile: string) => <MemoryRouter><QueryClientProvider client={client}><ModelSettings scopeProfile={profile} /></QueryClientProvider></MemoryRouter>
+    const view = (profile: string) => (
+      <MemoryRouter>
+        <QueryClientProvider client={client}>
+          <ModelSettings scopeProfile={profile} />
+        </QueryClientProvider>
+      </MemoryRouter>
+    )
     const { rerender } = render(view('a'))
     expect((await screen.findAllByRole('combobox'))[0].textContent).toContain('Private A')
     rerender(view('b'))
     expect(screen.queryByText('Private A')).toBeNull()
-    await act(async () => { failB(new Error('catalog unavailable')) })
+    await act(async () => {
+      failB(new Error('catalog unavailable'))
+    })
     expect(await screen.findByText(/catalog unavailable/)).toBeTruthy()
     const triggers = screen.queryAllByRole('combobox')
 
@@ -217,9 +261,13 @@ describe('ModelSettings profile scope', () => {
 
 describe('ModelSettings', () => {
   it('loads the saved model from discovery without making a separate model-info probe', async () => {
-    getGlobalModelOptions.mockResolvedValue({ model: 'live-model', provider: 'lab', providers: [
-      { slug: 'lab', name: 'Lab', models: ['live-model'], discovery_state: 'fresh', discovery_source_id: 'opaque' }
-    ] })
+    getGlobalModelOptions.mockResolvedValue({
+      model: 'live-model',
+      provider: 'lab',
+      providers: [
+        { slug: 'lab', name: 'Lab', models: ['live-model'], discovery_state: 'fresh', discovery_source_id: 'opaque' }
+      ]
+    })
     renderModelSettings()
     expect((await screen.findAllByRole('combobox'))[0].textContent).toContain('Lab')
     expect(getGlobalModelInfo).not.toHaveBeenCalled()
@@ -227,16 +275,30 @@ describe('ModelSettings', () => {
 
   it('applies a generic cached model through backend validation without treating discovery as entitlement', async () => {
     getGlobalModelInfo.mockResolvedValue({ provider: 'lab', model: 'live-model' })
-    getGlobalModelOptions.mockResolvedValue({ providers: [{ slug: 'lab', name: 'Lab', models: ['live-model'],
-      discovery_state: 'stale', discovery_source_id: 'opaque', authenticated: true }] })
+    getGlobalModelOptions.mockResolvedValue({
+      providers: [
+        {
+          slug: 'lab',
+          name: 'Lab',
+          models: ['live-model'],
+          discovery_state: 'stale',
+          discovery_source_id: 'opaque',
+          authenticated: true
+        }
+      ]
+    })
     renderModelSettings()
     fireEvent.click(await screen.findByRole('button', { name: 'Apply' }))
-    await waitFor(() => expect(setModelAssignment).toHaveBeenCalledWith({ scope: 'main', provider: 'lab', model: 'live-model' }))
+    await waitFor(() =>
+      expect(setModelAssignment).toHaveBeenCalledWith({ scope: 'main', provider: 'lab', model: 'live-model' })
+    )
   })
 
   it('does not apply a source-backed model removed during revalidation', async () => {
     getGlobalModelOptions
-      .mockResolvedValueOnce({ providers: [{ slug: 'nous', name: 'Nous', models: ['hermes-4'], eligible_models: ['hermes-4'] }] })
+      .mockResolvedValueOnce({
+        providers: [{ slug: 'nous', name: 'Nous', models: ['hermes-4'], eligible_models: ['hermes-4'] }]
+      })
       .mockResolvedValueOnce({ providers: [{ slug: 'nous', name: 'Nous', models: [], eligible_models: [] }] })
     renderModelSettings()
     fireEvent.click(await screen.findByRole('button', { name: 'Apply' }))
@@ -246,7 +308,9 @@ describe('ModelSettings', () => {
 
   it('does not apply when source-backed revalidation fails', async () => {
     getGlobalModelOptions
-      .mockResolvedValueOnce({ providers: [{ slug: 'nous', name: 'Nous', models: ['hermes-4'], eligible_models: ['hermes-4'] }] })
+      .mockResolvedValueOnce({
+        providers: [{ slug: 'nous', name: 'Nous', models: ['hermes-4'], eligible_models: ['hermes-4'] }]
+      })
       .mockRejectedValueOnce(new Error('discovery failed'))
     renderModelSettings()
     fireEvent.click(await screen.findByRole('button', { name: 'Apply' }))
@@ -256,7 +320,9 @@ describe('ModelSettings', () => {
 
   it('does not downgrade to legacy Apply when revalidation returns unknown eligibility', async () => {
     getGlobalModelOptions
-      .mockResolvedValueOnce({ providers: [{ slug: 'nous', name: 'Nous', models: ['hermes-4'], eligible_models: ['hermes-4'] }] })
+      .mockResolvedValueOnce({
+        providers: [{ slug: 'nous', name: 'Nous', models: ['hermes-4'], eligible_models: ['hermes-4'] }]
+      })
       .mockResolvedValue({ providers: [{ slug: 'nous', name: 'Nous', models: ['hermes-4'] }] })
     renderModelSettings()
     const apply = await screen.findByRole('button', { name: 'Apply' })
@@ -268,8 +334,12 @@ describe('ModelSettings', () => {
   })
 
   it('retries discovery without saving and lets the user apply after recovery', async () => {
-    const available = { providers: [{ slug: 'nous', name: 'Nous', models: ['hermes-4'], eligible_models: ['hermes-4'] }] }
-    getGlobalModelOptions.mockResolvedValueOnce(available).mockRejectedValueOnce(new Error('discovery failed'))
+    const available = {
+      providers: [{ slug: 'nous', name: 'Nous', models: ['hermes-4'], eligible_models: ['hermes-4'] }]
+    }
+    getGlobalModelOptions
+      .mockResolvedValueOnce(available)
+      .mockRejectedValueOnce(new Error('discovery failed'))
       .mockResolvedValue(available)
     renderModelSettings()
     fireEvent.click(await screen.findByRole('button', { name: 'Apply' }))
@@ -283,32 +353,60 @@ describe('ModelSettings', () => {
   it('does not apply after the profile changes during source-backed revalidation', async () => {
     let finish!: (value: unknown) => void
     getGlobalModelOptions
-      .mockResolvedValueOnce({ providers: [{ slug: 'nous', name: 'Nous', models: ['hermes-4'], eligible_models: ['hermes-4'] }] })
-      .mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+      .mockResolvedValueOnce({
+        providers: [{ slug: 'nous', name: 'Nous', models: ['hermes-4'], eligible_models: ['hermes-4'] }]
+      })
+      .mockReturnValueOnce(
+        new Promise(resolve => {
+          finish = resolve
+        })
+      )
     renderModelSettings()
     fireEvent.click(await screen.findByRole('button', { name: 'Apply' }))
     await waitFor(() => expect(getGlobalModelOptions).toHaveBeenCalledTimes(2))
-    await act(async () => { profileSwitchHandler?.() })
-    await act(async () => { finish({ providers: [{ slug: 'nous', name: 'Nous', models: ['hermes-4'], eligible_models: ['hermes-4'] }] }) })
+    await act(async () => {
+      profileSwitchHandler?.()
+    })
+    await act(async () => {
+      finish({ providers: [{ slug: 'nous', name: 'Nous', models: ['hermes-4'], eligible_models: ['hermes-4'] }] })
+    })
     expect(setModelAssignment).not.toHaveBeenCalled()
   })
 
   it('only permits the source-backed set and keeps a stale saved model disabled', async () => {
     getGlobalModelInfo.mockResolvedValueOnce({ provider: 'semantier-cloud', model: 'stale-model' })
-    getGlobalModelOptions.mockResolvedValueOnce({ providers: [{
-      name: 'Cloud', slug: 'semantier-cloud', authenticated: true,
-      models: ['allowed-model', 'stale-model'], eligible_models: ['allowed-model'],
-      model_profiles: Object.fromEntries(['allowed-model', 'stale-model'].map(id => [id, { context_window: 128000, max_output_tokens: 1024 }]))
-    }] }).mockResolvedValueOnce({ providers: [{
-      name: 'Cloud', slug: 'semantier-cloud', authenticated: true,
-      models: ['allowed-model'], eligible_models: ['allowed-model'],
-      model_profiles: { 'allowed-model': { context_window: 128000, max_output_tokens: 1024 } }
-    }] })
+    getGlobalModelOptions
+      .mockResolvedValueOnce({
+        providers: [
+          {
+            name: 'Cloud',
+            slug: 'semantier-cloud',
+            authenticated: true,
+            models: ['allowed-model', 'stale-model'],
+            eligible_models: ['allowed-model'],
+            model_profiles: Object.fromEntries(
+              ['allowed-model', 'stale-model'].map(id => [id, { context_window: 128000, max_output_tokens: 1024 }])
+            )
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        providers: [
+          {
+            name: 'Cloud',
+            slug: 'semantier-cloud',
+            authenticated: true,
+            models: ['allowed-model'],
+            eligible_models: ['allowed-model'],
+            model_profiles: { 'allowed-model': { context_window: 128000, max_output_tokens: 1024 } }
+          }
+        ]
+      })
     renderModelSettings()
     const model = (await screen.findAllByRole('combobox'))[1]
     expect(model.textContent).toContain('stale-model')
     expect(screen.getByText('This saved model is unavailable. Choose an available model.')).toBeTruthy()
-    const apply = await screen.findByRole('button', { name: 'Apply' }) as HTMLButtonElement
+    const apply = (await screen.findByRole('button', { name: 'Apply' })) as HTMLButtonElement
     expect(apply.disabled).toBe(true)
     fireEvent.click(model)
     expect(screen.getByRole('option', { name: 'stale-model' }).getAttribute('aria-disabled')).toBe('true')
@@ -317,14 +415,28 @@ describe('ModelSettings', () => {
     expect(screen.queryByText('This saved model is unavailable. Choose an available model.')).toBeNull()
     expect(apply.disabled).toBe(false)
     fireEvent.click(apply)
-    await waitFor(() => expect(setModelAssignment).toHaveBeenCalledWith({ scope: 'main', provider: 'semantier-cloud', model: 'allowed-model' }))
+    await waitFor(() =>
+      expect(setModelAssignment).toHaveBeenCalledWith({
+        scope: 'main',
+        provider: 'semantier-cloud',
+        model: 'allowed-model'
+      })
+    )
   })
 
   it('filters eligible ids that are absent from the offered inventory or explicitly excluded', async () => {
-    getGlobalModelOptions.mockResolvedValueOnce({ providers: [{
-      name: 'Nous', slug: 'nous', authenticated: true, models: ['hermes-4', 'excluded'],
-      eligible_models: ['hermes-4', 'excluded', 'not-offered'], unavailable_models: ['excluded']
-    }] })
+    getGlobalModelOptions.mockResolvedValueOnce({
+      providers: [
+        {
+          name: 'Nous',
+          slug: 'nous',
+          authenticated: true,
+          models: ['hermes-4', 'excluded'],
+          eligible_models: ['hermes-4', 'excluded', 'not-offered'],
+          unavailable_models: ['excluded']
+        }
+      ]
+    })
     renderModelSettings()
     fireEvent.click((await screen.findAllByRole('combobox'))[1])
     expect(screen.getByRole('option', { name: 'hermes-4' })).toBeTruthy()
@@ -333,8 +445,9 @@ describe('ModelSettings', () => {
   })
 
   it('offers manual entry for a configured provider with no catalog', async () => {
-    getGlobalModelOptions.mockResolvedValue({ providers: [{ name: 'Lab', slug: 'lab', authenticated: true,
-      models: [], discovery_state: 'unsupported' }] })
+    getGlobalModelOptions.mockResolvedValue({
+      providers: [{ name: 'Lab', slug: 'lab', authenticated: true, models: [], discovery_state: 'unsupported' }]
+    })
     getGlobalModelInfo.mockResolvedValue({ provider: 'lab', model: '' })
     renderModelSettings()
     fireEvent.click((await screen.findAllByRole('combobox'))[1])
@@ -342,14 +455,23 @@ describe('ModelSettings', () => {
     const input = screen.getByPlaceholderText('Model id')
     fireEvent.change(input, { target: { value: 'manual/hidden' } })
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
-    await waitFor(() => expect(setModelAssignment).toHaveBeenCalledWith({ scope: 'main', provider: 'lab', model: 'manual/hidden' }))
+    await waitFor(() =>
+      expect(setModelAssignment).toHaveBeenCalledWith({ scope: 'main', provider: 'lab', model: 'manual/hidden' })
+    )
   })
 
   it('searches the Main model list case-insensitively and selects with Enter', async () => {
-    getGlobalModelOptions.mockResolvedValue({ providers: [{
-      name: 'Nous', slug: 'nous', authenticated: true,
-      models: ['hermes-4', 'deepseek-v4-flash'], eligible_models: ['hermes-4', 'deepseek-v4-flash']
-    }] })
+    getGlobalModelOptions.mockResolvedValue({
+      providers: [
+        {
+          name: 'Nous',
+          slug: 'nous',
+          authenticated: true,
+          models: ['hermes-4', 'deepseek-v4-flash'],
+          eligible_models: ['hermes-4', 'deepseek-v4-flash']
+        }
+      ]
+    })
     renderModelSettings()
     fireEvent.click((await screen.findAllByRole('combobox'))[1])
     const search = await screen.findByPlaceholderText('Model')
@@ -357,14 +479,24 @@ describe('ModelSettings', () => {
     fireEvent.keyDown(search, { key: 'Enter' })
     await waitFor(() => expect(screen.getAllByRole('combobox')[1].textContent).toContain('deepseek-v4-flash'))
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
-    await waitFor(() => expect(setModelAssignment).toHaveBeenCalledWith({ scope: 'main', provider: 'nous', model: 'deepseek-v4-flash' }))
+    await waitFor(() =>
+      expect(setModelAssignment).toHaveBeenCalledWith({ scope: 'main', provider: 'nous', model: 'deepseek-v4-flash' })
+    )
   })
 
   it('searches the provider selector by slug and chooses the matching provider', async () => {
-    getGlobalModelOptions.mockResolvedValueOnce({ providers: [
-      { name: 'Nous', slug: 'nous', models: ['hermes-4'], authenticated: true },
-      { name: 'Example AI', slug: 'example-vendor', models: ['model-b'], eligible_models: ['model-b'], authenticated: true }
-    ] })
+    getGlobalModelOptions.mockResolvedValueOnce({
+      providers: [
+        { name: 'Nous', slug: 'nous', models: ['hermes-4'], authenticated: true },
+        {
+          name: 'Example AI',
+          slug: 'example-vendor',
+          models: ['model-b'],
+          eligible_models: ['model-b'],
+          authenticated: true
+        }
+      ]
+    })
     renderModelSettings()
     fireEvent.click((await screen.findAllByRole('combobox'))[0])
     const search = await screen.findByPlaceholderText('Provider')
@@ -375,10 +507,12 @@ describe('ModelSettings', () => {
   })
 
   it('does not offer an explicitly unauthenticated provider as a new choice', async () => {
-    getGlobalModelOptions.mockResolvedValueOnce({ providers: [
-      { name: 'Nous', slug: 'nous', models: ['hermes-4'], authenticated: true },
-      { name: 'Disconnected', slug: 'disconnected', models: ['saved-model'], authenticated: false }
-    ] })
+    getGlobalModelOptions.mockResolvedValueOnce({
+      providers: [
+        { name: 'Nous', slug: 'nous', models: ['hermes-4'], authenticated: true },
+        { name: 'Disconnected', slug: 'disconnected', models: ['saved-model'], authenticated: false }
+      ]
+    })
     renderModelSettings()
     fireEvent.click((await screen.findAllByRole('combobox'))[0])
     expect(screen.queryByRole('option', { name: 'Disconnected' })).toBeNull()
@@ -387,9 +521,17 @@ describe('ModelSettings', () => {
 
   it('shows setup rather than Apply for a saved unauthenticated provider with a model', async () => {
     getGlobalModelInfo.mockResolvedValueOnce({ provider: 'disconnected', model: 'saved-model' })
-    getGlobalModelOptions.mockResolvedValueOnce({ providers: [
-      { name: 'Disconnected', slug: 'disconnected', models: ['saved-model'], authenticated: false, auth_type: 'oauth' }
-    ] })
+    getGlobalModelOptions.mockResolvedValueOnce({
+      providers: [
+        {
+          name: 'Disconnected',
+          slug: 'disconnected',
+          models: ['saved-model'],
+          authenticated: false,
+          auth_type: 'oauth'
+        }
+      ]
+    })
     renderModelSettings()
     expect((await screen.findAllByRole('combobox'))[0].textContent).toContain('Disconnected')
     expect(await screen.findByRole('button', { name: 'Set up Disconnected' })).toBeTruthy()
@@ -399,10 +541,18 @@ describe('ModelSettings', () => {
 
   it('keeps an explicitly unavailable saved model visible but cannot apply it', async () => {
     getGlobalModelInfo.mockResolvedValueOnce({ provider: 'nous', model: 'locked-model' })
-    getGlobalModelOptions.mockResolvedValue({ providers: [{
-      name: 'Nous', slug: 'nous', authenticated: true,
-      models: ['locked-model', 'allowed-model'], eligible_models: ['allowed-model'], unavailable_models: ['locked-model']
-    }] })
+    getGlobalModelOptions.mockResolvedValue({
+      providers: [
+        {
+          name: 'Nous',
+          slug: 'nous',
+          authenticated: true,
+          models: ['locked-model', 'allowed-model'],
+          eligible_models: ['allowed-model'],
+          unavailable_models: ['locked-model']
+        }
+      ]
+    })
     renderModelSettings()
     const model = (await screen.findAllByRole('combobox'))[1]
     expect(model.textContent).toContain('locked-model')
@@ -413,14 +563,24 @@ describe('ModelSettings', () => {
     fireEvent.click(screen.getByRole('option', { name: 'allowed-model' }))
     expect((apply as HTMLButtonElement).disabled).toBe(false)
     fireEvent.click(apply)
-    await waitFor(() => expect(setModelAssignment).toHaveBeenCalledWith({ scope: 'main', provider: 'nous', model: 'allowed-model' }))
+    await waitFor(() =>
+      expect(setModelAssignment).toHaveBeenCalledWith({ scope: 'main', provider: 'nous', model: 'allowed-model' })
+    )
   })
 
   it('does not offer typed custom IDs in Main Model', async () => {
-    getGlobalModelOptions.mockResolvedValueOnce({ providers: [{
-      name: 'Nous', slug: 'nous', authenticated: true,
-      models: ['hermes-4', 'locked-model'], eligible_models: ['hermes-4'], unavailable_models: ['locked-model']
-    }] })
+    getGlobalModelOptions.mockResolvedValueOnce({
+      providers: [
+        {
+          name: 'Nous',
+          slug: 'nous',
+          authenticated: true,
+          models: ['hermes-4', 'locked-model'],
+          eligible_models: ['hermes-4'],
+          unavailable_models: ['locked-model']
+        }
+      ]
+    })
     renderModelSettings()
     fireEvent.click((await screen.findAllByRole('combobox'))[1])
     expect(screen.queryByRole('option', { name: 'locked-model' })).toBeNull()
@@ -539,7 +699,8 @@ describe('ModelSettings', () => {
         {
           name: 'Ollama',
           slug: 'local-ollama',
-          models: ['qwen3:latest'], eligible_models: ['qwen3:latest'],
+          models: ['qwen3:latest'],
+          eligible_models: ['qwen3:latest'],
           authenticated: true,
           is_user_defined: true,
           api_url: 'http://localhost:11434/v1'
@@ -726,10 +887,18 @@ describe('ModelSettings', () => {
   })
 
   it('searches auxiliary providers and models locally and keeps the draft until Apply', async () => {
-    getGlobalModelOptions.mockResolvedValue({ providers: [
-      { name: 'Nous', slug: 'nous', authenticated: true, eligible_models: ['shared-id'], models: ['shared-id'] },
-      { name: 'Second Provider', slug: 'second', authenticated: true, eligible_models: ['shared-id'], models: ['shared-id'] }
-    ] })
+    getGlobalModelOptions.mockResolvedValue({
+      providers: [
+        { name: 'Nous', slug: 'nous', authenticated: true, eligible_models: ['shared-id'], models: ['shared-id'] },
+        {
+          name: 'Second Provider',
+          slug: 'second',
+          authenticated: true,
+          eligible_models: ['shared-id'],
+          models: ['shared-id']
+        }
+      ]
+    })
     renderModelSettings()
     fireEvent.click((await screen.findAllByRole('button', { name: 'Change' }))[0])
     fireEvent.click(screen.getByRole('combobox', { name: 'Vision provider' }))
@@ -742,12 +911,21 @@ describe('ModelSettings', () => {
     fireEvent.click(screen.getByRole('option', { name: 'shared-id' }))
     expect(getGlobalModelOptions).toHaveBeenCalledTimes(calls)
     fireEvent.click(screen.getAllByRole('button', { name: 'Apply' }).at(-1)!)
-    await waitFor(() => expect(setModelAssignment).toHaveBeenCalledWith(expect.objectContaining({ provider: 'second', model: 'shared-id', task: 'vision' })))
+    await waitFor(() =>
+      expect(setModelAssignment).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: 'second', model: 'shared-id', task: 'vision' })
+      )
+    )
   })
 
   it('keeps an auxiliary manual model draft unsaved until Apply', async () => {
-    getGlobalModelOptions.mockResolvedValue({ providers: [{ name: 'Nous', slug: 'nous', authenticated: true, models: [], discovery_state: 'missing' }] })
-    getAuxiliaryModels.mockResolvedValue({ main: { provider: 'nous', model: 'saved' }, tasks: [{ task: 'vision', provider: 'nous', model: 'saved', reasoning_effort: 'high' }] })
+    getGlobalModelOptions.mockResolvedValue({
+      providers: [{ name: 'Nous', slug: 'nous', authenticated: true, models: [], discovery_state: 'missing' }]
+    })
+    getAuxiliaryModels.mockResolvedValue({
+      main: { provider: 'nous', model: 'saved' },
+      tasks: [{ task: 'vision', provider: 'nous', model: 'saved', reasoning_effort: 'high' }]
+    })
     renderModelSettings()
     fireEvent.click((await screen.findAllByRole('button', { name: 'Change' }))[0])
     fireEvent.click(screen.getByRole('combobox', { name: 'Vision model' }))
@@ -755,7 +933,11 @@ describe('ModelSettings', () => {
     fireEvent.change(screen.getByPlaceholderText('Model id'), { target: { value: 'manual/vision' } })
     expect(setModelAssignment).not.toHaveBeenCalled()
     fireEvent.click(screen.getAllByRole('button', { name: 'Apply' }).at(-1)!)
-    await waitFor(() => expect(setModelAssignment).toHaveBeenCalledWith(expect.objectContaining({ provider: 'nous', model: 'manual/vision', reasoning_effort: 'high', task: 'vision' })))
+    await waitFor(() =>
+      expect(setModelAssignment).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: 'nous', model: 'manual/vision', reasoning_effort: 'high', task: 'vision' })
+      )
+    )
   })
 
   it('edits auxiliary reasoning effort and applies it with the assignment', async () => {
@@ -805,9 +987,11 @@ describe('ModelSettings', () => {
   })
 
   it('keeps config-backed settings usable without a model metadata probe (#63214)', async () => {
-    getGlobalModelOptions.mockResolvedValueOnce({ model: 'hermes-4', provider: 'nous', providers: [
-      { name: 'Nous', slug: 'nous', models: ['hermes-4'], eligible_models: ['hermes-4'] }
-    ] })
+    getGlobalModelOptions.mockResolvedValueOnce({
+      model: 'hermes-4',
+      provider: 'nous',
+      providers: [{ name: 'Nous', slug: 'nous', models: ['hermes-4'], eligible_models: ['hermes-4'] }]
+    })
 
     renderModelSettings()
 
@@ -826,7 +1010,8 @@ describe('ModelSettings', () => {
         {
           name: 'Ollama',
           slug: 'local-ollama',
-          models: ['qwen3:latest'], eligible_models: ['qwen3:latest'],
+          models: ['qwen3:latest'],
+          eligible_models: ['qwen3:latest'],
           authenticated: true,
           is_user_defined: true,
           api_url: 'http://localhost:11434/v1'
@@ -1001,7 +1186,8 @@ describe('ModelSettings provider switch', () => {
           api_url: 'http://10.0.0.2:8080/v1',
           is_user_defined: true,
           source: 'user-config',
-          models: ['gemma-4-12b-omni'], eligible_models: ['gemma-4-12b-omni'],
+          models: ['gemma-4-12b-omni'],
+          eligible_models: ['gemma-4-12b-omni'],
           authenticated: true
         }
       ]
@@ -1023,15 +1209,16 @@ describe('ModelSettings provider switch', () => {
   })
 
   it('offers an empty configured provider while preserving its account eligibility', async () => {
-    getGlobalModelOptions.mockResolvedValue({ providers: [
-      { name: 'Nous', slug: 'nous', models: ['hermes-4'], eligible_models: ['hermes-4'], authenticated: true },
-      { name: 'Lab', slug: 'custom:lab', models: [], eligible_models: [], authenticated: true }
-    ] })
+    getGlobalModelOptions.mockResolvedValue({
+      providers: [
+        { name: 'Nous', slug: 'nous', models: ['hermes-4'], eligible_models: ['hermes-4'], authenticated: true },
+        { name: 'Lab', slug: 'custom:lab', models: [], eligible_models: [], authenticated: true }
+      ]
+    })
     renderModelSettings()
     fireEvent.click((await screen.findAllByRole('combobox'))[0])
     expect(screen.getByRole('option', { name: 'Lab' }).getAttribute('aria-disabled')).toBe('false')
   })
-
 })
 
 describe('ModelSettings MoA preset editor', () => {

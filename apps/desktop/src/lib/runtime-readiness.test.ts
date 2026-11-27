@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { evaluateRuntimeReadiness, fetchRuntimeReadinessSignals, interpretRuntimeReadiness, runtimeReadinessDisplay } from './runtime-readiness'
+import {
+  evaluateRuntimeReadiness,
+  fetchRuntimeReadinessSignals,
+  interpretRuntimeReadiness,
+  runtimeReadinessDisplay
+} from './runtime-readiness'
 
 describe('interpretRuntimeReadiness', () => {
   it('prefers runtime_check when both signals exist', () => {
@@ -112,7 +117,6 @@ describe('runtimeReadinessDisplay', () => {
   })
 })
 
-
 describe('fresh Semantier product account readiness', () => {
   it.each([false, true])('offers Cloud sign-in when generic configured credentials is %s', async configured => {
     const calls: string[] = []
@@ -120,14 +124,27 @@ describe('fresh Semantier product account readiness', () => {
     const request = async <T = unknown>(method: string) => {
       calls.push(method)
 
-      if (method === 'setup.status') { return { provider_configured: configured } as T }
+      if (method === 'setup.status') {
+        return { provider_configured: configured } as T
+      }
 
       if (method === 'setup.runtime_check') {
-        return { ok: false, provider: 'semantier-cloud', source: 'semantier-cloud', error: 'Semantier Model Provider connection required.' } as T
+        return {
+          ok: false,
+          provider: 'semantier-cloud',
+          source: 'semantier-cloud',
+          error: 'Semantier Model Provider connection required.'
+        } as T
       }
 
       if (method === 'billing.state') {
-        return { ok: false, backend: 'semantier', schema_version: 'semantier.billing.v1', error: 'provider_not_configured', message: 'Semantier Model Provider is disabled for this profile.' } as T
+        return {
+          ok: false,
+          backend: 'semantier',
+          schema_version: 'semantier.billing.v1',
+          error: 'provider_not_configured',
+          message: 'Semantier Model Provider is disabled for this profile.'
+        } as T
       }
 
       throw new Error(`Unexpected request: ${method}`)

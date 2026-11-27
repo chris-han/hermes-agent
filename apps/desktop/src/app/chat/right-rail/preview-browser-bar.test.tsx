@@ -82,8 +82,7 @@ describe('normalizePreviewAddress', () => {
 
 describe('PreviewBrowserBar', () => {
   it('focuses only the address field for the requested tab', async () => {
-    const rects = vi.spyOn(HTMLInputElement.prototype, 'getClientRects')
-      .mockReturnValue([{}] as unknown as DOMRectList)
+    const rects = vi.spyOn(HTMLInputElement.prototype, 'getClientRects').mockReturnValue([{}] as unknown as DOMRectList)
 
     $browserAddressFocus.set('owned-tab')
 

@@ -1187,7 +1187,8 @@ export const jaOverrides = {
       tasks: jaAuxTasks
     },
     providers: {
-      cloudRemoteRevokePending: "ローカルで切断しました。リモートでの取り消しを確認できませんでした。「請求」でこのデバイスの認証を取り消すか、再認証してください。",
+      cloudRemoteRevokePending:
+        'ローカルで切断しました。リモートでの取り消しを確認できませんでした。「請求」でこのデバイスの認証を取り消すか、再認証してください。',
       connectAccount: 'アカウントを接続',
       haveApiKey: 'API キーをお持ちですか？',
       intro:
@@ -2781,8 +2782,8 @@ export const jaOverrides = {
     releaseNotes: 'リリースノート',
     onLatest: '最新バージョンです。',
     installing: '更新をインストール中です。',
-    noPublishedRelease: "このチャンネルにはまだリリースがありません。",
-    cantReach: "更新を確認できませんでした。",
+    noPublishedRelease: 'このチャンネルにはまだリリースがありません。',
+    cantReach: '更新を確認できませんでした。',
     tapCheck: '更新を探すには「今すぐ確認」を押してください。',
     updateReady: count => `新しい更新の準備ができました (${count} 件の変更を含みます)。`,
     updateReadyUnknown: '新しい更新の準備ができました。',

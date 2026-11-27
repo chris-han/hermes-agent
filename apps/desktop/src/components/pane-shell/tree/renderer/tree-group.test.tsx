@@ -102,13 +102,18 @@ describe('TreeGroup', () => {
     expect(dragHandle.contains(header.querySelector('[data-organization-brand]'))).toBe(true)
     expect(dragHandle.classList.contains('[-webkit-app-region:drag]')).toBe(true)
     expect(dragHandle.querySelector('img')?.classList.contains('size-8')).toBe(true)
-    expect(dragHandle.compareDocumentPosition(header.querySelector('[aria-label="Hide sidebar"]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(
+      dragHandle.compareDocumentPosition(header.querySelector('[aria-label="Hide sidebar"]')!) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
     const bots = header.querySelector<HTMLElement>('[data-tree-tab="bots"]')!
     expect(bots.tabIndex).toBe(0)
     const previousTree = $layoutTree.get()
 
     try {
-      act(() => $layoutTree.set({ active: 'sessions', id: 'sessions-zone', panes: ['sessions', 'bots'], type: 'group' }))
+      act(() =>
+        $layoutTree.set({ active: 'sessions', id: 'sessions-zone', panes: ['sessions', 'bots'], type: 'group' })
+      )
       fireEvent.keyDown(bots, { key: 'Enter' })
       expect(($layoutTree.get() as GroupNode).active).toBe('bots')
     } finally {
@@ -121,8 +126,11 @@ describe('TreeGroup', () => {
     vi.stubGlobal('CSS', { escape: (value: string) => value })
     stubResizeObserver()
     disposePane = registry.register({
-      area: 'panes', data: { placement: 'left', hideOnly: true }, id: 'sessions',
-      render: () => <div>sessions content</div>, title: 'Sessions'
+      area: 'panes',
+      data: { placement: 'left', hideOnly: true },
+      id: 'sessions',
+      render: () => <div>sessions content</div>,
+      title: 'Sessions'
     })
 
     render(
@@ -142,18 +150,26 @@ describe('TreeGroup', () => {
     vi.stubGlobal('CSS', { escape: (value: string) => value })
     stubResizeObserver()
 
-    const disposers = ['sessions', 'workspace'].map(id => registry.register({
-      area: 'panes',
-      data: { placement: id === 'workspace' ? 'main' : 'left' },
-      id,
-      render: () => <div>{id} content</div>,
-      title: id
-    }))
+    const disposers = ['sessions', 'workspace'].map(id =>
+      registry.register({
+        area: 'panes',
+        data: { placement: id === 'workspace' ? 'main' : 'left' },
+        id,
+        render: () => <div>{id} content</div>,
+        title: id
+      })
+    )
 
     disposePane = () => disposers.forEach(dispose => dispose())
     render(
       <TreeGroup
-        node={{ active: 'sessions', id: 'mixed-zone', panes: ['sessions', 'workspace'], tabStrip: 'always', type: 'group' }}
+        node={{
+          active: 'sessions',
+          id: 'mixed-zone',
+          panes: ['sessions', 'workspace'],
+          tabStrip: 'always',
+          type: 'group'
+        }}
         parentAxis="row"
         railSide="left"
         topEdge
@@ -196,8 +212,11 @@ describe('TreeGroup', () => {
     vi.stubGlobal('CSS', { escape: (value: string) => value })
     stubResizeObserver()
     disposePane = registry.register({
-      area: 'panes', data: { placement: 'left', hideOnly: true }, id: 'sessions',
-      render: () => <div>sessions content</div>, title: 'Sessions'
+      area: 'panes',
+      data: { placement: 'left', hideOnly: true },
+      id: 'sessions',
+      render: () => <div>sessions content</div>,
+      title: 'Sessions'
     })
     const previous = $narrowViewport.get()
 

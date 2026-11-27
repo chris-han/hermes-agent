@@ -29,6 +29,7 @@ it('shared-gateway refusals render from the active locale pack, English otherwis
   const bogus = join(dir, 'not-an-image.png')
 
   await writeFile(bogus, 'plain text')
+
   const imageError = () =>
     stageImagePath(bogus, {} as never, { sid: 's', profileHome: dir } as never).catch((e: Error) => e.message)
 

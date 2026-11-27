@@ -263,7 +263,9 @@ export function validateProviderCredential(
 }
 
 export function validateSavedProviderCredential(
-  provider: string, key: string, profile?: ProfileScope
+  provider: string,
+  key: string,
+  profile?: ProfileScope
 ): Promise<{ ok: boolean; reachable: boolean; message: string; status?: string }> {
   return window.hermesDesktop.api<{ ok: boolean; reachable: boolean; message: string; status?: string }>({
     ...capabilityScoped(profile),

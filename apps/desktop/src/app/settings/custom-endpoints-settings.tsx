@@ -117,7 +117,8 @@ function toPayload(
 }
 
 function canSaveProvider(form: EndpointForm, endpoints: CustomEndpoint[]): boolean {
-  const credential = form.noApiKey || !!form.apiKey.trim() || endpoints.some(endpoint => endpoint.id === form.id && endpoint.has_api_key)
+  const credential =
+    form.noApiKey || !!form.apiKey.trim() || endpoints.some(endpoint => endpoint.id === form.id && endpoint.has_api_key)
 
   return !!form.name.trim() && !!form.baseUrl.trim() && (!form.makeDefault || !!form.model.trim()) && credential
 }
@@ -279,19 +280,20 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
         // Show a discovery suggestion without silently changing the entered URL.
         const resolvedBaseUrl = response.resolved_base_url?.trim()
 
-
-
         const reachable = response.transport_checked
           ? ce.endpointReachableTransport(response.transport_checked)
           : ce.endpointReachable
 
-        const success = response.models.length ? ce.endpointReachableModels(reachable, response.models.length) : reachable
+        const success = response.models.length
+          ? ce.endpointReachableModels(reachable, response.models.length)
+          : reachable
 
-        const suggestion = resolvedBaseUrl && resolvedBaseUrl !== form.baseUrl.trim().replace(/\/+$/, '')
-          ? `${ce.fields.endpointUrl}: ${resolvedBaseUrl}` : ''
+        const suggestion =
+          resolvedBaseUrl && resolvedBaseUrl !== form.baseUrl.trim().replace(/\/+$/, '')
+            ? `${ce.fields.endpointUrl}: ${resolvedBaseUrl}`
+            : ''
 
         setValidation([success, resultMessage, serviceCopy.coverage, suggestion].filter(Boolean).join(' '))
-
       } else {
         setValidation(resultMessage || ce.endpointValidationFailed)
       }
@@ -385,8 +387,7 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
   const allModelOptions = Array.from(new Set([...discoveredModels, form.model].filter(Boolean)))
   const savedKey = endpoints.some(endpoint => endpoint.id === form.id && endpoint.has_api_key)
 
-  const canSave = canSaveProvider(form, endpoints)
-    && (form.noApiKey || form.apiKey.trim() || savedKey)
+  const canSave = canSaveProvider(form, endpoints) && (form.noApiKey || form.apiKey.trim() || savedKey)
 
   return (
     <SettingsContent>
@@ -511,7 +512,11 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
                 {ce.test}
               </Button>
             </div>
-            {validation && <p aria-live="polite" className="text-xs text-(--ui-text-secondary)" role="status">{validation}</p>}
+            {validation && (
+              <p aria-live="polite" className="text-xs text-(--ui-text-secondary)" role="status">
+                {validation}
+              </p>
+            )}
             <label className="grid gap-1.5 text-xs text-muted-foreground">
               {journeyCopy.listUrl}
               <Input
@@ -551,11 +556,17 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
             </div>
             <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
               <label className="flex items-center gap-2">
-                <Checkbox checked={form.enabled} onCheckedChange={checked => setForm(current => ({ ...current, enabled: checked === true }))} />
+                <Checkbox
+                  checked={form.enabled}
+                  onCheckedChange={checked => setForm(current => ({ ...current, enabled: checked === true }))}
+                />
                 {journeyCopy.enabled}
               </label>
               <label className="flex items-center gap-2">
-                <Checkbox checked={form.noApiKey} onCheckedChange={checked => changeConnection({ noApiKey: checked === true, apiKey: '' })} />
+                <Checkbox
+                  checked={form.noApiKey}
+                  onCheckedChange={checked => changeConnection({ noApiKey: checked === true, apiKey: '' })}
+                />
                 {serviceCopy.noKey}
               </label>
               <label className="flex items-center gap-2">
@@ -578,12 +589,17 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
                 {saving ? <Loader2 className="animate-spin" /> : <Save />}
                 {form.makeDefault ? serviceCopy.saveUse : ce.save}
               </Button>
-              <Button onClick={() => {
-                const previous = endpoints.find(endpoint => endpoint.id === form.id)
-                formRevision.current += 1
-                setForm(previous ? formFromEndpoint(previous) : EMPTY_FORM)
-                setValidation(null)
-              }} variant="text">{serviceCopy.cancel}</Button>
+              <Button
+                onClick={() => {
+                  const previous = endpoints.find(endpoint => endpoint.id === form.id)
+                  formRevision.current += 1
+                  setForm(previous ? formFromEndpoint(previous) : EMPTY_FORM)
+                  setValidation(null)
+                }}
+                variant="text"
+              >
+                {serviceCopy.cancel}
+              </Button>
               <Button
                 className={cn(!form.id && 'hidden')}
                 onClick={() => {

@@ -112,7 +112,7 @@ export function SemantierPersonalSync({ origin, scope }: { origin: string; scope
       />
       <div className="flex flex-wrap gap-2">
         <Button
-        className="h-auto min-h-8 whitespace-normal"
+          className="h-auto min-h-8 whitespace-normal"
           disabled={busy || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(name)}
           onClick={() =>
             void perform(async () => {
@@ -164,7 +164,7 @@ export function SemantierPersonalSync({ origin, scope }: { origin: string; scope
             {!preview.contexts.length ? <p className="text-xs">{copy.noContext}</p> : null}
           </fieldset>
           <Button
-        className="h-auto min-h-8 whitespace-normal"
+            className="h-auto min-h-8 whitespace-normal"
             disabled={busy || contextIndex === null}
             onClick={() =>
               void perform(async () => {
@@ -192,7 +192,7 @@ export function SemantierPersonalSync({ origin, scope }: { origin: string; scope
           </p>
           <p className="break-all text-xs text-muted-foreground">{row.source_transfer.artifact_hash}</p>
           <Button
-        className="h-auto min-h-8 whitespace-normal"
+            className="h-auto min-h-8 whitespace-normal"
             disabled={busy}
             onClick={() =>
               void perform(async () => {
@@ -224,7 +224,7 @@ export function SemantierPersonalSync({ origin, scope }: { origin: string; scope
             {String((selection.source.decision_context as { content?: string })?.content || '')}
           </p>
           <Button
-        className="h-auto min-h-8 whitespace-normal"
+            className="h-auto min-h-8 whitespace-normal"
             disabled={busy}
             onClick={() =>
               void perform(async () => {
@@ -246,7 +246,7 @@ export function SemantierPersonalSync({ origin, scope }: { origin: string; scope
             {copy.replace}
           </label>
           <Button
-        className="h-auto min-h-8 whitespace-normal"
+            className="h-auto min-h-8 whitespace-normal"
             disabled={busy}
             onClick={() =>
               void perform(async () => {

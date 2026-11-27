@@ -17,6 +17,7 @@ import { useQueue } from '../hooks/useQueue.js'
 function deferred() {
   let resolve!: (value: any) => void
   let reject!: (error: Error) => void
+
   const promise = new Promise<any>((yes, no) => {
     resolve = yes
     reject = no
@@ -51,6 +52,7 @@ function mount() {
     if (method === 'input.detect_drop') {
       return Promise.resolve({ matched: false })
     }
+
     const pending = deferred()
 
     if (method === 'prompt.submit') {
@@ -111,6 +113,7 @@ function mount() {
       if (!ui.sid || ui.busy || queue.queueEditRef.current !== null || !queue.queueRef.current.length) {
         return
       }
+
       const next = queue.dequeue()
 
       if (next) {
@@ -206,6 +209,7 @@ it('preserves a newer running generation across old receipts and delayed idle sn
       if (!delayed) {
         h.emit('message.start', 2)
       }
+
       h.submits[0]!.resolve(h.receipt(item.submissionId!, 'terminal'))
       await expect.poll(() => h.queue.queueRef.current.length).toBe(0)
       await expect.poll(() => h.snapshots.length).toBe(1)
@@ -213,6 +217,7 @@ it('preserves a newer running generation across old receipts and delayed idle sn
       if (delayed) {
         h.emit('message.start', 2)
       }
+
       h.snapshots[0]!.resolve(h.snapshot(!delayed, delayed ? 1 : 2))
       await new Promise(resolve => setTimeout(resolve, 20))
       expect(getUiState()).toMatchObject({ busy: true, status: 'running…', info: { execution_generation: 2 } })

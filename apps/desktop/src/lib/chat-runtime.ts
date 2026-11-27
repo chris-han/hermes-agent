@@ -578,10 +578,13 @@ export function coalesceToolOnlyAssistants(messages: ChatMessage[], cache: ToolM
     const prev = out.at(-1)
 
     if (
-      prev && prev.role === 'assistant' &&
+      prev &&
+      prev.role === 'assistant' &&
       prev.botAuthor?.botId === message.botAuthor?.botId &&
       prev.botAuthor?.displayName === message.botAuthor?.displayName &&
-      !prev.pending && !prev.hidden && isToolOnlyAssistant(message)
+      !prev.pending &&
+      !prev.hidden &&
+      isToolOnlyAssistant(message)
     ) {
       const cached = cache.get(message)
 

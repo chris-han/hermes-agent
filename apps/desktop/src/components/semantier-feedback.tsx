@@ -54,7 +54,9 @@ function feedbackFailure(error: unknown) {
     try {
       const value = Number(JSON.parse(match?.[2] ?? '{}')?.detail?.retry_after_seconds)
 
-      if (Number.isFinite(value) && value > 0) {retryAfter = Math.max(1, Math.min(Math.ceil(value), 900))}
+      if (Number.isFinite(value) && value > 0) {
+        retryAfter = Math.max(1, Math.min(Math.ceil(value), 900))
+      }
     } catch {
       /* Missing server guidance uses the bounded local retry delay. */
     }
@@ -185,10 +187,22 @@ export function SemantierFeedbackSettings() {
   const enabled = authorization.state?.enabled ?? false
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
-  const [journeyEnabled,setJourneyEnabled] = useState(false)
-  useEffect(() => {let live=true;void window.hermesDesktop.semantierFeedback?.status().then(value=>{if(live){setJourneyEnabled(value.journeyEnabled===true)}}).catch(()=>undefined);
+  const [journeyEnabled, setJourneyEnabled] = useState(false)
+  useEffect(() => {
+    let live = true
+    void window.hermesDesktop.semantierFeedback
+      ?.status()
+      .then(value => {
+        if (live) {
+          setJourneyEnabled(value.journeyEnabled === true)
+        }
+      })
+      .catch(() => undefined)
 
-return()=>{live=false}},[])
+    return () => {
+      live = false
+    }
+  }, [])
 
   async function consent() {
     if (!route?.profile || (route.connectionId && route.connectionId !== LOCAL_CONNECTION_ID)) {
@@ -207,9 +221,7 @@ return()=>{live=false}},[])
         await authorization.begin('reporting')
       }
     } catch {
-      setError(
-        copy.reportingCouldNotChangeSignInOr
-      )
+      setError(copy.reportingCouldNotChangeSignInOr)
     } finally {
       setBusy(false)
     }
@@ -220,9 +232,22 @@ return()=>{live=false}},[])
       <h3>{copy.semantierDiagnosticsPrivacy}</h3>
       <p>{copy.optionalUpdateResultReportingToSemantierCloud}</p>
       <label className="flex items-start gap-2">
-        <input checked={journeyEnabled} disabled={!window.hermesDesktop.semantierFeedback?.journeyConsent} onChange={event=>{const enabled=event.target.checked;void window.hermesDesktop.semantierFeedback?.journeyConsent?.(enabled).then(value=>setJourneyEnabled(value.journeyEnabled)).catch(()=>setError(copy.reportingCouldNotChangeSignInOr))}}
-          type="checkbox" />
-        <span>{copy.journeyObservationConsent}<small className="block">{copy.journeyObservationLimit}</small></span>
+        <input
+          checked={journeyEnabled}
+          disabled={!window.hermesDesktop.semantierFeedback?.journeyConsent}
+          onChange={event => {
+            const enabled = event.target.checked
+            void window.hermesDesktop.semantierFeedback
+              ?.journeyConsent?.(enabled)
+              .then(value => setJourneyEnabled(value.journeyEnabled))
+              .catch(() => setError(copy.reportingCouldNotChangeSignInOr))
+          }}
+          type="checkbox"
+        />
+        <span>
+          {copy.journeyObservationConsent}
+          <small className="block">{copy.journeyObservationLimit}</small>
+        </span>
       </label>
       <p>
         {copy.reporting}: {enabled ? copy.on : copy.off}
@@ -281,7 +306,9 @@ export function SemantierFeedbackHost() {
   const version = useStore($desktopVersion)
   const update = useStore($updateStatus)
   useEffect(() => {
-    if (!retryAfter) {return}
+    if (!retryAfter) {
+      return
+    }
     const timer = setTimeout(() => setRetryAfter(value => Math.max(0, value - 1)), 1000)
 
     return () => clearTimeout(timer)
@@ -298,15 +325,21 @@ export function SemantierFeedbackHost() {
 
       // A remote turn must never send the preview or feedback credentials to
       // its Gateway. The dialog names the local profile that will own the report.
-      const localProfile = route?.profile && (!route.connectionId || route.connectionId === LOCAL_CONNECTION_ID)
-        ? route.profile
-        : 'default'
+      const localProfile =
+        route?.profile && (!route.connectionId || route.connectionId === LOCAL_CONNECTION_ID)
+          ? route.profile
+          : 'default'
 
       setContext(context)
       setOpenedVersion(undefined)
-      void window.hermesDesktop?.getVersion?.({ connectionId: LOCAL_CONNECTION_ID, profile: localProfile }).then(info => {
-        if (live) {setOpenedVersion(info.appVersion)}
-      }).catch(() => undefined)
+      void window.hermesDesktop
+        ?.getVersion?.({ connectionId: LOCAL_CONNECTION_ID, profile: localProfile })
+        .then(info => {
+          if (live) {
+            setOpenedVersion(info.appVersion)
+          }
+        })
+        .catch(() => undefined)
       setDraftKey(crypto.randomUUID())
       setSubmitted(false)
       setRetryAfter(0)
@@ -391,7 +424,9 @@ export function SemantierFeedbackHost() {
     let live = true
     const app = version?.appVersion || openedVersion
 
-    if (!app) {return}
+    if (!app) {
+      return
+    }
     const appVersion = /^\d+\.\d+\.\d+$/.test(app) ? app + '.0' : app
 
     async function preparePreview() {
@@ -423,9 +458,7 @@ export function SemantierFeedbackHost() {
       })
       .catch(() => {
         if (live) {
-          setError(
-            copy.couldNotPrepareASanitizedPreviewRetry
-          )
+          setError(copy.couldNotPrepareASanitizedPreviewRetry)
         }
       })
 
@@ -504,9 +537,13 @@ export function SemantierFeedbackHost() {
         setDraftKey(crypto.randomUUID())
       }
 
-      if (recovery.status === 429) {setRetryAfter(recovery.retryAfter)}
+      if (recovery.status === 429) {
+        setRetryAfter(recovery.retryAfter)
+      }
 
-      if (recovery.status === 401) {void authorization.refresh().catch(() => undefined)}
+      if (recovery.status === 401) {
+        void authorization.refresh().catch(() => undefined)
+      }
     } finally {
       setSending(false)
     }
@@ -527,9 +564,10 @@ export function SemantierFeedbackHost() {
           event.preventDefault()
           const origin = returnFocus.current
 
-          const target = origin?.isConnected && origin !== document.body
-            ? origin
-            : document.querySelector<HTMLElement>('[data-semantier-diagnostics-trigger]')
+          const target =
+            origin?.isConnected && origin !== document.body
+              ? origin
+              : document.querySelector<HTMLElement>('[data-semantier-diagnostics-trigger]')
 
           target?.focus()
           returnFocus.current = null
@@ -604,9 +642,7 @@ export function SemantierFeedbackHost() {
               {copy.payloadRetained30Days}
             </p>
             <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all">
-              {preview
-                ? JSON.stringify(preview.payload, null, 2)
-                : copy.preparingPreview}
+              {preview ? JSON.stringify(preview.payload, null, 2) : copy.preparingPreview}
             </pre>
             <p>{copy.excludesConversationsDocumentsArbitraryFilesAndCrash}</p>
             <Button

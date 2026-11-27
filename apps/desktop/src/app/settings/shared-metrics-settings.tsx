@@ -103,7 +103,11 @@ export function SharedMetricsSettings() {
         onChange={on => void save({ enabled: on, send: on && send })}
       />
       <ToggleRow
-        below={SHARED_METRICS_DOCS_URL ? <DocsLink href={SHARED_METRICS_DOCS_URL}>{copy.whatIsCollected}</DocsLink> : undefined}
+        below={
+          SHARED_METRICS_DOCS_URL ? (
+            <DocsLink href={SHARED_METRICS_DOCS_URL}>{copy.whatIsCollected}</DocsLink>
+          ) : undefined
+        }
         checked={send}
         description={copy.sendDesc}
         disabled={!consent || busy || !enabled}
