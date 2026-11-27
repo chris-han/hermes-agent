@@ -4098,7 +4098,37 @@ html[data-hud-window] [data-slot='popover-content'] {
   box-shadow: none;
 }
 
-:root[data-hermes-design='asimov'] .desktop-input-chrome[aria-invalid='true'] {
+/* Quiet text entry: retain one neutral edge, not the action-colored ring.
+   Grouped inputs own their boundary; selectors and non-text actions are unchanged. */
+:root[data-hermes-design='asimov']
+  :is(input:not([type]), input:is([type='text'], [type='search'], [type='email'], [type='url'], [type='tel'], [type='password'], [type='number']), textarea):focus-visible {
+  outline: none;
+  box-shadow: inset 0 -1px var(--ui-text-secondary);
+}
+
+:root[data-hermes-design='asimov']
+  :is(input, textarea).desktop-input-chrome:is(:focus, :focus-within),
+:root[data-hermes-design='asimov'] [data-slot='input-group'].desktop-input-chrome:has(input:focus-visible) {
+  border-color: var(--ui-text-secondary);
+  outline: none;
+  box-shadow: none;
+}
+
+:root[data-hermes-design='asimov'] [data-slot='input-group'].desktop-input-chrome input:focus-visible {
+  box-shadow: none;
+}
+
+:root[data-hermes-design='asimov'] [data-slot='search-field']:has(input:focus-visible) {
+  border-bottom-color: var(--ui-text-secondary);
+}
+
+:root[data-hermes-design='asimov'] [data-slot='search-field'] input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+:root[data-hermes-design='asimov'] .desktop-input-chrome[aria-invalid='true'],
+:root[data-hermes-design='asimov'] [data-slot='input-group'].desktop-input-chrome:has(input[aria-invalid='true']) {
   border-color: var(--dt-destructive);
   outline-color: var(--dt-destructive);
 }
