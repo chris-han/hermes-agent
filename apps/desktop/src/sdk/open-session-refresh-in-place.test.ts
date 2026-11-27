@@ -228,50 +228,99 @@ describe('host.openSession refreshInPlace — background re-resume never navigat
 })
 
 describe('explicit Workspace Winman open retains the focused Main on the server', () => {
-  it.each([false,true])('binds only a foreground open (background=%s)', async background => {
-    const { $connection, getSessionOwnerHints }=await import('@/store/session')
-    const { requestGatewayForAgent, retainGatewayForAgent, openGatewayForAgent }=await import('@/store/gateway')
+  it.each([false, true])('binds only a foreground open (background=%s)', async background => {
+    const { $connection, getSessionOwnerHints } = await import('@/store/session')
+    const { requestGatewayForAgent, retainGatewayForAgent, openGatewayForAgent } = await import('@/store/gateway')
     const lifecycle: string[] = []
 
     if (!background) {
-      vi.mocked(retainGatewayForAgent).mockImplementationOnce(async () => () => { lifecycle.push('release') })
-      vi.mocked(requestGatewayForAgent).mockImplementationOnce(async () => { lifecycle.push('bind') })
-      vi.mocked(openGatewayForAgent).mockImplementationOnce(async () => { lifecycle.push('open') })
+      vi.mocked(retainGatewayForAgent).mockImplementationOnce(async () => () => {
+        lifecycle.push('release')
+      })
+      vi.mocked(requestGatewayForAgent).mockImplementationOnce(async () => {
+        lifecycle.push('bind')
+      })
+      vi.mocked(openGatewayForAgent).mockImplementationOnce(async () => {
+        lifecycle.push('open')
+      })
     }
 
-    vi.mocked(getSessionOwnerHints).mockReturnValue([{connectionId:'cloud-a',profile:'default',mode:'remote'}])
-    setMockAtom($connection,{mode:'remote',connectionId:'cloud-a',profile:'default',transport:'semantier-workspace-http',baseUrl:'https://cloud.example',workspaceScope:{userId:'a',workspaceId:'wa',organizationId:'org'}})
-    setMockAtom($selectedStoredSessionId,'main-a')
+    vi.mocked(getSessionOwnerHints).mockReturnValue([{ connectionId: 'cloud-a', profile: 'default', mode: 'remote' }])
+    setMockAtom($connection, {
+      mode: 'remote',
+      connectionId: 'cloud-a',
+      profile: 'default',
+      transport: 'semantier-workspace-http',
+      baseUrl: 'https://cloud.example',
+      workspaceScope: { userId: 'a', workspaceId: 'wa', organizationId: 'org' }
+    })
+    setMockAtom($selectedStoredSessionId, 'main-a')
 
     try {
-      await host.openSession('canonical-a',{route:{connectionId:'cloud-a',profile:'winman-a',targetProfile:'winman-a',mode:'remote'},profile:'winman-a',workspaceMode:'bots',workspaceOwnerKey:'bot:cloud-a:winman-a',tabTitle:'Bot Chat',...(background?{refreshInPlace:true}:{})})
+      await host.openSession('canonical-a', {
+        route: { connectionId: 'cloud-a', profile: 'winman-a', targetProfile: 'winman-a', mode: 'remote' },
+        profile: 'winman-a',
+        workspaceMode: 'bots',
+        workspaceOwnerKey: 'bot:cloud-a:winman-a',
+        tabTitle: 'Bot Chat',
+        ...(background ? { refreshInPlace: true } : {})
+      })
 
-      if(background) {expect(requestGatewayForAgent).not.toHaveBeenCalledWith('cloud-a','winman-a','session.bind_original',expect.anything())}
-      else {
-        expect(requestGatewayForAgent).toHaveBeenCalledWith('cloud-a','winman-a','session.bind_original',{session_id:'canonical-a',original_session_key:'main-a'})
+      if (background) {
+        expect(requestGatewayForAgent).not.toHaveBeenCalledWith(
+          'cloud-a',
+          'winman-a',
+          'session.bind_original',
+          expect.anything()
+        )
+      } else {
+        expect(requestGatewayForAgent).toHaveBeenCalledWith('cloud-a', 'winman-a', 'session.bind_original', {
+          session_id: 'canonical-a',
+          original_session_key: 'main-a'
+        })
         expect(lifecycle).toEqual(['bind', 'open', 'release'])
       }
     } finally {
-      setMockAtom($connection,null)
+      setMockAtom($connection, null)
       vi.mocked(getSessionOwnerHints).mockReturnValue([])
     }
   })
 })
 
 it('does not navigate when the user leaves Main while its explicit binding is in flight', async () => {
-  const { $connection, getSessionOwnerHints }=await import('@/store/session')
-  const { requestGatewayForAgent }=await import('@/store/gateway')
-  vi.mocked(getSessionOwnerHints).mockReturnValue([{connectionId:'cloud-a',profile:'default',mode:'remote'}])
-  setMockAtom($connection,{mode:'remote',connectionId:'cloud-a',profile:'default',transport:'semantier-workspace-http'})
-  setMockAtom($selectedStoredSessionId,'main-a')
-  let resolve!:()=>void
-  vi.mocked(requestGatewayForAgent).mockImplementationOnce(()=>new Promise<void>(done=>{resolve=done}))
+  const { $connection, getSessionOwnerHints } = await import('@/store/session')
+  const { requestGatewayForAgent } = await import('@/store/gateway')
+  vi.mocked(getSessionOwnerHints).mockReturnValue([{ connectionId: 'cloud-a', profile: 'default', mode: 'remote' }])
+  setMockAtom($connection, {
+    mode: 'remote',
+    connectionId: 'cloud-a',
+    profile: 'default',
+    transport: 'semantier-workspace-http'
+  })
+  setMockAtom($selectedStoredSessionId, 'main-a')
+  let resolve!: () => void
+  vi.mocked(requestGatewayForAgent).mockImplementationOnce(
+    () =>
+      new Promise<void>(done => {
+        resolve = done
+      })
+  )
 
   try {
-    const opening=host.openSession('canonical-a',{route:{connectionId:'cloud-a',profile:'winman-a',targetProfile:'winman-a',mode:'remote'},profile:'winman-a',workspaceMode:'bots',workspaceOwnerKey:'bot:cloud-a:winman-a',tabTitle:'Bot Chat'})
-    await vi.waitFor(()=>expect(resolve).toBeTypeOf('function'))
-    setMockAtom($selectedStoredSessionId,'another-main')
-    resolve();await opening
+    const opening = host.openSession('canonical-a', {
+      route: { connectionId: 'cloud-a', profile: 'winman-a', targetProfile: 'winman-a', mode: 'remote' },
+      profile: 'winman-a',
+      workspaceMode: 'bots',
+      workspaceOwnerKey: 'bot:cloud-a:winman-a',
+      tabTitle: 'Bot Chat'
+    })
+    await vi.waitFor(() => expect(resolve).toBeTypeOf('function'))
+    setMockAtom($selectedStoredSessionId, 'another-main')
+    resolve()
+    await opening
     expect(openSessionCore).not.toHaveBeenCalled()
-  } finally {setMockAtom($connection,null);vi.mocked(getSessionOwnerHints).mockReturnValue([])}
+  } finally {
+    setMockAtom($connection, null)
+    vi.mocked(getSessionOwnerHints).mockReturnValue([])
+  }
 })

@@ -945,10 +945,13 @@ export function openPreview(
     viewKey
   )
 
-  if (requestedTabId && !visible.some(tab=>tab.id===requestedTabId)) { return undefined }
+  if (requestedTabId && !visible.some(tab => tab.id === requestedTabId)) {
+    return undefined
+  }
 
-  const existing = requestedTabId ? visible.find(tab=>tab.id===requestedTabId) :
-    target.kind === 'url'
+  const existing = requestedTabId
+    ? visible.find(tab => tab.id === requestedTabId)
+    : target.kind === 'url'
       ? browserReuse === 'matching-url'
         ? visible.find(tab => tab.target.kind === 'url' && tab.target.url === target.url)
         : browserTabFor(visible)
@@ -1013,7 +1016,9 @@ export function markPreviewTabMissing(tabIdOrUrl: string) {
  *  invites an address. */
 // Memory-only proof of the user's Browser command. Agent preview.open uses
 // openPreview directly and never advances this selection sequence.
-export function previewProfileScope(): string { return viewKey }
+export function previewProfileScope(): string {
+  return viewKey
+}
 let browserSelectionSequence = 0
 const browserSelections = new Map<string, number>()
 
@@ -1030,7 +1035,9 @@ export function openBrowserTab() {
   recordFeatureUse('browser_pane')
   const id = openPreview(current?.target ?? blankPage())
 
-  if (id) { browserSelections.set(`${viewKey}:${id}`, ++browserSelectionSequence) }
+  if (id) {
+    browserSelections.set(`${viewKey}:${id}`, ++browserSelectionSequence)
+  }
 
   return id
 }
@@ -1038,7 +1045,9 @@ export function openBrowserTab() {
 export function openBrowserAddress() {
   const id = openBrowserTab()
 
-  if (id) { $browserAddressFocus.set(id) }
+  if (id) {
+    $browserAddressFocus.set(id)
+  }
 }
 
 /** ⌘⇧L is a TOGGLE: show the Browser when it's away, fold it away when it's

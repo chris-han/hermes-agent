@@ -59,7 +59,9 @@ export function runChannelCommand(
 
           const reason = /^-?\d{1,10}$/.test(code)
             ? `exit code ${code}`
-            : /^[A-Z][A-Z0-9_]{0,39}$/.test(code) ? code : 'interrupted or unavailable'
+            : /^[A-Z][A-Z0-9_]{0,39}$/.test(code)
+              ? code
+              : 'interrupted or unavailable'
 
           reject(new Error(`Native channel operation failed (${reason})`, { cause: error }))
 
@@ -139,10 +141,12 @@ export async function resolveRegisteredChannelApp(
     throw new Error('Running executable is outside registered package')
   }
 
-  const applications = await Promise.all(registered.applications.map(async application => ({
-    id: application.id,
-    executable: await realpath(application.executable)
-  })))
+  const applications = await Promise.all(
+    registered.applications.map(async application => ({
+      id: application.id,
+      executable: await realpath(application.executable)
+    }))
+  )
 
   const matches = applications.filter(application => path.relative(application.executable, runningPath) === '')
 

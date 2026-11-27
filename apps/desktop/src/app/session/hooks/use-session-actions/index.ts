@@ -2048,8 +2048,12 @@ export function useSessionActions({
         // transcript through the signed bridge, so avoid a second cold read.
         // Watch windows use lazy resume to attach their live mirror.
         const connection = $connection.get()
-        const mainResumeReadsPersistedHistory = connection?.transport === 'semantier-workspace-http' &&
-          connection.connectionId === resolvedConnectionId && normalizeProfileKey(sessionProfile) === 'default'
+
+        const mainResumeReadsPersistedHistory =
+          connection?.transport === 'semantier-workspace-http' &&
+          connection.connectionId === resolvedConnectionId &&
+          normalizeProfileKey(sessionProfile) === 'default'
+
         const prefetchPromise =
           watchWindow || options?.authoritativeSnapshot || mainResumeReadsPersistedHistory
             ? null

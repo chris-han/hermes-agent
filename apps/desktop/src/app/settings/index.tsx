@@ -93,7 +93,7 @@ const SETTINGS_VIEWS: readonly SettingsViewId[] = [
 const SUBPAGE_VIEWS: Partial<Record<SettingsViewId, ComponentType<{ subpage?: string }>>> = {
   'config:appearance': AppearanceSettings,
   about: AboutSettings,
-  'file-sync':FileSyncSettings,
+  'file-sync': FileSyncSettings,
   // 'connections' renders the unified page too so the frame before the alias
   // redirect lands doesn't flash the fallback view.
   connections: GatewaySettings,
@@ -343,7 +343,13 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
             label: serviceCopy.title,
             onSelect: () => setActiveView('providers')
           },
-          {active:activeView==='file-sync',icon:RefreshCw,id:'file-sync',label:locale==='zh'?'文件同步':'File Sync',onSelect:()=>setActiveView('file-sync')},
+          {
+            active: activeView === 'file-sync',
+            icon: RefreshCw,
+            id: 'file-sync',
+            label: locale === 'zh' ? '文件同步' : 'File Sync',
+            onSelect: () => setActiveView('file-sync')
+          },
           {
             active: activeView === 'gateway',
             icon: Globe,
@@ -352,13 +358,15 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
             onSelect: () => setActiveView('gateway')
           },
           ...(window.hermesDesktop?.semantierProduct
-            ? [{
-                active: false,
-                icon: Settings2,
-                id: 'agent-configuration',
-                label: semantierWorkspaceCopy(locale).agentConfiguration,
-                onSelect: () => navigate(PROFILES_ROUTE)
-              }]
+            ? [
+                {
+                  active: false,
+                  icon: Settings2,
+                  id: 'agent-configuration',
+                  label: semantierWorkspaceCopy(locale).agentConfiguration,
+                  onSelect: () => navigate(PROFILES_ROUTE)
+                }
+              ]
             : []),
           {
             active: activeView === 'keybinds',

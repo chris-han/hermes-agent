@@ -124,18 +124,23 @@ export function useGatewayRequest() {
         // auth rejection becomes a reauth error; transport failures remain
         // retryable. Stash only the former so requestGateway can show the
         // actionable "sign in again" message.
-        const wsUrl = conn.transport === 'semantier-workspace-http' ? '' : await withTimeout(
-          resolveDesktopGatewayWsUrl(desktop, conn),
-          RECONNECT_ATTEMPT_TIMEOUT_MS,
-          'Timed out re-minting the gateway WebSocket URL'
-        )
+        const wsUrl =
+          conn.transport === 'semantier-workspace-http'
+            ? ''
+            : await withTimeout(
+                resolveDesktopGatewayWsUrl(desktop, conn),
+                RECONNECT_ATTEMPT_TIMEOUT_MS,
+                'Timed out re-minting the gateway WebSocket URL'
+              )
 
         if (!ownsForeground()) {
           return null
         }
 
         if (conn.transport === 'semantier-workspace-http') {
-          if (!conn.workspaceScope) { throw new Error('Semantier Workspace identity is missing.') }
+          if (!conn.workspaceScope) {
+            throw new Error('Semantier Workspace identity is missing.')
+          }
           await existing.connectWorkspace(conn.baseUrl, conn.workspaceScope, conn.connectionId, conn.profile)
         } else {
           await existing.connect(wsUrl)

@@ -48,7 +48,9 @@ interface CredentialSearchCopy {
 // this exact live descriptor without putting a remote URL or credential in a route.
 const legacyRemoteSources = new WeakMap<object, string>()
 
-export function modelSearchSource(connection: { connectionId?: string; mode?: 'local' | 'remote' } | null): string | null {
+export function modelSearchSource(
+  connection: { connectionId?: string; mode?: 'local' | 'remote' } | null
+): string | null {
   const id = connection?.connectionId?.trim()
 
   if (id) {

@@ -21,10 +21,12 @@ it('startup image bytes travel with the literal prompt and attachment failure pr
   vi.stubEnv('HERMES_HOME', home)
   vi.stubEnv('HERMES_TUI_GATEWAY_URL', '')
   startup.image = join(home, 'startup.png')
+
   const png = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nL8AAAAASUVORK5CYII=',
     'base64'
   )
+
   writeFileSync(startup.image, png)
 
   try {
@@ -35,6 +37,7 @@ it('startup image bytes travel with the literal prompt and attachment failure pr
       if (!valid) {
         rmSync(startup.image)
       }
+
       const submit = vi.fn()
       const sys = vi.fn()
       const request = vi.fn(async () => ({}))

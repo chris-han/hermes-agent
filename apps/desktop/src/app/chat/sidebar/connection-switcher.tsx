@@ -25,7 +25,11 @@ import {
 } from '@/lib/connection-display'
 import { triggerHaptic } from '@/lib/haptics'
 import { Loader2 } from '@/lib/icons'
-import { authenticateWorkspace, DEFAULT_SEMANTIER_WORKSPACE_ORIGIN, ensureWorkspaceConnection } from '@/lib/semantier-workspace-connection'
+import {
+  authenticateWorkspace,
+  DEFAULT_SEMANTIER_WORKSPACE_ORIGIN,
+  ensureWorkspaceConnection
+} from '@/lib/semantier-workspace-connection'
 import { cn } from '@/lib/utils'
 import { $activeConnectionId, $connectionsRegistry, $pendingConnectionId, selectConnection } from '@/store/connections'
 import { closeFindBar } from '@/store/find-in-page'
@@ -55,7 +59,12 @@ export function ConnectionSwitcher({
   const [signingIn, setSigningIn] = useState(false)
   const signingInRef = useRef(false)
   const intent = useRef(0)
-  useEffect(() => () => { intent.current++ }, [])
+  useEffect(
+    () => () => {
+      intent.current++
+    },
+    []
+  )
   const [menuOpen, setMenuOpen] = useState(false)
   const connectionListRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -111,7 +120,9 @@ export function ConnectionSwitcher({
   }
 
   const chooseCloud = (connection?: DesktopRegistryConnection) => {
-    if (signingInRef.current) {return}
+    if (signingInRef.current) {
+      return
+    }
 
     const revision = ++intent.current
     const initialConnection = $activeConnectionId.get()
@@ -122,15 +133,21 @@ export function ConnectionSwitcher({
 
     void (async () => {
       try {
-        if (!await authenticateWorkspace(origin, isCurrent) || !isCurrent()) {return}
+        if (!(await authenticateWorkspace(origin, isCurrent)) || !isCurrent()) {
+          return
+        }
 
-        const target = connection ?? await ensureWorkspaceConnection(
-          origin, $connectionsRegistry.get()?.connections ?? [], cloudCopy.title
-        )
+        const target =
+          connection ??
+          (await ensureWorkspaceConnection(origin, $connectionsRegistry.get()?.connections ?? [], cloudCopy.title))
 
-        if (isCurrent()) {await selectConnection(target.id)}
+        if (isCurrent()) {
+          await selectConnection(target.id)
+        }
       } catch (error) {
-        if (isCurrent()) {notifyError(error, t.profiles.switchConnectionFailed(cloudCopy.title))}
+        if (isCurrent()) {
+          notifyError(error, t.profiles.switchConnectionFailed(cloudCopy.title))
+        }
       } finally {
         signingInRef.current = false
         setSigningIn(false)
@@ -173,7 +190,10 @@ export function ConnectionSwitcher({
     <div
       aria-busy={signingIn || pendingConnectionId !== null}
       aria-label={title}
-      className={cn('min-w-20 shrink overflow-hidden', compact ? (readiness ? 'h-full max-w-64' : 'h-full max-w-40') : 'max-w-72')}
+      className={cn(
+        'min-w-20 shrink overflow-hidden',
+        compact ? (readiness ? 'h-full max-w-64' : 'h-full max-w-40') : 'max-w-72'
+      )}
       data-slot="connection-switcher"
       role="group"
     >
@@ -268,9 +288,7 @@ export function ConnectionSwitcher({
                   className={cn('min-w-0', searchable && dropdownMenuRow)}
                   disabled={Boolean(readiness && signingIn && connection.transport === 'semantier-workspace-http')}
                   key={connection.id}
-                  onSelect={readiness && connection.id === activeConnectionId
-                    ? () => choose(connection.id)
-                    : undefined}
+                  onSelect={readiness && connection.id === activeConnectionId ? () => choose(connection.id) : undefined}
                   value={connection.id}
                 >
                   <ConnectionLabel connection={connection} localLabel={readiness ? cloudCopy.thisDevice : undefined} />
@@ -287,9 +305,7 @@ export function ConnectionSwitcher({
           <DropdownMenuItem className={searchable ? dropdownMenuRow : undefined} onSelect={onConnect}>
             <ManageGatewaysLabel label={t.profiles.connectGateway} />
           </DropdownMenuItem>
-          {onDiagnostics && (
-            <DropdownMenuItem onSelect={onDiagnostics}>{cloudCopy.diagnostics}</DropdownMenuItem>
-          )}
+          {onDiagnostics && <DropdownMenuItem onSelect={onDiagnostics}>{cloudCopy.diagnostics}</DropdownMenuItem>}
         </DropdownMenuContent>
       </DropdownMenu>
       {localDeviceDialog}
@@ -318,7 +334,11 @@ function ConnectionSwitcherTrigger({
   return (
     <Button
       {...triggerProps}
-      aria-label={activeConnection ? `${title}: ${activeConnection.kind === 'local' ? localLabel ?? activeConnection.label : activeConnection.label}${readiness ? ` · ${readiness}` : ''}` : title}
+      aria-label={
+        activeConnection
+          ? `${title}: ${activeConnection.kind === 'local' ? (localLabel ?? activeConnection.label) : activeConnection.label}${readiness ? ` · ${readiness}` : ''}`
+          : title
+      }
       className={cn(
         'w-full min-w-0 justify-between overflow-hidden px-1 text-(--ui-text-secondary) data-[state=open]:bg-(--ui-control-active-background) data-[state=open]:text-foreground',
         compact && 'h-full min-h-0 rounded-none px-1.5 text-[0.6875rem] font-normal',
@@ -355,7 +375,9 @@ function ConnectionLabel({ connection, localLabel }: { connection: DesktopRegist
   return (
     <span className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden" title={connectionTooltip(connection)}>
       <ConnectionGlyph connection={connection} />
-      <span className="truncate">{connection.kind === 'local' ? localLabel ?? connection.label : connection.label}</span>
+      <span className="truncate">
+        {connection.kind === 'local' ? (localLabel ?? connection.label) : connection.label}
+      </span>
     </span>
   )
 }

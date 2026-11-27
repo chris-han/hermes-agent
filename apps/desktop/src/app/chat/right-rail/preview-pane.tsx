@@ -79,7 +79,12 @@ import { usePreviewGuestOffscreen } from './preview-guest-offscreen'
 import { type PreviewInputEvent, registerPreviewInput, toWebviewInputSpace } from './preview-input'
 import { PREVIEW_BROWSER_ATTR, registerPreviewNav } from './preview-nav'
 import { registerPreviewPageReader } from './preview-reader'
-import { createPreviewFrameRunner, readPreviewFrameText, registerPreviewFrameRunner, registerPreviewScriptRunner } from './preview-script-runner'
+import {
+  createPreviewFrameRunner,
+  readPreviewFrameText,
+  registerPreviewFrameRunner,
+  registerPreviewScriptRunner
+} from './preview-script-runner'
 import { RealProfileConsentDialog } from './real-profile-consent-dialog'
 
 type PreviewWebview = HTMLElement & {
@@ -263,49 +268,74 @@ function PreviewLoadError({
 }
 
 /** Register page text and live guest identity together for the owning tab. */
-function usePreviewPageReader(isWebPreview: boolean, tabId: string | undefined, webviewRef: RefObject<PreviewWebview | null>, browserPageEpochRef: RefObject<number>, browserCommittedEpochRef: RefObject<number>) {
+function usePreviewPageReader(
+  isWebPreview: boolean,
+  tabId: string | undefined,
+  webviewRef: RefObject<PreviewWebview | null>,
+  browserPageEpochRef: RefObject<number>,
+  browserCommittedEpochRef: RefObject<number>
+) {
   useEffect(() => {
     if (!isWebPreview || !tabId) {
       return
     }
 
-    return registerPreviewPageReader(tabId, async () => {
-      const webview = webviewRef.current
+    return registerPreviewPageReader(
+      tabId,
+      async () => {
+        const webview = webviewRef.current
 
-      if (!webview?.executeJavaScript) {
-        throw new Error('preview webview is not ready')
-      }
-
-      let text: unknown
-      const bridge = window.hermesDesktop?.previewFrames
-      const webContentsId = webview.getWebContentsId?.()
-
-      if (bridge) {
-        if (typeof webContentsId !== 'number') { throw new Error('PANE_UNAVAILABLE') }
-        const timeout = Symbol('frame read timeout')
-        let timer: ReturnType<typeof setTimeout> | undefined
-        try {
-          const deadline = new Promise<typeof timeout>(resolve => {
-            timer = setTimeout(() => resolve(timeout), 2000)
-          })
-          text = await Promise.race([readPreviewFrameText(createPreviewFrameRunner(() => webviewRef.current, bridge)), deadline])
-          if (text === timeout) {
-            text = await bridge({ operation: 'readTopText', webContentsId })
-          }
-        } finally {
-          clearTimeout(timer)
+        if (!webview?.executeJavaScript) {
+          throw new Error('preview webview is not ready')
         }
 
-        if (webviewRef.current !== webview || webview.getWebContentsId?.() !== webContentsId) {throw new Error('STALE_TARGET')}
-      } else {
-        text = await webview.executeJavaScript('document.body ? document.body.innerText : ""')
-      }
+        let text: unknown
+        const bridge = window.hermesDesktop?.previewFrames
+        const webContentsId = webview.getWebContentsId?.()
 
-      return {
-        text: typeof text === 'string' ? text : '',
-        ...guestPage(webview)
-      }
-    }, () => ({guest_id:webviewRef.current?.getWebContentsId?.() ?? -1,page_epoch:browserPageEpochRef.current,committed_epoch:browserCommittedEpochRef.current,loading:webviewRef.current?.isLoading?.() ?? true}))
+        if (bridge) {
+          if (typeof webContentsId !== 'number') {
+            throw new Error('PANE_UNAVAILABLE')
+          }
+          const timeout = Symbol('frame read timeout')
+          let timer: ReturnType<typeof setTimeout> | undefined
+
+          try {
+            const deadline = new Promise<typeof timeout>(resolve => {
+              timer = setTimeout(() => resolve(timeout), 2000)
+            })
+
+            text = await Promise.race([
+              readPreviewFrameText(createPreviewFrameRunner(() => webviewRef.current, bridge)),
+              deadline
+            ])
+
+            if (text === timeout) {
+              text = await bridge({ operation: 'readTopText', webContentsId })
+            }
+          } finally {
+            clearTimeout(timer)
+          }
+
+          if (webviewRef.current !== webview || webview.getWebContentsId?.() !== webContentsId) {
+            throw new Error('STALE_TARGET')
+          }
+        } else {
+          text = await webview.executeJavaScript('document.body ? document.body.innerText : ""')
+        }
+
+        return {
+          text: typeof text === 'string' ? text : '',
+          ...guestPage(webview)
+        }
+      },
+      () => ({
+        guest_id: webviewRef.current?.getWebContentsId?.() ?? -1,
+        page_epoch: browserPageEpochRef.current,
+        committed_epoch: browserCommittedEpochRef.current,
+        loading: webviewRef.current?.isLoading?.() ?? true
+      })
+    )
   }, [isWebPreview, tabId, webviewRef, browserPageEpochRef, browserCommittedEpochRef])
 }
 
@@ -912,7 +942,9 @@ export function PreviewPane({
   }, [isWebPreview, tabId])
 
   useEffect(() => {
-    if (!isWebPreview || isRemoteHtml || !tabId || !window.hermesDesktop?.previewFrames) {return}
+    if (!isWebPreview || isRemoteHtml || !tabId || !window.hermesDesktop?.previewFrames) {
+      return
+    }
     const bridge = window.hermesDesktop?.previewFrames
     const runner = createPreviewFrameRunner(() => webviewRef.current, bridge)
     const unregister = registerPreviewFrameRunner(tabId, runner)
@@ -923,7 +955,9 @@ export function PreviewPane({
       try {
         const webContentsId = webviewRef.current?.getWebContentsId?.()
 
-        if (typeof webContentsId === 'number') { void bridge({ operation: 'dispose', webContentsId }).catch(() => {}) }
+        if (typeof webContentsId === 'number') {
+          void bridge({ operation: 'dispose', webContentsId }).catch(() => {})
+        }
       } catch {
         // A destroyed guest disposes its own debugger in the main process.
       }
@@ -1266,11 +1300,21 @@ export function PreviewPane({
       browserPageEpochRef.current++
       const detail = event as Event & { isMainFrame?: boolean; url?: string }
 
-      if (detail.isMainFrame !== false && detail.url && tabId &&
-        portalProfile === previewProfileScope() && portalSession === $focusedStoredSessionId.get() && portalRuntime === $activeSessionId.get() &&
+      if (
+        detail.isMainFrame !== false &&
+        detail.url &&
+        tabId &&
+        portalProfile === previewProfileScope() &&
+        portalSession === $focusedStoredSessionId.get() &&
+        portalRuntime === $activeSessionId.get() &&
         $visiblePreviewTabs.get().some(tab => tab.id === tabId && tab.target.url === initialUrl) &&
-        isSemantierPortalReturn(initialUrl, detail.url)) {
-        if (portalCloseRef.current) { portalCloseRef.current() } else { closeRightRailTab(tabId) }
+        isSemantierPortalReturn(initialUrl, detail.url)
+      ) {
+        if (portalCloseRef.current) {
+          portalCloseRef.current()
+        } else {
+          closeRightRailTab(tabId)
+        }
         requestComposerFocus()
 
         return

@@ -24,7 +24,9 @@ export function forgetFleetRosterConnection(connectionId: string): void {
   fetchedAt = 0
   const current = $fleetRoster.get()
 
-  if (current) { $fleetRoster.set({ ...current, agents: current.agents.filter(row => row.connectionId !== connectionId) }) }
+  if (current) {
+    $fleetRoster.set({ ...current, agents: current.agents.filter(row => row.connectionId !== connectionId) })
+  }
 }
 
 export async function refreshFleetRoster(options: { force?: boolean } = {}): Promise<void> {
@@ -59,7 +61,9 @@ export async function refreshFleetRoster(options: { force?: boolean } = {}): Pro
   const requestGeneration = generation
   inflight = bridge()
     .then(roster => {
-      if (requestGeneration !== generation) { return }
+      if (requestGeneration !== generation) {
+        return
+      }
       $fleetRoster.set(roster)
       fetchedAt = Date.now()
     })

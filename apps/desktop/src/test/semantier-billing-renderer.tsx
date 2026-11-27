@@ -32,10 +32,16 @@ async function connect(source: number) {
   active?.close()
   const response = await fetch(`${bridge}/connection?source=${source}`, { cache: 'no-store' })
 
-  if (!response.ok) {throw new Error('Native bootstrap failed')}
-  const connection = await response.json() as HermesConnection
+  if (!response.ok) {
+    throw new Error('Native bootstrap failed')
+  }
+  const connection = (await response.json()) as HermesConnection
   const gateway = new HermesGateway()
-  gateway.onState(state => { if (active === gateway) {setGatewayState(state)} })
+  gateway.onState(state => {
+    if (active === gateway) {
+      setGatewayState(state)
+    }
+  })
   active = gateway
   await gateway.connect(connection.wsUrl)
   setConnection(connection)
@@ -48,7 +54,11 @@ createRoot(document.getElementById('root')!).render(
   <MemoryRouter initialEntries={['/settings?tab=billing']}>
     <QueryClientProvider client={queryClient}>
       <I18nProvider configClient={null} initialLocale={params.get('locale') || 'en'}>
-        <ThemeProvider><main className="flex h-screen min-h-0 flex-col"><BillingSettings /></main></ThemeProvider>
+        <ThemeProvider>
+          <main className="flex h-screen min-h-0 flex-col">
+            <BillingSettings />
+          </main>
+        </ThemeProvider>
       </I18nProvider>
     </QueryClientProvider>
   </MemoryRouter>

@@ -8,8 +8,11 @@ export function setModelDiscoveryRefreshing(owner: string, profile: string, refr
   const next = new Set($refreshingModelSources.get())
   const key = modelDiscoveryRefreshKey(owner, profile)
 
-  if (refreshing) {next.add(key)}
-  else {next.delete(key)}
+  if (refreshing) {
+    next.add(key)
+  } else {
+    next.delete(key)
+  }
 
   $refreshingModelSources.set(next)
 }

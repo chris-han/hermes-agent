@@ -88,21 +88,19 @@ it('branch hydration replaces source authority only after a successful destinati
     pending.shift()!.resolve({ provider_configured: true })
     await flush()
     expect(pending[0]?.method).toBe('session.resume')
-    pending
-      .shift()!
-      .resolve({
-        session_id: 'branch',
+    pending.shift()!.resolve({
+      session_id: 'branch',
+      stored_session_id: 'stored-branch',
+      running: false,
+      info: {
+        ...source,
         stored_session_id: 'stored-branch',
-        running: false,
-        info: {
-          ...source,
-          stored_session_id: 'stored-branch',
-          execution_epoch: 'branch-owner',
-          execution_generation: 0,
-          running: false
-        },
-        messages: [{ role: 'user', text: 'inherited history' }]
-      })
+        execution_epoch: 'branch-owner',
+        execution_generation: 0,
+        running: false
+      },
+      messages: [{ role: 'user', text: 'inherited history' }]
+    })
     await flush()
     expect(getUiState()).toMatchObject({
       sid: 'branch',

@@ -40,9 +40,14 @@ export const ROSTER_KEY = [ID, 'roster']
 export function forgetConnectionRoster(connectionId: string): void {
   $lastRoster.set($lastRoster.get().filter(row => row.connectionId !== connectionId))
   void queryClient.cancelQueries({ queryKey: ROSTER_KEY })
-  queryClient.setQueriesData<RosterSnapshot>({ queryKey: ROSTER_KEY }, data => data ? {
-    ...data, profiles: data.profiles?.filter(row => (row.connectionId || data.primaryConnectionId) !== connectionId)
-  } : data)
+  queryClient.setQueriesData<RosterSnapshot>({ queryKey: ROSTER_KEY }, data =>
+    data
+      ? {
+          ...data,
+          profiles: data.profiles?.filter(row => (row.connectionId || data.primaryConnectionId) !== connectionId)
+        }
+      : data
+  )
 }
 
 // Bounded retries. `retry: true` keeps React Query in isLoading until the

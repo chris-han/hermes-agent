@@ -6,20 +6,30 @@ export const DEFAULT_SEMANTIER_WORKSPACE_ORIGIN = 'https://cloud.semantier.cn'
 export async function authenticateWorkspace(origin: string, isCurrent: () => boolean) {
   const api = window.hermesDesktop.workspace
 
-  if (!api) {throw new Error('Semantier Cloud is unavailable.')}
+  if (!api) {
+    throw new Error('Semantier Cloud is unavailable.')
+  }
 
   let identity = await api.identity(origin)
 
-  if (!isCurrent()) {return null}
+  if (!isCurrent()) {
+    return null
+  }
 
   if (!identity.authenticated) {
     identity = await api.login(origin)
 
-    if (!isCurrent() || !identity.authenticated) {return null}
+    if (!isCurrent() || !identity.authenticated) {
+      return null
+    }
   }
 
-  if (!identity.user?.user_id || !identity.workspace?.id || !identity.organization_id ||
-      identity.user.workspace_id !== identity.workspace.id) {
+  if (
+    !identity.user?.user_id ||
+    !identity.workspace?.id ||
+    !identity.organization_id ||
+    identity.user.workspace_id !== identity.workspace.id
+  ) {
     throw new Error('Semantier Cloud did not return a verified account and workspace.')
   }
 
@@ -34,11 +44,15 @@ export async function ensureWorkspaceConnection(
   const normalized = new URL(origin).origin
 
   const saved = connections.find(
-    connection => connection.transport === 'semantier-workspace-http' && connection.url &&
+    connection =>
+      connection.transport === 'semantier-workspace-http' &&
+      connection.url &&
       new URL(connection.url).origin === normalized
   )
 
-  if (saved) {return saved}
+  if (saved) {
+    return saved
+  }
 
   const { connection } = await window.hermesDesktop.connections.save({
     kind: 'cloud',

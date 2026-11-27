@@ -15,22 +15,36 @@ export async function resolveDesktopStartupProfile(
   const runtime = await ticketRuntimeFor(backend)
   const args = ['-P', '-m', 'hermes_cli.profiles_desktop', '--owner-root', ownerRoot]
 
-  if (profile) { args.push('--profile', profile) }
+  if (profile) {
+    args.push('--profile', profile)
+  }
 
-  if (explicit) { args.push('--explicit') }
+  if (explicit) {
+    args.push('--explicit')
+  }
 
-  const { stdout } = await promisify(execFile)(runtime.command, args, hiddenWindowsChildOptions({
-    cwd: backend.root,
-    env: { ...process.env, ...runtime.env, HERMES_HOME: ownerRoot, PYTHONIOENCODING: 'utf-8' },
-    timeout: 90_000,
-    maxBuffer: 1024 * 1024
-  }))
+  const { stdout } = await promisify(execFile)(
+    runtime.command,
+    args,
+    hiddenWindowsChildOptions({
+      cwd: backend.root,
+      env: { ...process.env, ...runtime.env, HERMES_HOME: ownerRoot, PYTHONIOENCODING: 'utf-8' },
+      timeout: 90_000,
+      maxBuffer: 1024 * 1024
+    })
+  )
 
   const result = JSON.parse(stdout)
 
-  if (result.error) { throw new Error(result.error) }
+  if (result.error) {
+    throw new Error(result.error)
+  }
 
-  if (typeof result.profile !== 'string' || !DESKTOP_PROFILE_NAME_RE.test(result.profile) || typeof result.recovered !== 'boolean') {
+  if (
+    typeof result.profile !== 'string' ||
+    !DESKTOP_PROFILE_NAME_RE.test(result.profile) ||
+    typeof result.recovered !== 'boolean'
+  ) {
     throw new Error('Invalid local startup profile result')
   }
 
@@ -51,9 +65,13 @@ export async function prepareDesktopStartupProfile(deps: {
   const route = deps.preference.defaultRoute
   const selected = deps.explicitProfile || route?.profile || deps.preference.profile
 
-  if (route?.connectionId && !deps.isLocalConnection(route.connectionId)) { return }
+  if (route?.connectionId && !deps.isLocalConnection(route.connectionId)) {
+    return
+  }
 
-  if (deps.isRemote(selected)) { return }
+  if (deps.isRemote(selected)) {
+    return
+  }
 
   const resolved = await deps.resolve(selected, Boolean(deps.explicitProfile))
 

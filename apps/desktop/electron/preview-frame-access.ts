@@ -206,7 +206,11 @@ export function registerPreviewFramesIpc(
         const url = guest.getURL()
         const text = await frame.executeJavaScript('document.body ? document.body.innerText : ""')
         assertAllowed()
-        if (guest.mainFrame !== frame || guest.getURL() !== url) { throw new Error('STALE_TARGET') }
+
+        if (guest.mainFrame !== frame || guest.getURL() !== url) {
+          throw new Error('STALE_TARGET')
+        }
+
         return text
       }
 

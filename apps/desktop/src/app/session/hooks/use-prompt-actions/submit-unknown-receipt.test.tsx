@@ -80,29 +80,51 @@ it('an exact retry answered `unknown` keeps the bubble, retires the retry identi
   expect(window.localStorage.getItem('hermes.desktop.preparedSubmissions.v1') ?? '').not.toContain('lost turn')
 })
 
+it.each([false, true])(
+  'a user-stopped HTTP send retires its retry without a false receipt or failure (admitted row=%s)',
+  async admitted => {
+    let state: ClientSessionState = createClientSessionState()
+    const accepted = vi.fn()
 
-it.each([false,true])('a user-stopped HTTP send retires its retry without a false receipt or failure (admitted row=%s)', async admitted => {
-  let state: ClientSessionState=createClientSessionState()
-  const accepted=vi.fn()
+    const requestGateway = vi.fn(async (_method: string, params?: Record<string, unknown>) => {
+      if (admitted) {
+        state = { ...state, messages: state.messages.map(m => (m.role === 'user' ? { ...m, rowId: 263 } : m)) }
+        $sessionStates.set({ 'runtime-a': state })
+      }
+      throw new WorkspaceRequestStopped(String(params?.submission_id))
+    })
 
-  const requestGateway=vi.fn(async (_method:string,params?:Record<string,unknown>)=>{
-    if(admitted){state={...state,messages:state.messages.map(m=>m.role==='user'?{...m,rowId:263}:m)};$sessionStates.set({'runtime-a':state})}
-    throw new WorkspaceRequestStopped(String(params?.submission_id))
-  })
+    const deps = {
+      activeSessionIdRef: { current: 'runtime-a' },
+      selectedStoredSessionIdRef: { current: 'stored-a' },
+      busyRef: { current: false },
+      copy: en.desktop,
+      createBackendSessionForSend: vi.fn(async () => null),
+      getRoutedStoredSessionId: () => null,
+      getRuntimeIdForStoredSession: () => 'runtime-a',
+      getRouteToken: () => 'same-route',
+      requestGateway: requestGateway as GatewayRequest,
+      runtimeIdByStoredSessionIdRef: { current: new Map([['stored-a', 'runtime-a']]) },
+      resumeStoredSession: vi.fn(),
+      syncAttachmentsForSubmit: vi.fn(async (sessionId: string) => ({ sessionId, attachments: [] })),
+      updateSessionState: vi.fn((_sid: string, updater: (s: ClientSessionState) => ClientSessionState) => {
+        state = updater(state)
+        $sessionStates.set({ 'runtime-a': state })
 
-  const deps={activeSessionIdRef:{current:'runtime-a'},selectedStoredSessionIdRef:{current:'stored-a'},busyRef:{current:false},copy:en.desktop,
-    createBackendSessionForSend:vi.fn(async()=>null),getRoutedStoredSessionId:()=>null,getRuntimeIdForStoredSession:()=>'runtime-a',getRouteToken:()=>'same-route',
-    requestGateway:requestGateway as GatewayRequest,runtimeIdByStoredSessionIdRef:{current:new Map([['stored-a','runtime-a']])},resumeStoredSession:vi.fn(),
-    syncAttachmentsForSubmit:vi.fn(async(sessionId:string)=>({sessionId,attachments:[]})),
-    updateSessionState:vi.fn((_sid:string,updater:(s:ClientSessionState)=>ClientSessionState)=>{state=updater(state);$sessionStates.set({'runtime-a':state});
+        return state
+      })
+    }
 
-return state})}
-
-  const {result}=renderHook(()=>useSubmitPrompt(deps as never))
-  await act(async()=>{await expect(result.current('stopped input',{submission_id:'stopped-1',onAccepted:accepted})).rejects.toMatchObject({name:'WorkspaceRequestStopped',requestId:'stopped-1'})})
-  expect(accepted).not.toHaveBeenCalled()
-  expect(requestGateway).toHaveBeenCalledTimes(1)
-  expect(state.messages.some(m=>m.id.startsWith('assistant-error'))).toBe(false)
-  expect(state.messages.filter(m=>m.role==='user')).toHaveLength(admitted?1:0)
-  expect(window.localStorage.getItem('hermes.desktop.preparedSubmissions.v1')||'').not.toContain('stopped input')
-})
+    const { result } = renderHook(() => useSubmitPrompt(deps as never))
+    await act(async () => {
+      await expect(
+        result.current('stopped input', { submission_id: 'stopped-1', onAccepted: accepted })
+      ).rejects.toMatchObject({ name: 'WorkspaceRequestStopped', requestId: 'stopped-1' })
+    })
+    expect(accepted).not.toHaveBeenCalled()
+    expect(requestGateway).toHaveBeenCalledTimes(1)
+    expect(state.messages.some(m => m.id.startsWith('assistant-error'))).toBe(false)
+    expect(state.messages.filter(m => m.role === 'user')).toHaveLength(admitted ? 1 : 0)
+    expect(window.localStorage.getItem('hermes.desktop.preparedSubmissions.v1') || '').not.toContain('stopped input')
+  }
+)

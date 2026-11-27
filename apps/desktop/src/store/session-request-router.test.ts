@@ -478,21 +478,24 @@ describe('requestForSessionProfile', () => {
     }
   )
 
-  it.each(['complete', 'completed', 'error', 'terminal'])('releases a routed socket for terminal ACK status %s', async status => {
-    const primary = makePrimary()
-    setPrimaryGateway(primary as never, 'default')
-    installDesktop()
-    const ambient = vi.fn(async () => ({ ambient: true }))
+  it.each(['complete', 'completed', 'error', 'terminal'])(
+    'releases a routed socket for terminal ACK status %s',
+    async status => {
+      const primary = makePrimary()
+      setPrimaryGateway(primary as never, 'default')
+      installDesktop()
+      const ambient = vi.fn(async () => ({ ambient: true }))
 
-    promptAckStatus = status
+      promptAckStatus = status
 
-    await requestForSessionProfile('loki', ambient as never, 'prompt.submit', {
-      session_id: `rt-${status}`,
-      text: 'finish'
-    })
+      await requestForSessionProfile('loki', ambient as never, 'prompt.submit', {
+        session_id: `rt-${status}`,
+        text: 'finish'
+      })
 
-    expect(secondaryGateways[0].close).toHaveBeenCalledOnce()
-  })
+      expect(secondaryGateways[0].close).toHaveBeenCalledOnce()
+    }
+  )
 
   it('releases turn leases when their route is pruned and creates a fresh route next time', async () => {
     const primary = makePrimary()
