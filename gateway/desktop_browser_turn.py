@@ -12,7 +12,8 @@ def read_live(state,raw_request,*,start=None,count=None,refresh=True,_renewed=Fa
     if state.live_check is not None and not state.live_check():return json.dumps(failure('STALE_TARGET'))
     revision=state.binding_revision
     raw=raw_request({'start':start,'count':count,'require_live':True,'expected_binding':state.expected_page(),'refresh_binding':refresh})
-    if revision != state.binding_revision:return json.dumps(failure('STALE_TARGET'))
+    if revision != state.binding_revision or (state.live_check is not None and not state.live_check()):
+        return json.dumps(failure('STALE_TARGET'))
     result=parse_result(raw)
     error=state.accept_page(result,refresh=refresh)
     if error and error.get('code') in ('STALE_TARGET', 'PANE_UNAVAILABLE') and not _renewed and callable(state.reconnect_callback):
@@ -53,6 +54,7 @@ def act_live(state,raw_read,raw_act,payload):
     if is_inventory and isinstance(value,dict) and value.get('success') is True:
         if state.discovery_failures:state.recovery_inventories += 1
         state.mark_inventory()
+        state.preflight_complete = True
     if isinstance(value, dict) and state.binding_revision:
         def scope_refs(item):
             if isinstance(item, dict):

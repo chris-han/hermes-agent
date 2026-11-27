@@ -1,6 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { $browserAddressFocus } from '@/store/preview'
+
 import { normalizePreviewAddress, PreviewBrowserBar } from './preview-browser-bar'
 
 const baseProps = {
@@ -79,6 +81,27 @@ describe('normalizePreviewAddress', () => {
 })
 
 describe('PreviewBrowserBar', () => {
+  it('focuses only the address field for the requested tab', async () => {
+    const rects = vi.spyOn(HTMLInputElement.prototype, 'getClientRects')
+      .mockReturnValue([{}] as unknown as DOMRectList)
+
+    $browserAddressFocus.set('owned-tab')
+
+    try {
+      const other = render(<PreviewBrowserBar {...baseProps} tabId="other-tab" />)
+
+      expect(other.baseElement.ownerDocument.activeElement).not.toBe(address(other))
+      other.unmount()
+      const owned = render(<PreviewBrowserBar {...baseProps} tabId="owned-tab" />)
+
+      await waitFor(() => expect(owned.baseElement.ownerDocument.activeElement).toBe(address(owned)))
+      expect($browserAddressFocus.get()).toBeNull()
+    } finally {
+      $browserAddressFocus.set(null)
+      rects.mockRestore()
+    }
+  })
+
   it('disables back and forward when there is no history', () => {
     const rendered = render(<PreviewBrowserBar {...baseProps} />)
 

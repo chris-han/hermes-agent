@@ -1021,6 +1021,8 @@ export function browserUserSelection(tabId: string): number | undefined {
   return browserSelections.get(`${viewKey}:${tabId}`)
 }
 
+export const $browserAddressFocus = atom<string | null>(null)
+
 export function openBrowserTab() {
   const tabs = $visiblePreviewTabs.get()
   const current = tabs.find(tab => tab.id === browserTabId(tabs))
@@ -1029,6 +1031,14 @@ export function openBrowserTab() {
   const id = openPreview(current?.target ?? blankPage())
 
   if (id) { browserSelections.set(`${viewKey}:${id}`, ++browserSelectionSequence) }
+
+  return id
+}
+
+export function openBrowserAddress() {
+  const id = openBrowserTab()
+
+  if (id) { $browserAddressFocus.set(id) }
 }
 
 /** ⌘⇧L is a TOGGLE: show the Browser when it's away, fold it away when it's

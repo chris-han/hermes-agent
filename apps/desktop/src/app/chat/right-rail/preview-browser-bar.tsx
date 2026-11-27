@@ -14,7 +14,8 @@
  * buttons, so a glyph here and a glyph on the strip are still the same button.
  */
 
-import { useEffect, useState } from 'react'
+import { useStore } from '@nanostores/react'
+import { useEffect, useRef, useState } from 'react'
 
 import { Codicon } from '@/components/ui/codicon'
 import { CopyButton } from '@/components/ui/copy-button'
@@ -24,6 +25,7 @@ import { useI18n } from '@/i18n'
 import { isSubmitEnter } from '@/lib/ime'
 import { ANNOTATE_BLUE } from '@/lib/preview-annotate'
 import { cn } from '@/lib/utils'
+import { $browserAddressFocus } from '@/store/preview'
 
 interface PreviewBrowserBarProps {
   annotateMode?: boolean
@@ -33,6 +35,7 @@ interface PreviewBrowserBarProps {
   consoleOpen: boolean
   devToolsOpen: boolean
   loading: boolean
+  tabId?: string
   onBack: () => void
   /** The pane's Close — the one visible way out of a full-width Browser. */
   onClose?: () => void
@@ -116,10 +119,50 @@ export function PreviewBrowserBar({
   onToggleAnnotate,
   onToggleConsole,
   onToggleDevTools,
+  tabId,
   url
 }: PreviewBrowserBarProps) {
   const { t } = useI18n()
   const copy = t.preview.web
+  const address = useRef<HTMLInputElement>(null)
+  const focusTab = useStore($browserAddressFocus)
+
+  useEffect(() => {
+    const input = address.current
+
+    if (!input || !tabId || focusTab !== tabId) {
+      return
+    }
+
+    let frame = 0
+
+    const focusWhenVisible = () => {
+      if (frame || !input.getClientRects().length) {
+        return
+      }
+
+      // Wait for the pane activation and its focus restoration to finish.
+      frame = window.requestAnimationFrame(() => {
+        frame = window.requestAnimationFrame(() => {
+          frame = 0
+
+          if ($browserAddressFocus.get() === tabId && input.getClientRects().length) {
+            input.focus()
+            $browserAddressFocus.set(null)
+          }
+        })
+      })
+    }
+
+    const observer = new ResizeObserver(focusWhenVisible)
+    observer.observe(input)
+    focusWhenVisible()
+
+    return () => {
+      observer.disconnect()
+      window.cancelAnimationFrame(frame)
+    }
+  }, [focusTab, tabId])
   // Null while the field is idle, so the address tracks navigation on its own;
   // a string once the user takes it over, so typing survives a page load.
   const [draft, setDraft] = useState<null | string>(null)
@@ -206,6 +249,7 @@ export function PreviewBrowserBar({
             }
           }}
           placeholder={copy.addressPlaceholder}
+          ref={address}
           size="xs"
           spellCheck={false}
           value={shown}

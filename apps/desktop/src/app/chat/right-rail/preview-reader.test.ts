@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { group, split } from '@/components/pane-shell/tree/model'
 import { $layoutTree, noteActiveTreeGroup, noteHoveredTreeGroup } from '@/components/pane-shell/tree/store'
@@ -11,7 +11,7 @@ import { watchPreviewTiles } from '../preview-tile'
 import { resolveActivePreviewTab } from './preview-active-tab'
 import { activePreviewInput, registerPreviewInput } from './preview-input'
 import { activePreviewNav, registerPreviewNav } from './preview-nav'
-import { PREVIEW_READ_MAX_CHARS, readActivePreview, registerPreviewPageReader } from './preview-reader'
+import { activePreviewBinding, PREVIEW_READ_MAX_CHARS, readActivePreview, registerPreviewPageReader } from './preview-reader'
 import { activePreviewFrameRunner, activePreviewScriptRunner, registerPreviewFrameRunner, registerPreviewScriptRunner } from './preview-script-runner'
 
 function urlTarget(url: string): PreviewTarget {
@@ -159,6 +159,7 @@ describe('readActivePreview (read_preview tool)', () => {
     mountSplit(fileId, browserId)
     noteHoveredTreeGroup('grp-browser')
 
+    expect(resolveActivePreviewTab(undefined, { includeHover: false })?.id).toBe(fileId)
     expect(await readActivePreview()).toMatchObject({ kind: 'url', url: 'https://example.com/tickets' })
   })
 
@@ -306,6 +307,65 @@ function mountSplit(fileId: string, browserId: string) {
 }
 
 describe('native bound preview lease', () => {
+  it.each(['loaded', 'guest replaced', 'still loading'] as const)(
+    'handles a refresh of the bound pane when the page is %s',
+    async outcome => {
+      closeRightRail()
+      vi.useFakeTimers()
+      const url = 'http://localhost/refresh'
+      const tabId = openPreview(urlTarget(url))!
+      let identity = { guest_id: 17, page_epoch: 1, loading: true }
+      const reader = vi.fn(async () => ({ text: 'refreshed document', title: 'Refresh', url }))
+      const unregister = registerPreviewPageReader(tabId, reader, () => identity)
+
+      try {
+        const binding = activePreviewBinding(undefined, true)!
+        const pending = readActivePreview({ require_live: true, expected_binding: binding, refresh_binding: true })
+        const result = outcome === 'loaded'
+          ? expect(pending).resolves.toMatchObject({
+            text: 'refreshed document', binding: { tab_id: tabId, guest_id: 17, page_epoch: 2 }
+          })
+          : expect(pending).rejects.toThrow(outcome === 'guest replaced' ? 'STALE_TARGET' : 'PAGE_LOADING')
+        expect(reader).not.toHaveBeenCalled()
+
+        if (outcome !== 'still loading') {
+          identity = { guest_id: outcome === 'loaded' ? 17 : 18, page_epoch: 2, loading: false }
+        }
+        await Promise.all([result, vi.runAllTimersAsync()])
+        expect(reader).toHaveBeenCalledTimes(outcome === 'loaded' ? 1 : 0)
+      } finally {
+        unregister()
+        closeRightRail()
+        vi.useRealTimers()
+      }
+    }
+  )
+
+  it('retries once when navigation commits during text extraction', async () => {
+    closeRightRail()
+    const url = 'http://localhost/read-during-refresh'
+    const tabId = openPreview(urlTarget(url))!
+    let epoch = 1
+    const reader = vi.fn(async () => {
+      if (epoch === 1) {
+        epoch = 2
+        return { text: 'old document', title: 'Refresh', url }
+      }
+      return { text: 'new document', title: 'Refresh', url }
+    })
+    const unregister = registerPreviewPageReader(tabId, reader, () => ({ guest_id: 17, page_epoch: epoch }))
+
+    try {
+      const binding = activePreviewBinding()!
+      await expect(readActivePreview({ require_live: true, expected_binding: binding, refresh_binding: true }))
+        .resolves.toMatchObject({ text: 'new document', binding: { page_epoch: 2 } })
+      expect(reader).toHaveBeenCalledTimes(2)
+    } finally {
+      unregister()
+      closeRightRail()
+    }
+  })
+
   it('records a live guest and rejects stale or foreign window metadata before reading', async () => {
     closeRightRail()
     const tabId=openPreview(urlTarget('http://localhost/lease'))!

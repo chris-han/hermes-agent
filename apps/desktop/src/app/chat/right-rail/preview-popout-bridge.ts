@@ -109,6 +109,11 @@ function askPopout<T>(
   timeoutMs: number,
   pick: (response: BridgeResponse) => T | undefined
 ): Promise<T | null> {
+  // Every pop-out declines an empty scoped tab list, so no reply can arrive.
+  if (request.tabIds?.length === 0) {
+    return Promise.resolve(null)
+  }
+
   const bus = getBus()
 
   if (!bus) {

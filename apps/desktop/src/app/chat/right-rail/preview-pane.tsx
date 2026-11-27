@@ -282,7 +282,19 @@ function usePreviewPageReader(isWebPreview: boolean, tabId: string | undefined, 
 
       if (bridge) {
         if (typeof webContentsId !== 'number') { throw new Error('PANE_UNAVAILABLE') }
-        text = await readPreviewFrameText(createPreviewFrameRunner(() => webviewRef.current, bridge))
+        const timeout = Symbol('frame read timeout')
+        let timer: ReturnType<typeof setTimeout> | undefined
+        try {
+          const deadline = new Promise<typeof timeout>(resolve => {
+            timer = setTimeout(() => resolve(timeout), 2000)
+          })
+          text = await Promise.race([readPreviewFrameText(createPreviewFrameRunner(() => webviewRef.current, bridge)), deadline])
+          if (text === timeout) {
+            text = await bridge({ operation: 'readTopText', webContentsId })
+          }
+        } finally {
+          clearTimeout(timer)
+        }
 
         if (webviewRef.current !== webview || webview.getWebContentsId?.() !== webContentsId) {throw new Error('STALE_TARGET')}
       } else {
@@ -1587,6 +1599,7 @@ export function PreviewPane({
             onToggleAnnotate={toggleAnnotate}
             onToggleConsole={() => consoleState.setOpen(open => !open)}
             onToggleDevTools={toggleDevTools}
+            tabId={tabId}
             url={currentUrl}
           />
         )}

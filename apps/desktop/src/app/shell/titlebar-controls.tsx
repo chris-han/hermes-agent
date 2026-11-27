@@ -27,6 +27,7 @@ import {
   togglePanesFlipped,
   toggleRightSide
 } from '@/store/layout'
+import { openBrowserAddress } from '@/store/preview'
 import { $unreadSessionCount } from '@/store/session-dot-state'
 import { $titlebarAppActionsSide, TITLEBAR_FIXED_TOOLS } from '@/store/titlebar-app-actions'
 
@@ -315,7 +316,17 @@ export function TitlebarControls({ leftTools = [], tools = [], onOpenSettings }:
 
   const visibleSystemTools = appActionsSide === 'right' ? systemTools.filter(visibleTool) : []
   const visiblePaneTools = tools.filter(visibleTool)
-  const visibleRightFixedTools = [flipTool, rightSidebarTool].filter(visibleTool)
+
+  const browserTool: TitlebarTool = {
+    hidden: view !== 'chat',
+    icon: <TitlebarIcon name="globe" />,
+    id: 'browser',
+    label: t.titlebar.openBrowserPane,
+    onSelect: openBrowserAddress,
+    tour: 'open-browser-pane'
+  }
+
+  const visibleRightFixedTools = [flipTool, browserTool, rightSidebarTool].filter(visibleTool)
 
   return (
     <>

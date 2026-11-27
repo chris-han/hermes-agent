@@ -47,12 +47,15 @@ function openTabInGroup(groupId: null | string, tabs: readonly PreviewTab[]): nu
  * an explicit open living in a different group — that is follow()'s clobber,
  * not a look.
  */
-export function resolveActivePreviewTab(tabs: readonly PreviewTab[] = previewTabsFor()): null | PreviewTab {
+export function resolveActivePreviewTab(
+  tabs: readonly PreviewTab[] = previewTabsFor(),
+  { includeHover = true }: { includeHover?: boolean } = {}
+): null | PreviewTab {
   if (tabs.length === 0) {
     return null
   }
 
-  const hovered = openTabInGroup($hoveredTreeGroup.get(), tabs)
+  const hovered = includeHover ? openTabInGroup($hoveredTreeGroup.get(), tabs) : null
 
   if (hovered) {
     return hovered

@@ -6,6 +6,7 @@ are stored here. The same turn object follows native/direct/deferred execution.
 from __future__ import annotations
 import json
 import logging
+from time import monotonic
 from pathlib import Path
 from urllib.parse import urlsplit
 from contextlib import contextmanager
@@ -34,6 +35,7 @@ class BrowserTargetBinding:
 
 def failure(code: str) -> dict:
     next_action = {'STALE_TARGET': 'recheck_owned_page', 'PANE_UNAVAILABLE': 'request_reopen_or_reconnect',
+                   'PAGE_LOADING': 'retry_when_page_loads',
                    'WRONG_OWNER': 'use_requesting_window', 'TARGET_UNRESOLVED': 'clarify_browser_target'}.get(code, 'correct_request_in_bound_context')
     return {'success': False, 'code': code, 'error': code, 'retryable': code != 'WRONG_OWNER',
             'recovery': {'same_context': True, 'next_action': next_action}}
@@ -60,6 +62,7 @@ class BrowserTurnState:
         self.receipts = []
         self._lock = RLock()
         self._selected = target_kind != 'UNRESOLVED'
+        self.resolve_on_demand = None
 
     def select(self, kind, provenance='proposed_intent'):
         if kind not in ('VISIBLE_PANE','INDEPENDENT','UNRESOLVED','NONE'):
@@ -71,7 +74,29 @@ class BrowserTurnState:
             self.kind=kind
             self.binding=replace(self.binding,target_kind=kind if kind!='NONE' else 'UNRESOLVED',selection_provenance=provenance)
 
+    def _is_browser_call(self, name):
+        from tools.registry import registry
+
+        entry = registry.get_entry(name)
+        return name in ('browser_exec', 'browser_cdp', 'desktop_preview', 'drive_preview', 'annotate_preview') or bool(
+            entry and entry.toolset in ('browser', 'browser_use')
+        )
+
+    def _resolve_for(self, name):
+        if self.resolve_on_demand is None or not self._is_browser_call(name):
+            return
+        with self._lock:
+            resolve = self.resolve_on_demand
+            if resolve is not None:
+                try:
+                    resolve()
+                    if self.kind == 'NONE':
+                        self.native_failure = failure('TARGET_UNRESOLVED')
+                finally:
+                    self.resolve_on_demand = None
+
     def canonical_call(self, name, args):
+        self._resolve_for(name)
         # The two existing pane tools share logical operations. Preserve legacy
         # schemas outside a bound Desktop turn; canonicalize BEFORE their probes.
         if self.kind=='VISIBLE_PANE':
@@ -83,7 +108,8 @@ class BrowserTurnState:
         return name,args
 
     def guard(self,name,args):
-        if self.kind == 'NONE':return None
+        self._resolve_for(name)
+        if self.kind == 'NONE' and self.native_failure is None:return None
         from tools.registry import registry
         entry = registry.get_entry(name)
         independent = name in ('browser_exec', 'browser_cdp') or bool(entry and entry.toolset in ('browser', 'browser_use'))
@@ -313,14 +339,16 @@ def native_pane_call(agent, name, arguments):
     return '', name, arguments
 
 
-def prelude(state: BrowserTurnState,agent,message,history):
-    """Native preflight is observable through the existing scripted tool-round path."""
+def resolve_browser_intent(state: BrowserTurnState, agent, message, history):
+    """Resolve the user-authored turn target before the first browser operation."""
+    started_at = monotonic()
     capture=getattr(state,'capture_context',None)
     try:pane_context=parse_result(capture()) if callable(capture) else None
     except Exception as error:
         logger.exception('Desktop context capture failed: %s', type(error).__name__,
                          exc_info=(RuntimeError, RuntimeError(type(error).__name__), None))
         pane_context=None
+    capture_finished_at = monotonic()
     try:
         proposal=propose_intent(agent,message,history,pane_context)
     except Exception as error:
@@ -328,6 +356,12 @@ def prelude(state: BrowserTurnState,agent,message,history):
                          exc_info=(RuntimeError, RuntimeError(type(error).__name__), None))
         state.native_failure=failure(cloud_failure_code(error) or 'INTENT_UNAVAILABLE')
         return
+    finally:
+        logger.info(
+            'Desktop browser prelude: session=%s capture_ms=%.0f intent_ms=%.0f',
+            state.binding.session_id, (capture_finished_at - started_at) * 1000,
+            (monotonic() - capture_finished_at) * 1000,
+        )
     state.binding=replace(state.binding,turn_id=str(getattr(agent,'_current_turn_id',None) or state.binding.turn_id))
     selection_error = state.select(proposal['target_kind'])
     if selection_error:
@@ -348,6 +382,13 @@ def prelude(state: BrowserTurnState,agent,message,history):
             state.receipts.append({'phase':'owner_selection',**error})
             return
         state.receipts.append({'phase':'owner_selection','success':True,'binding':asdict(state.binding),'selection_provenance':'renderer_selection'})
+
+
+def prelude(state: BrowserTurnState, agent, message, history):
+    """Scripted preflight for callers that explicitly request it."""
+    resolve_browser_intent(state, agent, message, history)
+    if state.native_failure is not None or state.kind != 'VISIBLE_PANE':
+        return
     if state.operation=='open':
         raw=yield native_pane_call(agent, 'desktop_preview', {'action':'open','url':state.requested_url})
     else:

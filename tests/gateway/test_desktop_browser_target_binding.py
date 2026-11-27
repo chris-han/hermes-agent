@@ -24,6 +24,36 @@ def test_binding_records_native_owner_generation_and_epoch():
     assert (s.binding.session_id,s.binding.generation,s.binding.tab_id,s.binding.page_epoch)==('session-A',7,'tab-A',2)
 
 
+def test_browser_read_preserves_loading_status_without_requesting_reconnect():
+    from gateway.desktop_browser_turn import read_live
+
+    s = state()
+    assert s.accept_page(page()) is None
+    s.reconnect_callback = lambda _: pytest.fail('loading a bound page does not require reconnecting')
+
+    result = json.loads(read_live(s, lambda _: json.dumps({'success': False, 'code': 'PAGE_LOADING'})))
+
+    assert result['code'] == 'PAGE_LOADING'
+    assert result['recovery']['next_action'] == 'retry_when_page_loads'
+
+
+def test_browser_read_discards_page_if_turn_stops_during_read():
+    from gateway.desktop_browser_turn import read_live
+
+    s = state()
+    assert s.accept_page(page()) is None
+    active = True
+    s.live_check = lambda: active
+
+    def read(_):
+        nonlocal active
+        active = False
+        return json.dumps(page(page_epoch=3))
+
+    assert json.loads(read_live(s, read))['code'] == 'STALE_TARGET'
+    assert s.binding.page_epoch == 2
+
+
 @pytest.mark.parametrize('tool', ['browser_exec','execute_code'])
 def test_visible_target_blocks_independent_execution(tool):
     s=state();assert s.guard(tool,{})['code']=='TARGET_MISMATCH'
@@ -110,3 +140,32 @@ def test_selected_binding_cannot_be_overridden():
     s=state();s.accept_page(page())
     assert s.select('INDEPENDENT')['code']=='TARGET_MISMATCH'
     assert s.kind=='VISIBLE_PANE'
+
+
+def test_browser_intent_runs_only_at_the_first_browser_tool():
+    from agent.desktop_browser_target import BrowserTurnState
+
+    state = BrowserTurnState(session_id="s", generation=1, turn_id="t")
+    calls = []
+
+    def resolve():
+        calls.append("resolve")
+        state.select("VISIBLE_PANE")
+
+    state.resolve_on_demand = resolve
+    assert state.canonical_call("terminal", {}) == ("terminal", {})
+    assert state.guard("terminal", {}) is None
+    assert calls == []
+    assert state.canonical_call("desktop_preview", {"action": "elements"}) == (
+        "drive_preview", {"action": "elements"},
+    )
+    assert state.guard("browser_exec", {})["code"] == "TARGET_MISMATCH"
+    assert calls == ["resolve"]
+
+
+def test_browser_tool_does_not_inherit_authority_after_unrelated_intent():
+    from agent.desktop_browser_target import BrowserTurnState
+
+    state = BrowserTurnState(session_id="s", generation=1, turn_id="t")
+    state.resolve_on_demand = lambda: state.select("NONE")
+    assert state.guard("desktop_preview", {"action": "read"})["code"] == "TARGET_UNRESOLVED"

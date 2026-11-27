@@ -83,9 +83,10 @@ export const PREVIEW_READ_MAX_CHARS = 24_000
 const readers = new Map<string, PageReader>()
 type PreviewIdentity = { guest_id: number; page_epoch: number; committed_epoch?: number; loading?: boolean }
 const identities = new Map<string, () => PreviewIdentity>()
+const PREVIEW_READ_LOAD_TIMEOUT_MS = 4_000
 
 export function activePreviewBinding(owner?: PreviewOwner, includeLoading = false): PreviewBinding | null {
-  const tab=resolveActivePreviewTab(previewTabsFor(owner))
+  const tab=resolveActivePreviewTab(previewTabsFor(owner), { includeHover: false })
 
   if(!tab){return null}
   let identity: PreviewIdentity | undefined
@@ -132,7 +133,7 @@ export function bindingStatus(expected: PreviewBinding, allowEpochRefresh = fals
 
   if (expected.window_id !== previewWindowId || expected.session_id !== (who.runtimeId ?? who.sessionId ?? '') || !tabs.some(tab => tab.id === expected.tab_id)) { return 'WRONG_OWNER' }
 
-  if (resolveActivePreviewTab(tabs)?.id !== expected.tab_id) { return 'STALE_TARGET' }
+  if (resolveActivePreviewTab(tabs, { includeHover: false })?.id !== expected.tab_id) { return 'STALE_TARGET' }
   const live = identities.get(expected.tab_id)?.()
 
   return !live || (!allowLoading && live.loading) || live.guest_id !== expected.guest_id || (!allowEpochRefresh && live.page_epoch !== expected.page_epoch) ? 'STALE_TARGET' : null
@@ -201,11 +202,41 @@ async function readLivePreviewPage(tab: PreviewTab, reader: PageReader, opts: Pr
   const who = ownerIdentity(sessionId ?? null)
   const binding = identity ? {profile_id:who.profile ?? previewProfileScope(),user_selection:browserUserSelection(tab.id) ?? 0,session_id:who.runtimeId ?? who.sessionId ?? '',window_id:previewWindowId,tab_id:tab.id,guest_id:identity.guest_id,page_epoch:identity.page_epoch} : undefined
 
-  if (opts.expected_binding && bindingStatus(opts.expected_binding,opts.refresh_binding,sessionId)) { throw new Error(bindingStatus(opts.expected_binding,opts.refresh_binding,sessionId)!) }
+  const status = opts.expected_binding && bindingStatus(opts.expected_binding, opts.refresh_binding, sessionId)
+  if (status) { throw new Error(status) }
 
   if (opts.require_live && !page.url) { throw new Error('PANE_UNAVAILABLE') }
 
   return {page, binding}
+}
+
+async function readRefreshingPreviewPage(
+  tab: PreviewTab, reader: PageReader, opts: PreviewReadOptions, expected: PreviewBinding, owner?: PreviewOwner
+) {
+  const deadline = Date.now() + PREVIEW_READ_LOAD_TIMEOUT_MS
+  const waitForPage = async () => {
+    for (;;) {
+      // Accept a new page epoch only inside the already verified owner, tab and guest.
+      const status = bindingStatus(expected, true, owner, true)
+      if (status) { throw new Error(status) }
+      const identity = identities.get(tab.id)!()
+      if (!identity.loading) { return identity }
+      if (Date.now() >= deadline) { throw new Error('PAGE_LOADING') }
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+  }
+
+  const before = await waitForPage()
+  try {
+    return await readLivePreviewPage(tab, reader, opts, owner)
+  } catch (error) {
+    const after = identities.get(tab.id)?.()
+    if (!after || after.guest_id !== before.guest_id ||
+      (!after.loading && after.page_epoch === before.page_epoch)) { throw error }
+
+    await waitForPage()
+    return await readLivePreviewPage(tab, reader, opts, owner)
+  }
 }
 
 /** Read the preview the user is looking at, among the tabs `sessionId` (the
@@ -233,9 +264,10 @@ export async function readActivePreview(
   }
 
 
-  if (opts.expected_binding && bindingStatus(opts.expected_binding,opts.refresh_binding,sessionId)) {
-    throw new Error(bindingStatus(opts.expected_binding,opts.refresh_binding,sessionId)!)
-  }
+  const expected = opts.expected_binding
+  const canRefresh = opts.require_live && opts.refresh_binding && expected
+  const status = expected && bindingStatus(expected, opts.refresh_binding, sessionId, Boolean(canRefresh))
+  if (status) { throw new Error(status) }
 
   const reader = readers.get(tab.id)
   const multi = tabs.length > 1
@@ -243,7 +275,9 @@ export async function readActivePreview(
 
   if (reader) {
     try {
-      const {page, binding} = await readLivePreviewPage(tab, reader, opts, sessionId)
+      const { page, binding } = canRefresh
+        ? await readRefreshingPreviewPage(tab, reader, opts, canRefresh, sessionId)
+        : await readLivePreviewPage(tab, reader, opts, sessionId)
 
       // Say it on the page. Reading is by far the cheapest thing the agent
       // does — a few hundredths of a second against a model round trip either

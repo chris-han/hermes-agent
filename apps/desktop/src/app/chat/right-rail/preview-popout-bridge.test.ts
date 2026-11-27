@@ -171,6 +171,22 @@ describe('preview pop-out bridge', () => {
     }
   })
 
+  it('does not wait for a pop-out when the requesting session owns no tabs', async () => {
+    const { $previewTabs } = await import('@/store/preview')
+    const { requestPopoutPreviewRead } = await import('./preview-popout-bridge')
+    $previewTabs.set([])
+    vi.useFakeTimers()
+
+    try {
+      const pending = requestPopoutPreviewRead({ binding_only: true }, 'session-without-preview')
+
+      expect(vi.getTimerCount()).toBe(0)
+      expect(await pending).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('answers only for the session whose tab the pop-out shows (#73890)', async () => {
     isBrowserWindow.mockReturnValue(true)
     actOnActivePreview.mockResolvedValue({ acted: 'click', success: true })

@@ -358,7 +358,7 @@ declare global {
       ) => () => void
       saveImageBuffer: (data: ArrayBuffer | Uint8Array, ext: string, name?: string) => Promise<string>
       /** Private frame routing used only by the embedded preview engine. */
-      previewFrames?: (payload: { webContentsId: number; operation: 'list' | 'run' | 'mapPoint' | 'input' | 'dispose'; token?: string; code?: string; point?: { x: number; y: number }; event?: PreviewInputEvent }) => Promise<any>
+      previewFrames?: (payload: { webContentsId: number; operation: 'readTopText' | 'list' | 'run' | 'mapPoint' | 'input' | 'dispose'; token?: string; code?: string; point?: { x: number; y: number }; event?: PreviewInputEvent }) => Promise<any>
       /** Crop the in-app browser guest. `rect` is CSS pixels in the page viewport. */
       capturePreview?: (payload: {
         rect?: { height: number; width: number; x: number; y: number }

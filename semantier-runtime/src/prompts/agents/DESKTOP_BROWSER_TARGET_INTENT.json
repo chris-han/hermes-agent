@@ -6,6 +6,7 @@
   "recovery": {
     "en": {
       "PANE_UNAVAILABLE":"I cannot access that page live in this conversation right now. Reconnect or reopen the Browser Pane here, then retry. I have not switched browsers or treated previous page text as current evidence.",
+      "PAGE_LOADING":"The page in this conversation’s Browser Pane is still loading. Try again once it finishes.",
       "STALE_TARGET":"That browser page changed or closed while I was checking it. Reopen or refresh the intended page here, then retry. I have not acted on a replacement page.",
       "WRONG_OWNER":"The page is not owned by this conversation's browser context. Select or reopen the intended page beside this conversation, then retry.",
       "TARGET_UNRESOLVED":"Should I work on the page beside this conversation, or browse independently in the background?",
@@ -19,6 +20,7 @@
     },
     "zh": {
       "PANE_UNAVAILABLE":"我目前无法实时访问此会话中的该页面。请在这里重新连接或重新打开浏览器面板后重试。我没有切换浏览器，也没有将以前的页面内容当作当前证据。",
+      "PAGE_LOADING":"此会话的浏览器面板仍在加载页面。请在加载完成后重试。",
       "STALE_TARGET":"检查期间该浏览器页面已变化或关闭。请重新打开或刷新目标页面后重试。我没有操作替代页面。",
       "WRONG_OWNER":"该页面不属于此会话的浏览器上下文。请在此会话旁选择或重新打开目标页面后重试。",
       "TARGET_UNRESOLVED":"你希望我操作此会话旁的页面，还是在后台独立浏览？",

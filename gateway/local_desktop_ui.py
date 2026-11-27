@@ -286,9 +286,11 @@ def wire(turn, agent):
         legacy_read = agent.read_preview_callback
         legacy_act = agent.drive_preview_callback
         agent._desktop_browser_turn=state
-        agent.read_preview_callback=lambda start=None,count=None: (legacy_read(start, count) if state.kind == "NONE" else read_live(state,raw_read,start=start,count=count,refresh=state.preflight_complete))
+        agent.read_preview_callback=lambda start=None,count=None: (legacy_read(start, count) if state.kind == "NONE" else read_live(state,raw_read,start=start,count=count))
         agent.open_preview_callback=lambda args:open_live(state,raw_open,args)
-        agent.close_preview_callback=lambda args:close_live(state,raw_read,lambda params:_ask(turn,agent,'preview.close',params,10),args,authorize=lambda expected: state.operation == 'close' and state.preflight_complete and expected is not None)
+        # Close verifies the bound page live before dispatch. An element
+        # inventory is only needed for actions that address an element.
+        agent.close_preview_callback=lambda args:close_live(state,raw_read,lambda params:_ask(turn,agent,'preview.close',params,10),args,authorize=lambda expected: state.operation == 'close' and expected is not None)
         agent.drive_preview_callback=lambda payload: (legacy_act(payload) if state.kind == "NONE" else act_live(state,raw_read,raw_act,dict(payload or {})))
     return key, publish
 

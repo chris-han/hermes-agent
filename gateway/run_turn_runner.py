@@ -934,9 +934,12 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
                       getattr(agent, 'session_completion_tokens', 0) or 0)
             from agent.desktop_browser_target import state_for_agent, browser_turn_scope
             browser_turn=state_for_agent(agent)
-            if browser_turn is not None and _accepts_keyword(agent.run_conversation,'prelude'):
-                from agent.desktop_browser_target import prelude
-                kwargs['prelude']=prelude(browser_turn,agent,api_message,agent_history)
+            if browser_turn is not None:
+                from agent.desktop_browser_target import resolve_browser_intent
+
+                browser_turn.resolve_on_demand = lambda: resolve_browser_intent(
+                    browser_turn, agent, api_message, agent_history,
+                )
             with notification_turn(agent, muted=ctx.mute_notification_reply, session_id=ctx.session_id or ""), browser_turn_scope(browser_turn):
                 detached = getattr(self._runner, "_host_run_detached_inference", None)
                 if detached is None:
@@ -1137,6 +1140,7 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
         — never os.environ["HERMES_SESSION_KEY"], which would misroute approvals across sessions.
         """
         from gateway.run import _current_max_iterations, _normalize_empty_agent_response, _sanitize_gateway_final_response
+        started_at = time.monotonic()
         ctx = self._ctx
         runner = self._runner
         # Platform.LOCAL ("local") maps to the "cli" hint key the agent understands.
@@ -1166,6 +1170,7 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
             max_iterations = room.max_iterations
             ctx.enabled_toolsets = list(room.enabled_toolsets)
         try:
+            routing_started_at = time.monotonic()
             model, runtime_kwargs = runner._resolve_session_agent_runtime(
                 source=ctx.source, session_key=ctx.session_key, user_config=ctx.user_config,
             )
@@ -1220,6 +1225,7 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
                 # 'custom' resolved without credentials ...") is the diagnosis; /login is not.
                 return _unresolved(f"⚠️ {exc}")
             return _unresolved(t("gateway.errors.no_credentials"))
+        routing_finished_at = time.monotonic()
         pr = runner._provider_routing
         reasoning_config = (policy.current_reasoning_config(runner, ctx.session_key) if policy else
             runner._resolve_session_reasoning_config(source=ctx.source, session_key=ctx.session_key, model=model))
@@ -1238,9 +1244,11 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
         runner._reasoning_config = reasoning_config
         stream_consumer, stream_delta_cb, interim_cb, want_interim = self._setup_stream_consumer(platform_key)
         turn_route = runner._resolve_turn_agent_config(ctx.message, model, runtime_kwargs)
+        agent_started_at = time.monotonic()
         agent, reused_cached_agent = self._resolve_turn_agent(
             turn_route, platform_key, combined_ephemeral, max_iterations, reasoning_config, pr,
         )
+        agent_finished_at = time.monotonic()
         if pending_fallback_notice:
             # Reuse the in-agent one-shot notice so the pre-agent provider switch is user-visible too.
             agent._pending_fallback_notice = pending_fallback_notice
@@ -1261,6 +1269,15 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
             from gateway.session_secret_prompt import secret_prompt_scope
             from gateway.session_sudo_prompt import sudo_prompt_scope
             with sudo_prompt_scope(self, agent), secret_prompt_scope(self, agent):
+                conversation_started_at = time.monotonic()
+                if ctx.source.platform == Platform.LOCAL:
+                    logger.info(
+                        "Local turn setup: session=%s total_ms=%.0f routing_ms=%.0f agent_ms=%.0f history_and_wiring_ms=%.0f cached_agent=%s",
+                        ctx.session_id, (conversation_started_at - started_at) * 1000,
+                        (routing_finished_at - routing_started_at) * 1000,
+                        (agent_finished_at - agent_started_at) * 1000,
+                        (conversation_started_at - agent_finished_at) * 1000, reused_cached_agent,
+                    )
                 result = run_classic_cli_turn(self, lambda: self._run_conversation_with_approval(
                     agent, agent_history, observed_group_context, persist_msg, persist_ts))
         finally:

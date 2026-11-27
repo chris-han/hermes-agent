@@ -201,6 +201,15 @@ export function registerPreviewFramesIpc(
     }
 
     try {
+      if (payload?.operation === 'readTopText') {
+        const frame = guest.mainFrame
+        const url = guest.getURL()
+        const text = await frame.executeJavaScript('document.body ? document.body.innerText : ""')
+        assertAllowed()
+        if (guest.mainFrame !== frame || guest.getURL() !== url) { throw new Error('STALE_TARGET') }
+        return text
+      }
+
       if (payload?.operation === 'list') {
         return await access.list()
       }

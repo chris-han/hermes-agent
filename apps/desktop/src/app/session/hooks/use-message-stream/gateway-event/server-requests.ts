@@ -532,7 +532,7 @@ const boundOwnerFor = (sessionId: string, expected?: PreviewBinding): PreviewOwn
 
 const previewFailure = (request: ScopedServerRequest, error: unknown) => {
   const message = error instanceof Error ? error.message : ''
-  const code = ['WRONG_OWNER', 'STALE_TARGET', 'PANE_UNAVAILABLE', 'USER_INTENT_REQUIRED'].includes(message) ? message : 'PANE_UNAVAILABLE'
+  const code = ['WRONG_OWNER', 'STALE_TARGET', 'PANE_UNAVAILABLE', 'PAGE_LOADING', 'USER_INTENT_REQUIRED'].includes(message) ? message : 'PANE_UNAVAILABLE'
   answerValue(request, { success: false, code, error: code })
 }
 
@@ -545,6 +545,13 @@ const previewRequestIsCurrent = (deps: ServerRequestContext['deps'], sessionId: 
 
 const previewContext: Handler = ({ request, sessionId }) => {
   const owner = previewOwnerFor(sessionId)
+
+  if (!previewTabsFor(owner).some(tab => tab.target.kind === 'url')) {
+    answerValue(request, { success: false, code: 'TARGET_UNRESOLVED', error: 'TARGET_UNRESOLVED' })
+
+    return
+  }
+
   const binding = activePreviewBinding(owner, true)
 
   if (binding) {

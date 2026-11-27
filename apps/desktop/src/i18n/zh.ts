@@ -311,6 +311,7 @@ export const zhOverrides = {
   },
 
   titlebar: {
+    openBrowserPane: '打开浏览器面板',
     hideSidebar: '隐藏侧边栏',
     showSidebar: '显示侧边栏',
     search: '搜索',

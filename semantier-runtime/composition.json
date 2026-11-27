@@ -3433,7 +3433,7 @@
     },
     {
       "path": "src/prompts/agents/DESKTOP_BROWSER_TARGET_INTENT.json",
-      "sha256": "45b0d56bd7dff9c3fffbb9ab339876008354c4b7e11cead5d3d2910a64a2f14b",
+      "sha256": "8ede4fc6739b6d3ebbe7de8ec0fb0692afeb7f2aeb2a61ca16f819f2425e48b5",
       "source_commit": "5effa3162c4c6bd5a304c9cbc4fbdb0b964a1d35"
     },
     {
@@ -6127,8 +6127,8 @@
   "parent_resource_overrides": [
     {
       "path": "src/prompts/agents/DESKTOP_BROWSER_TARGET_INTENT.json",
-      "parent_commit": "d6b0cb6433a8baa8270a2e5ef0a201f54a597bc8",
-      "sha256": "45b0d56bd7dff9c3fffbb9ab339876008354c4b7e11cead5d3d2910a64a2f14b"
+      "parent_commit": "7d1ab183462863b56333391c83e920cfed77353a",
+      "sha256": "8ede4fc6739b6d3ebbe7de8ec0fb0692afeb7f2aeb2a61ca16f819f2425e48b5"
     }
   ]
 }
